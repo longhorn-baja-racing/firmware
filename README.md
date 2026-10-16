@@ -2,134 +2,207 @@
 
 Embedded telemetry and data-logging firmware for Longhorn Baja Racing vehicles.
 
-The 2026 baseline target is a **Raspberry Pi Pico**, an **Adafruit BNO055 IMU**, and a **microSD card**. The firmware is the vehicle-side half of the telemetry system; the companion desktop application lives in [`longhorn-baja-racing/lbr-dashboard`](https://github.com/longhorn-baja-racing/lbr-dashboard).
+The 2026 architecture is a **distributed CAN network of ESP32 nodes**. Multiple ESP32
+modules each own a different set of sensors and publish their measurements onto a shared
+**CAN bus**. A central **gateway/logger node** records the authoritative log and drives the
+live telemetry links. The firmware is the vehicle-side half of the telemetry system; the
+companion desktop application lives in
+[`longhorn-baja-racing/lbr-dashboard`](https://github.com/longhorn-baja-racing/lbr-dashboard).
+
+The recommended runtime is **C/C++ on ESP-IDF** (Espressif's official framework), using the
+ESP32's built-in **TWAI** controller for CAN with an external CAN transceiver.
+
+There is **no GPS requirement for the 2026 system**.
 
 ## 2026 goals
 
 The firmware must:
 
-- acquire every configured BNO055 measurement at its intended sample rate;
-- timestamp samples from the device's monotonic clock;
-- write full-fidelity data to microSD without depending on a live connection;
-- expose read-only live telemetry over USB serial for bench and vehicle testing;
-- report packet sequence numbers, heartbeats, sensor status, calibration state, storage health, and recoverable errors;
-- preserve enough session metadata to interpret a log later, including firmware/protocol versions and sensor configuration;
-- remain extensible to future LoRa/radio and CAN transports without coupling acquisition or logging to one transport.
+- acquire every configured sensor measurement at its intended sample rate on the node that owns it;
+- timestamp samples against a shared, CAN-distributed monotonic time base;
+- publish measurements onto the CAN bus as schema-driven records;
+- write a full-fidelity, time-aligned log to microSD on the gateway node without depending on a live link;
+- expose live telemetry over **LoRa** during the race and over **USB serial / WiFi / BLE** for pit and bench use;
+- report packet sequence numbers, heartbeats, per-node sensor status, calibration state, storage health, bus health, and recoverable errors;
+- preserve enough session metadata to interpret a log later, including firmware/protocol versions, the node topology, and sensor configuration;
+- keep acquisition, logging, and each transport decoupled so no node or link reduces the fidelity of the authoritative log.
 
-There is **no GPS requirement for the 2026 system**.
-
-## Recommended implementation
-
-Use **C/C++ with the official Raspberry Pi Pico SDK**. This gives the logger direct control over sampling, buffering, binary serialization, SD-card writes, timing, and failure recovery. MicroPython or CircuitPython may be useful for isolated hardware experiments, but they are not the recommended production runtime for the full-rate vehicle logger.
-
-Keep the system as independently testable modules:
+## System architecture
 
 ```text
-BNO055 driver -> sample acquisition -> timestamped signal records
-                                      |-> bounded SD writer queue -> microSD
-                                      |-> transport queue -> USB serial
-                                                           -> future LoRa/CAN
-health monitor -> heartbeat/status records ---------------^
+[sensor node A]  [sensor node B]  [sensor node C]  ...        (each: ESP-IDF + TWAI)
+   sensors          sensors          sensors
+      |                |                |
+      +--------- shared CAN bus (TWAI + transceiver) ----------+
+                           |
+                   [gateway / logger node]
+                     |-> authoritative microSD log (full fidelity, time-aligned)
+                     |-> LoRa  -> dashboard (in-race critical subset)
+                     |-> WiFi  -> dashboard (pit: bulk / OTA / config)
+                     |-> BLE   -> phone/tablet (walk-up diagnostics)
+                     |-> USB   -> bench (log dump / debug / flash)
 ```
 
-A slow or disconnected live link must never reduce the fidelity of the authoritative SD log. Acquisition, storage, and transport should use bounded queues with explicit overflow/error counters rather than blocking each other indefinitely.
+### Nodes
 
-## Hardware and pin mapping
+Each sensor node is an independent, independently testable ESP32 that:
 
-The following mapping comes from the current schematic.
+- owns and samples its sensors at their configured rates;
+- timestamps samples against the shared time base;
+- publishes schema-driven measurement and health records onto CAN;
+- optionally keeps a **local microSD log** if it is a high-rate or safety-critical node (see redundancy below).
 
-| Function | Pico GPIO | Direction / bus |
-| --- | ---: | --- |
-| BNO055 SDA | GP0 | I2C data |
-| BNO055 SCL | GP1 | I2C clock |
-| microSD SCK | GP2 | SPI clock |
-| microSD MOSI | GP3 | SPI controller-out / card-in |
-| microSD MISO | GP4 | SPI controller-in / card-out |
-| microSD CS | GP5 | SPI chip select |
-| IMU-related line | GP9 | **TBD — purpose must be confirmed from the hardware design before implementation** |
+Hardware-specific sensor code lives behind narrow interfaces so acquisition, serialization,
+queue-pressure, and timing logic can be exercised in host tests without an ESP32 attached.
 
-Do not assign semantics to GP9 in code, documentation, or the wire protocol until the electronics team confirms the line's purpose. Define it as an unconfigured/TBD board input only if a build needs a placeholder.
+### Gateway / logger node
 
-Electrical voltage, pull-up, card-detect, interrupt, reset, and power-control details must be verified against the final schematic and board before hardware initialization is merged.
+One node is the gateway. It:
 
-## Signals for 2026
+- sniffs the entire CAN bus and writes the **authoritative, time-aligned, full-fidelity** microSD log;
+- is the single source of truth and single pull-point after a run;
+- broadcasts the CAN time-sync frame that disciplines every node's clock;
+- drives all live transports (LoRa, WiFi, BLE, USB) from the logical record stream.
 
-When enabled and available from the configured BNO055 operating mode, record:
+A slow or disconnected live link must **never** reduce the fidelity of the authoritative log.
+Acquisition, logging, and each transport use **bounded queues** with explicit overflow/error
+counters rather than blocking one another indefinitely.
 
-- acceleration X/Y/Z;
-- gyroscope X/Y/Z;
-- temperature;
-- quaternion/orientation;
-- BNO055 calibration state;
-- sensor status and self-test/error information.
+### Logging and redundancy
 
-The protocol is schema-driven: signal identifiers, value types, units, source/device identity, and sample rates are metadata rather than assumptions embedded in a fixed packet layout. Different signals may have different sample rates.
+- The gateway's microSD log is the **authoritative** record: all records seen on the bus, plus events, health, and session metadata.
+- **Do not put an SD card on every node.** Local node logging is reserved for the few nodes whose native sample rate exceeds what the shared CAN bus should carry, or whose data is too critical to risk losing. This spends redundancy where it matters instead of multiplying weight, cost, and SD-corruption surface across the car.
+- When a node logs locally, its log uses the same versioned record/health model as the gateway log so the two can be reconciled afterward.
 
-The firmware reports sensor-frame values faithfully. A configurable sensor-to-vehicle transform is stored as session/configuration metadata and applied consistently by the dashboard so mounting changes do not require analysis code changes.
+## CAN bus
+
+CAN is the backbone. Every measurement, event, and health record travels as a schema-driven
+CAN frame; nodes are decoupled publishers/subscribers rather than point-to-point links.
+
+- Transport: ESP32 **TWAI** peripheral + an external CAN transceiver (e.g. SN65HVD230 / TJA1051). Classic CAN (up to 1 Mbit/s, shared across all nodes) is the baseline; CAN FD is a documented future option if bandwidth gets tight.
+- The bus is **bandwidth-limited and shared**: high-rate data may be logged locally at full fidelity while a reduced version is published on CAN. CAN fidelity is a budget, not an assumption.
+- Define a stable, documented CAN ID / arbitration plan (message IDs, priorities, source node identity). Safety/alarm and time-sync frames get priority IDs.
+- Specify bus bit rate, termination (120 Ω at both physical ends), and topology against the final harness before bring-up.
 
 ## Time, sequence, and freshness
 
-Every sample or sample batch must carry a device-side monotonic timestamp with a documented epoch and unit. Do not use laptop packet-arrival time as the measurement time.
+Every sample or batch carries a monotonic timestamp with a documented epoch and unit,
+**referenced to the shared time base**, not to laptop or gateway packet-arrival time.
 
-Every live packet must carry a monotonically increasing sequence number so the dashboard can detect drops, duplicates, and out-of-order delivery. Heartbeat/status records must be sent even when measurements are unchanged and include, at minimum:
+- The gateway broadcasts a periodic **CAN time-sync frame**; nodes discipline/offset their local monotonic clocks to it so all logs — gateway and any local node logs — share one timeline.
+- Every live packet carries a monotonically increasing **sequence number** (per logical stream) so the dashboard can detect drops, duplicates, and reordering. This matters most on LoRa, which is lossy.
+- Heartbeat/status records are sent even when measurements are unchanged, and include at minimum:
+  - firmware and protocol versions, and node identity;
+  - node uptime and reset/boot reason;
+  - per-node sensor and (where present) SD-card health;
+  - acquisition, logging, and publish rates;
+  - queue high-water marks and overflow counts;
+  - CAN bus health (error counters, bus-off events, dropped frames);
+  - write and transport error counts;
+  - calibration state when available;
+  - last successful sample and last SD-write age.
 
-- firmware and protocol versions;
-- device uptime;
-- sensor and SD-card health;
-- acquisition and logging rates;
-- queue high-water marks and overflow counts;
-- write and transport error counts;
-- calibration state when available;
-- last successful sample and SD-write age.
+Counter widths and rollover behavior are specified in the shared protocol.
 
-Counter widths and rollover behavior must be specified in the shared protocol.
+## Live transports
 
-## Logging and live transport
+All transports implement the **same logical record and health model** behind a transport
+interface. Transport-specific framing and bandwidth policy must not change the meaning of a
+logged signal. Each link occupies a distinct range/bandwidth/availability niche:
 
-### Authoritative microSD log
+### LoRa — in-race telemetry
 
-The microSD log is the full-fidelity record for a run. It must retain all configured signals at their acquisition rates plus events, health records, and session metadata. Live telemetry may be downsampled or filtered later for bandwidth, but SD logging must not inherit that reduction.
+The only link assumed live during a race. Long range but **very low bandwidth** (and subject
+to regional duty-cycle limits), so it carries a **prioritized, downsampled critical subset**:
+health/heartbeat, key temperatures (e.g. engine/CVT/brake), battery/fuel, and fault/alarm
+**events**. Packets are self-describing, sequence-numbered, and loss-tolerant; framing must let
+a receiver resynchronize after dropped or corrupted packets.
 
-Use buffered, append-oriented writes and make interrupted sessions recoverable. The format must be versioned and documented. Tests must cover power-loss/truncated-tail recovery, counter rollover, SD stalls, queue pressure, and a missing or failed card.
+### USB serial — wired bench/pit
 
-### USB serial baseline
+Fastest, zero-setup wired link from the gateway: bulk log dump after a run, bench debugging,
+and flashing. Read-only telemetry from the vehicle's perspective for the initial release.
 
-USB serial is the first supported live transport. It is read-only telemetry from the vehicle's perspective for the initial release: the dashboard must not need to send control commands to operate the stream. Framing must survive partial reads and allow a receiver to resynchronize after corruption or dropped bytes.
+### WiFi — pit / paddock
 
-Future LoRa/radio or CAN adapters must implement the same logical record and health model. Transport-specific framing and bandwidth policy belong behind a transport interface; they must not change the meaning of logged signals.
+Short-range, high-bandwidth, power-hungry — pit use only. Near-full-rate live view when the car
+is stationary or passing pit, plus **OTA firmware updates** and configuration push.
+
+### BLE — walk-up diagnostics
+
+Low-power, phone/tablet range: quick status, calibration state, and configuration at the car
+without a cable.
+
+Future radio or CAN-FD adapters must implement the same logical record and health model.
 
 ## Shared protocol relationship
 
-The dashboard and firmware must implement one versioned protocol/log specification. The canonical specification should define:
+The dashboard and firmware must implement **one versioned protocol/log specification**. The
+protocol is schema-driven: signal identifiers, value types, units, source/device identity, node
+topology, and sample rates are metadata, not assumptions baked into a fixed packet or CAN-frame
+layout. Different signals may have different sample rates.
+
+Firmware reports **sensor-frame** values faithfully. Per-node sensor-to-vehicle mounting
+transforms are stored as session/configuration metadata and applied consistently by the
+dashboard, so remounting a node does not require analysis-code changes.
+
+The canonical specification should define:
 
 - signal/schema descriptors and stable identifiers;
+- the CAN ID / arbitration map and node identity scheme;
 - scalar, vector, boolean, string/event, and status value types;
 - canonical units and display metadata;
-- device/session metadata;
-- monotonic timestamps, sequence numbers, rollover, and ordering;
-- record and packet framing, checksums/integrity checks, and recovery;
-- heartbeat and health fields;
-- compatibility rules for older logs and unknown future signals;
+- device/session/topology metadata;
+- the shared time base, monotonic timestamps, sequence numbers, rollover, and ordering;
+- record, CAN-frame, and transport framing, checksums/integrity checks, and recovery;
+- heartbeat and health fields (including bus health);
+- compatibility rules for older logs and unknown future signals/nodes;
 - golden binary/log fixtures used by both repositories.
 
-The initial canonical specification may live in `lbr-dashboard`, with generated/copied bindings or golden fixtures consumed here. If ownership later becomes awkward, extract it into a small shared repository. Do not allow independent, incompatible packet definitions to evolve in the two codebases.
+The initial canonical specification may live in `lbr-dashboard`, with generated/copied bindings
+or golden fixtures consumed here. Do not let independent, incompatible definitions evolve in the
+two codebases, or across nodes.
+
+## Hardware and pin mapping
+
+The 2026 board set is **ESP32-based and still being finalized**. Per-node GPIO assignments must
+come from each node's schematic and are **TBD** until the electronics team confirms them. Do not
+hard-code pin numbers or assign line semantics in code, docs, or the protocol until confirmed;
+use an explicit unconfigured/TBD placeholder if a build needs one.
+
+Each node will minimally need:
+
+| Function | Interface | Notes |
+| --- | --- | --- |
+| CAN TX / RX | TWAI | To external CAN transceiver; GPIO **TBD** per node |
+| Sensor bus(es) | I2C / SPI / analog | Depends on the node's sensors; **TBD** |
+| microSD (gateway, and local-logging nodes) | SPI / SDMMC | **TBD** |
+| LoRa radio (gateway) | SPI (+ control lines) | e.g. SX127x/RFM95 class module; **TBD** |
+
+Electrical voltage levels, transceiver choice, pull-ups, bus termination, card-detect,
+interrupt, reset, and power-control details must be verified against the final schematic and
+harness before any hardware-initialization code is merged.
 
 ## Suggested repository layout
 
 ```text
-CMakeLists.txt
+CMakeLists.txt            # ESP-IDF top-level
+sdkconfig.defaults
 cmake/
 docs/
   hardware.md
   protocol.md
-include/lbr/
-src/
-  app/
-  acquisition/
-  logging/
+  can-ids.md
+components/               # shared, host-testable libraries
   protocol/
   transport/
+  logging/
   health/
+  timebase/
+nodes/                    # one app per physical node
+  gateway/
+  <sensor-node-a>/
+  <sensor-node-b>/
 tests/
   host/
   fixtures/
@@ -137,40 +210,56 @@ tools/
 .github/workflows/
 ```
 
-Hardware-specific code should be behind narrow interfaces so protocol, buffering, queue-pressure, and log-recovery behavior can be exercised in host tests without a Pico connected.
+Shared logic (protocol, transport, logging, health, time base) lives in `components/` behind
+narrow interfaces so it is exercised in host tests without hardware. Each node's app in `nodes/`
+is thin: wiring, configuration, and its sensor set.
 
 ## Build workflow
 
-Prerequisites:
-
-1. Install CMake, Ninja (recommended), an ARM GCC toolchain, and the Raspberry Pi Pico SDK.
-2. Set `PICO_SDK_PATH` or use the team's documented SDK-fetch mechanism.
-3. Configure and build:
+Prerequisites: install **ESP-IDF** (pin a known version) and its toolchain, and run its export
+script so `idf.py` is on your `PATH`.
 
 ```sh
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
+# from a node app directory, e.g. nodes/gateway
+idf.py set-target esp32
+idf.py build
+idf.py -p <PORT> flash monitor
 ```
 
-Production/release builds should use a pinned Pico SDK version and a reproducible toolchain in CI. The resulting UF2 is copied to a Pico in BOOTSEL mode. Exact target names will be added with the initial firmware skeleton.
+Host-side unit tests build and run without hardware (e.g. with CMake/CTest against the
+`components/` libraries):
+
+```sh
+cmake -S tests/host -B build-host -G Ninja
+cmake --build build-host
+ctest --test-dir build-host --output-on-failure
+ctest --test-dir build-host -R <test_name>   # run a single test
+```
+
+Production/release builds pin an ESP-IDF version and a reproducible toolchain in CI. Exact
+`idf.py` targets, component names, and test names will be filled in with the first firmware
+skeleton.
 
 ## Test workflow
 
 Before merging firmware changes:
 
-1. run host-side unit tests for protocol encoding/decoding, timestamp/sequence rollover, queues, log recovery, and configuration validation;
-2. build the Pico firmware with warnings treated as errors;
+1. run host-side unit tests for protocol encoding/decoding, CAN record (de)serialization, timestamp/sequence rollover, time-base sync, queues, log recovery, and configuration validation;
+2. build every affected node with **warnings treated as errors**;
 3. run formatting and static-analysis checks;
 4. replay golden fixtures through the dashboard compatibility tests;
-5. complete hardware-in-the-loop smoke tests for BNO055 acquisition, SD logging, USB framing, disconnect/reconnect, and fault reporting when hardware behavior changes.
+5. complete hardware-in-the-loop smoke tests — multi-node CAN acquisition, time sync, gateway SD logging, LoRa/USB/WiFi/BLE framing, node disconnect/reconnect, bus-off recovery, and fault reporting — when hardware behavior changes.
 
-CI should run all host tests and compile the firmware on every pull request. Hardware-in-the-loop tests may run on a dedicated runner or be recorded as a required release checklist when hardware is unavailable to CI.
+CI runs all host tests and compiles every node on each pull request. Hardware-in-the-loop tests
+may run on a dedicated runner or be recorded as a required release checklist when hardware is
+unavailable to CI.
 
 ## Reliability rules
 
-- Never silently discard samples. Count and report every queue overflow or rejected record.
-- Prefer continuing full-fidelity SD logging when the USB host is absent or slow.
-- Start a session only after configuration is validated; persist the exact configuration with the log.
+- Never silently discard samples or frames. Count and report every queue overflow, dropped CAN frame, or rejected record.
+- Prefer continuing full-fidelity SD logging when a live link (LoRa/USB/WiFi/BLE) is absent or slow.
+- Keep the gateway log authoritative; local node logs are redundancy, not substitutes for a shared time base.
+- Start a session only after configuration is validated; persist the exact configuration and node topology with the log.
 - Represent unavailable measurements and calibration explicitly rather than substituting zero.
-- Make watchdog resets and brownout/boot reasons observable in the next session.
-- Keep protocol compatibility tests synchronized with `lbr-dashboard`.
+- Make watchdog resets, brownout/boot reasons, and CAN bus-off events observable in the next session.
+- Keep protocol compatibility tests synchronized with `lbr-dashboard`, and keep every node on one protocol/CAN-ID version.
