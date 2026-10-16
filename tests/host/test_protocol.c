@@ -4,7 +4,7 @@
 #include "lbr/timebase.h"
 
 /*
- * Placeholder host test — proves the shared headers compile/link on the host
+ * Placeholder host test - proves the shared headers compile/link on the host
  * and gives CI something to run. Real tests must cover encode/decode
  * round-trips, timestamp/sequence rollover, time-base sync, queue pressure,
  * and log recovery (see README "Test workflow").

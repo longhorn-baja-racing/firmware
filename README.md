@@ -14,6 +14,19 @@ ESP32's built-in **TWAI** controller for CAN with an external CAN transceiver.
 
 There is **no GPS requirement for the 2026 system**.
 
+## Project status
+
+The repository skeleton is in place and the host test build is green:
+
+- shared libraries scaffolded in `components/` (protocol with a stable signal catalog,
+  transport interface, logging, health, timebase, generic sensor interface);
+- one ESP-IDF app per node in `nodes/` (`gateway`, `powertrain`, `dynamics`);
+- a `tests/host/` CMake/CTest build that compiles the pure logic with warnings as errors.
+
+Firmware logic is still stubbed (`TODO`s), and the following are deliberately **TBD** pending
+decisions: concrete sensor parts, per-node GPIO/pins, the frozen wire/log byte layout, and the
+exact CAN ID map. See `docs/` for the per-topic trackers.
+
 ## 2026 goals
 
 The firmware must:
@@ -82,14 +95,14 @@ CAN frame; nodes are decoupled publishers/subscribers rather than point-to-point
 - Transport: ESP32 **TWAI** peripheral + an external CAN transceiver (e.g. SN65HVD230 / TJA1051). Classic CAN (up to 1 Mbit/s, shared across all nodes) is the baseline; CAN FD is a documented future option if bandwidth gets tight.
 - The bus is **bandwidth-limited and shared**: high-rate data may be logged locally at full fidelity while a reduced version is published on CAN. CAN fidelity is a budget, not an assumption.
 - Define a stable, documented CAN ID / arbitration plan (message IDs, priorities, source node identity). Safety/alarm and time-sync frames get priority IDs.
-- Specify bus bit rate, termination (120 Ω at both physical ends), and topology against the final harness before bring-up.
+- Specify bus bit rate, termination (120 ohm at both physical ends), and topology against the final harness before bring-up.
 
 ## Time, sequence, and freshness
 
 Every sample or batch carries a monotonic timestamp with a documented epoch and unit,
 **referenced to the shared time base**, not to laptop or gateway packet-arrival time.
 
-- The gateway broadcasts a periodic **CAN time-sync frame**; nodes discipline/offset their local monotonic clocks to it so all logs — gateway and any local node logs — share one timeline.
+- The gateway broadcasts a periodic **CAN time-sync frame**; nodes discipline/offset their local monotonic clocks to it so all logs - gateway and any local node logs - share one timeline.
 - Every live packet carries a monotonically increasing **sequence number** (per logical stream) so the dashboard can detect drops, duplicates, and reordering. This matters most on LoRa, which is lossy.
 - Heartbeat/status records are sent even when measurements are unchanged, and include at minimum:
   - firmware and protocol versions, and node identity;
@@ -110,7 +123,7 @@ All transports implement the **same logical record and health model** behind a t
 interface. Transport-specific framing and bandwidth policy must not change the meaning of a
 logged signal. Each link occupies a distinct range/bandwidth/availability niche:
 
-### LoRa — in-race telemetry
+### LoRa - in-race telemetry
 
 The only link assumed live during a race. Long range but **very low bandwidth** (and subject
 to regional duty-cycle limits), so it carries a **prioritized, downsampled critical subset**:
@@ -118,17 +131,17 @@ health/heartbeat, key temperatures (e.g. engine/CVT/brake), battery/fuel, and fa
 **events**. Packets are self-describing, sequence-numbered, and loss-tolerant; framing must let
 a receiver resynchronize after dropped or corrupted packets.
 
-### USB serial — wired bench/pit
+### USB serial - wired bench/pit
 
 Fastest, zero-setup wired link from the gateway: bulk log dump after a run, bench debugging,
 and flashing. Read-only telemetry from the vehicle's perspective for the initial release.
 
-### WiFi — pit / paddock
+### WiFi - pit / paddock
 
-Short-range, high-bandwidth, power-hungry — pit use only. Near-full-rate live view when the car
+Short-range, high-bandwidth, power-hungry - pit use only. Near-full-rate live view when the car
 is stationary or passing pit, plus **OTA firmware updates** and configuration push.
 
-### BLE — walk-up diagnostics
+### BLE - walk-up diagnostics
 
 Low-power, phone/tablet range: quick status, calibration state, and configuration at the car
 without a cable.
@@ -211,7 +224,7 @@ tools/
 
 Each node in `nodes/` is a self-contained ESP-IDF project (its own top-level `CMakeLists.txt`
 + `main/`) that pulls in the shared `components/` via `EXTRA_COMPONENT_DIRS`. Node apps stay
-thin — wiring, configuration, and their sensor set. Shared logic lives in `components/` behind
+thin - wiring, configuration, and their sensor set. Shared logic lives in `components/` behind
 narrow interfaces so protocol, queue, time-sync, and log-recovery behavior is exercised in host
 tests without hardware. The node grouping above is a starting point (grouped by vehicle zone to
 shorten the harness); adding a node means copying a `nodes/<name>/` directory.
@@ -238,9 +251,9 @@ ctest --test-dir build-host --output-on-failure
 ctest --test-dir build-host -R <test_name>   # run a single test
 ```
 
-Production/release builds pin an ESP-IDF version and a reproducible toolchain in CI. Exact
-`idf.py` targets, component names, and test names will be filled in with the first firmware
-skeleton.
+The node projects are `lbr_gateway`, `lbr_powertrain`, and `lbr_dynamics` (one per directory
+under `nodes/`). Production/release builds pin an ESP-IDF version and a reproducible toolchain
+in CI.
 
 ## Test workflow
 
@@ -250,7 +263,7 @@ Before merging firmware changes:
 2. build every affected node with **warnings treated as errors**;
 3. run formatting and static-analysis checks;
 4. replay golden fixtures through the dashboard compatibility tests;
-5. complete hardware-in-the-loop smoke tests — multi-node CAN acquisition, time sync, gateway SD logging, LoRa/USB/WiFi/BLE framing, node disconnect/reconnect, bus-off recovery, and fault reporting — when hardware behavior changes.
+5. complete hardware-in-the-loop smoke tests - multi-node CAN acquisition, time sync, gateway SD logging, LoRa/USB/WiFi/BLE framing, node disconnect/reconnect, bus-off recovery, and fault reporting - when hardware behavior changes.
 
 CI runs all host tests and compiles every node on each pull request. Hardware-in-the-loop tests
 may run on a dedicated runner or be recorded as a required release checklist when hardware is

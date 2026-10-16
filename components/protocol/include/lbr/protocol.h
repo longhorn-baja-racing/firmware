@@ -14,7 +14,7 @@
  * the consumer the unit and meaning; `type` tells it how to read the union.
  */
 typedef enum {
-    LBR_VAL_NONE = 0, /* explicitly unavailable — never substitute zero */
+    LBR_VAL_NONE = 0, /* explicitly unavailable - never substitute zero */
     LBR_VAL_F32,
     LBR_VAL_I32,
     LBR_VAL_U32,

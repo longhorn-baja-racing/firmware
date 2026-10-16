@@ -6,7 +6,7 @@
 /*
  * Heartbeat / status record. Emitted on a fixed cadence even when measurements
  * are unchanged. Mirrors the required health set in the shared spec. Counters
- * never silently reset — rollover behavior is defined in the protocol.
+ * never silently reset - rollover behavior is defined in the protocol.
  */
 typedef struct {
     uint32_t fw_version;
@@ -14,14 +14,14 @@ typedef struct {
     uint32_t node_id;
 
     uint64_t uptime_us;
-    uint32_t reset_reason; /* watchdog / brownout / power-on — observable next session */
+    uint32_t reset_reason; /* watchdog / brownout / power-on - observable next session */
 
     /* rates */
     uint32_t acquire_hz;
     uint32_t publish_hz;
     uint32_t log_hz;
 
-    /* queue pressure / losses — never silently discard; count everything */
+    /* queue pressure / losses - never silently discard; count everything */
     uint32_t queue_high_water;
     uint32_t overflow_count;
     uint32_t write_error_count;

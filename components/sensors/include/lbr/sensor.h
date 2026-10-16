@@ -10,7 +10,7 @@
  *
  * Concrete drivers (IMU, RPM pickup, speed, temperatures, fuel level, ...)
  * implement this vtable so a node's acquisition loop stays independent of the
- * specific parts chosen. PARTS ARE NOT SELECTED YET — keep every driver behind
+ * specific parts chosen. PARTS ARE NOT SELECTED YET - keep every driver behind
  * this interface so swapping chips does not touch acquisition/logging/protocol.
  */
 

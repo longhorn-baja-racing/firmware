@@ -18,7 +18,7 @@ uint64_t lbr_time_mono_us(void);
  * timestamp carried by the frame, `local_rx_us` the local time at reception. */
 void lbr_time_sync_apply(uint64_t gateway_us, uint64_t local_rx_us);
 
-/* Disciplined shared time base — use this to stamp samples. */
+/* Disciplined shared time base - use this to stamp samples. */
 uint64_t lbr_time_now_us(void);
 
 /* True once at least one sync frame has disciplined this node. */

@@ -3,7 +3,7 @@
 /*
  * Stub time base. `lbr_time_mono_us` must be backed by a hardware monotonic
  * clock (e.g. esp_timer_get_time) on the node build; host tests can inject a
- * fake. Offset disciplining is a placeholder — replace with the agreed filter.
+ * fake. Offset disciplining is a placeholder - replace with the agreed filter.
  */
 
 static int64_t s_offset_us = 0;

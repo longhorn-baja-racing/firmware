@@ -9,7 +9,7 @@
  * Owns (parts TBD): IMU (accel/gyro/orientation) and vehicle/wheel speed.
  * Samples each sensor at its configured rate, timestamps against the shared
  * time base, and publishes schema-driven records on CAN. Reports sensor-frame
- * values faithfully — the mounting transform is applied by the dashboard.
+ * values faithfully - the mounting transform is applied by the dashboard.
  *
  * Signals: LBR_SIG_ACCEL_*, LBR_SIG_GYRO_*, LBR_SIG_ORIENT_QUAT_*,
  *          LBR_SIG_VEHICLE_SPEED, LBR_SIG_WHEEL_SPEED_* (see signals.h).

@@ -2,7 +2,7 @@
 
 The dashboard and firmware implement **one versioned protocol/log specification**. The
 canonical spec is shared with [`lbr-dashboard`](https://github.com/longhorn-baja-racing/lbr-dashboard)
-— do not let the two diverge, and keep every node on one protocol/CAN-ID version.
+- do not let the two diverge, and keep every node on one protocol/CAN-ID version.
 
 This document tracks the firmware-side view; the authoritative schema and golden fixtures
 live in the shared spec.

@@ -26,7 +26,7 @@ struct lbr_transport {
     int (*init)(lbr_transport_t *self);
 
     /* Non-blocking: enqueue one framed record. Returns 0 on success, <0 if the
-     * bounded queue is full. The caller MUST count the drop and continue — a
+     * bounded queue is full. The caller MUST count the drop and continue - a
      * slow/absent link must never block acquisition or the authoritative log. */
     int (*send)(lbr_transport_t *self, const uint8_t *buf, size_t len);
 

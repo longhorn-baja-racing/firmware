@@ -10,7 +10,7 @@ Grouped by vehicle zone to minimize harness length. Rename/split as the design s
 
 | Node | Zone | Sensors (parts TBD) |
 | --- | --- | --- |
-| `gateway` | cockpit / dash | none — CAN sniffer, microSD logger, telemetry (LoRa/USB/WiFi/BLE), time-sync source |
+| `gateway` | cockpit / dash | none - CAN sniffer, microSD logger, telemetry (LoRa/USB/WiFi/BLE), time-sync source |
 | `powertrain` | engine bay | engine RPM, engine/CVT temperatures, fuel level |
 | `dynamics` | chassis / CoG | IMU (accel/gyro/orientation), vehicle/wheel speed |
 
@@ -25,5 +25,5 @@ Grouped by vehicle zone to minimize harness length. Rename/split as the design s
 
 ## To verify against the final schematic/harness before bring-up
 
-Voltage levels, transceiver choice, pull-ups, CAN bus bit rate, termination (120 Ω at
+Voltage levels, transceiver choice, pull-ups, CAN bus bit rate, termination (120 ohm at
 both physical ends) and topology, card-detect, interrupt, reset, and power-control lines.
