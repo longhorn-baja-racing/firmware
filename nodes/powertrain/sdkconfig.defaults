@@ -1,0 +1,4 @@
+# Shared defaults for the powertrain node. Generated `sdkconfig` is gitignored.
+CONFIG_IDF_TARGET="esp32"
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_TASK_WDT_EN=y

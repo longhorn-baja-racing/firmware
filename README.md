@@ -183,36 +183,38 @@ Electrical voltage levels, transceiver choice, pull-ups, bus termination, card-d
 interrupt, reset, and power-control details must be verified against the final schematic and
 harness before any hardware-initialization code is merged.
 
-## Suggested repository layout
+## Repository layout
 
 ```text
-CMakeLists.txt            # ESP-IDF top-level
-sdkconfig.defaults
-cmake/
+cmake/warnings.cmake      # shared warnings-as-errors policy
 docs/
-  hardware.md
-  protocol.md
-  can-ids.md
-components/               # shared, host-testable libraries
-  protocol/
-  transport/
-  logging/
-  health/
-  timebase/
-nodes/                    # one app per physical node
-  gateway/
-  <sensor-node-a>/
-  <sensor-node-b>/
+  hardware.md             # node grouping + pin map (TBD)
+  protocol.md             # firmware-side view of the shared protocol
+  can-ids.md              # CAN ID / arbitration map (draft)
+components/               # shared, host-testable libraries (ESP-IDF components)
+  protocol/               #   signal catalog (signals.h) + sample encode/decode
+  transport/              #   one record model behind LoRa/USB/WiFi/BLE
+  logging/                #   append-oriented, recoverable SD log
+  health/                 #   heartbeat/status record
+  timebase/               #   shared CAN-distributed monotonic clock
+  sensors/                #   generic sensor interface (concrete parts TBD)
+nodes/                    # one standalone ESP-IDF app per physical node
+  gateway/                #   CAN logger + telemetry + time-sync source
+  powertrain/             #   engine RPM, engine/CVT temps, fuel level
+  dynamics/               #   IMU, vehicle/wheel speed
 tests/
-  host/
-  fixtures/
+  host/                   #   plain-CMake/CTest build of the pure logic
+  fixtures/               #   golden fixtures shared with lbr-dashboard
 tools/
 .github/workflows/
 ```
 
-Shared logic (protocol, transport, logging, health, time base) lives in `components/` behind
-narrow interfaces so it is exercised in host tests without hardware. Each node's app in `nodes/`
-is thin: wiring, configuration, and its sensor set.
+Each node in `nodes/` is a self-contained ESP-IDF project (its own top-level `CMakeLists.txt`
++ `main/`) that pulls in the shared `components/` via `EXTRA_COMPONENT_DIRS`. Node apps stay
+thin — wiring, configuration, and their sensor set. Shared logic lives in `components/` behind
+narrow interfaces so protocol, queue, time-sync, and log-recovery behavior is exercised in host
+tests without hardware. The node grouping above is a starting point (grouped by vehicle zone to
+shorten the harness); adding a node means copying a `nodes/<name>/` directory.
 
 ## Build workflow
 
