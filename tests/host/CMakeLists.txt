@@ -3,27 +3,40 @@ project(lbr_host_tests C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enable_testing()
 
-set(LBR_COMPONENTS "${CMAKE_CURRENT_LIST_DIR}/../../components")
+set(LBR_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
+set(LBR_COMPONENTS "${LBR_ROOT}/components")
+include("${LBR_ROOT}/cmake/warnings.cmake")
 
-# Pure, hardware-independent logic compiled directly for the host. Keep these
-# source files free of ESP-IDF includes so they build here and on-target.
+option(LBR_SANITIZE "Build host tests with ASan + UBSan" ON)
+
+# Pure, hardware-independent logic compiled directly for the host. These
+# sources never include ESP-IDF headers; *_esp.c files hold the platform side
+# and port_host.c stands in for it here.
 add_library(lbr_core
-    "${LBR_COMPONENTS}/protocol/protocol.c"
-    "${LBR_COMPONENTS}/timebase/timebase.c"
-    "${LBR_COMPONENTS}/health/health.c"
+    "${LBR_COMPONENTS}/util/crc32.c"
+    "${LBR_COMPONENTS}/util/cobs.c"
+    "${LBR_COMPONENTS}/util/ringbuf.c"
 )
 target_include_directories(lbr_core PUBLIC
-    "${LBR_COMPONENTS}/protocol/include"
-    "${LBR_COMPONENTS}/timebase/include"
-    "${LBR_COMPONENTS}/health/include"
-    "${LBR_COMPONENTS}/logging/include"
-    "${LBR_COMPONENTS}/transport/include"
-    "${LBR_COMPONENTS}/sensors/include"
+    "${LBR_COMPONENTS}/util/include"
+    "${CMAKE_CURRENT_LIST_DIR}"
 )
-target_compile_options(lbr_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_link_libraries(lbr_core PUBLIC m)
+lbr_apply_warnings(lbr_core)
 
-add_executable(test_protocol test_protocol.c)
-target_link_libraries(test_protocol PRIVATE lbr_core)
-add_test(NAME protocol COMMAND test_protocol)
+if(LBR_SANITIZE AND NOT CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(lbr_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer
+                                           -fno-sanitize-recover=all)
+    target_link_options(lbr_core PUBLIC -fsanitize=address,undefined)
+endif()
+
+set(LBR_TESTS util)
+foreach(name IN LISTS LBR_TESTS)
+    add_executable(test_${name} test_${name}.c)
+    target_link_libraries(test_${name} PRIVATE lbr_core)
+    lbr_apply_warnings(test_${name})
+    add_test(NAME ${name} COMMAND test_${name})
+endforeach()

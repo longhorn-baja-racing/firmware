@@ -1,0 +1,14 @@
+# Formatting policy for LBR firmware (checked in CI with clang-format --dry-run --Werror).
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+BreakBeforeBraces: Linux
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveDeclarations: Consecutive
+AlignConsecutiveMacros: Consecutive
+AlignTrailingComments: true
+PointerAlignment: Right
+SortIncludes: Never
+IndentCaseLabels: true
