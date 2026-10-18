@@ -105,7 +105,7 @@ jobs:
           extra=""
           if [ "${{ matrix.variant }}" = linkcheck ]; then
             # Placeholder pins so every hardware path is compiled and linked.
-            extra="-DLBR_SDKCONFIG_EXTRA=$GITHUB_WORKSPACE/tests/ci/sdkconfig.linkcheck"
+            extra="-DLBR_SDKCONFIG_EXTRA=$GITHUB_WORKSPACE/dev/ci/sdkconfig.linkcheck"
           fi
           cd car/nodes/${{ matrix.node }}
           idf.py -B build $extra build
