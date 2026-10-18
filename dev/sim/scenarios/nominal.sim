@@ -1,0 +1,19 @@
+# A normal run: every node boots, synchronizes, and publishes; the gateway
+# logs the whole bus to SD and drives its links.
+at 2.0  expect all seen == 1
+at 2.0  expect all synced == 1
+at 5.0  expect all state == RUN
+at 5.0  expect gateway state == RUN
+at 10.0 expect all sync_err_us < 50
+at 10.0 expect bus load < 60
+at 10.0 expect bus load > 30
+at 10.0 expect all tx_dropped == 0
+at 10.0 expect all overflow == 0
+at 10.0 expect gateway log_dropped == 0
+at 10.0 expect gateway usb_pkts > 150
+# Defaults (SF9, 125 kHz, 10% duty, full packets) give ~1.2 s on air per
+# packet and one packet every ~12 s; see issue #6.
+at 10.0 expect gateway lora_pkts >= 1
+at 10.0 expect log intact == 1
+at 10.0 expect log frames > 25000
+end 10.0

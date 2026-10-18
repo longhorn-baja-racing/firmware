@@ -1,0 +1,14 @@
+# Clock discipline at the edge of the crystal spec, and a gateway reboot
+# starting a new timeline (epoch).
+at 0.0  drift imu_gps 400
+at 0.0  drift dashboard -400
+at 0.0  drift stress 250
+at 10.0 expect all sync_err_us < 50
+at 10.0 expect all synced == 1
+
+at 12.0 reboot gateway
+at 16.0 expect all event:TIME_SYNCED >= 2
+at 20.0 expect all sync_err_us < 50
+at 20.0 expect gateway boot_count == 2
+at 20.0 expect all state == RUN
+end 20.0

@@ -1,0 +1,33 @@
+# The authoritative SD log: a pulled card is reported and a new session
+# starts when it is back (the keeper retries every 5 s); write errors close
+# the session and are counted, never silent.
+at 3.0  expect gateway state == RUN
+at 3.0  expect gateway overflow == 0
+at 3.0  expect stress overflow == 0
+at 3.0  sd remove
+at 4.0  expect gateway state == DEGRADED
+at 4.0  expect gateway event:SD_WRITE_ERROR == 1
+at 4.0  expect suspension state == RUN
+at 6.0  sd insert
+at 7.0  expect gateway state == DEGRADED
+at 9.0  expect gateway state == RUN
+at 9.0  expect gateway event:SD_MOUNTED >= 1
+at 9.0  expect log intact == 1
+at 9.0  expect log frames > 2000
+
+at 10.0 sd fail 3
+at 11.0 expect gateway state == DEGRADED
+at 11.0 expect gateway event:SD_WRITE_ERROR == 2
+at 16.0 expect gateway state == RUN
+at 16.0 expect log intact == 1
+
+# The stress node's local card: same keeper, its node goes DEGRADED.
+at 17.0 sd stress remove
+at 18.0 expect stress state == DEGRADED
+at 18.0 expect stress event:SD_WRITE_ERROR == 1
+# First remount attempt 5 s after the write error finds no card.
+at 22.5 expect stress event:SD_MISSING == 1
+at 23.0 sd stress insert
+at 28.0 expect stress state == RUN
+at 28.0 expect stress event:SD_MOUNTED >= 1
+end 28.0

@@ -243,7 +243,9 @@ car/                          # ON THE CAR: everything that is flashed to an ESP
     gateway/                  #     CAN logger + telemetry + time-sync source
     imu_gps/ suspension/ driver_inputs/ temperature/ fuel_gauge/ stress/ dashboard/
 dev/                          # DEVELOPMENT ONLY: never built into firmware
-  tests/host/                 #   CMake/CTest build of the pure logic + fixture generator
+  CMakeLists.txt              #   host build: unit tests, fixtures, simulator
+  sim/                        #   car simulator: real firmware logic on a simulated car + browser UI
+  tests/host/                 #   unit tests of the pure logic + fixture generator
   tests/fixtures/             #   golden fixtures shared with lbr-dashboard
   ci/                         #   CI-only sdkconfig overlays (not pin maps)
   tools/lbr_decode.py         #   reference decoder: logs, streams, USB serial, fixture self-test
@@ -255,6 +257,11 @@ docs/                         # protocol, CAN ids, hardware, sensors
 **`car/` is what goes on the car; `dev/` never does.** Node builds only see `car/`, CI fails if
 anything in `car/` includes or builds from `dev/`, and the bench sensor simulator
 (`CONFIG_LBR_SENSOR_SIM`) is compiled into a node only when that bench option is on.
+
+The node runtime, the gateway, and the SD session keeper are pure logic (`node_core.c`,
+`gw_core.c`, `log_keeper.c`) behind small hardware tables; the `*_esp.c` files only connect
+them to FreeRTOS, TWAI, SD, and the radios. That is what lets the host tests and the
+simulator run exactly the code that is flashed.
 
 Each node in `car/nodes/` is a self-contained ESP-IDF project (its own top-level `CMakeLists.txt`
 + `main/`) that pulls in the shared `car/components/` via `EXTRA_COMPONENT_DIRS` and builds only
@@ -301,16 +308,22 @@ An extra sdkconfig overlay can be layered on any node:
 idf.py -DLBR_SDKCONFIG_EXTRA=$PWD/../../../dev/ci/sdkconfig.linkcheck build
 ```
 
-Host-side unit tests build and run without hardware:
+Host-side unit tests and the simulator build and run without hardware:
 
 ```sh
-cmake -S dev/tests/host -B build-host -G Ninja
-cmake --build build-host
-ctest --test-dir build-host --output-on-failure
-ctest --test-dir build-host -R <test_name>        # e.g. -R logging
-cmake --build build-host --target fixtures       # regenerate golden fixtures (format change)
-python3 dev/tools/lbr_decode.py --selftest           # reference decoder vs fixtures
+cmake -S dev -B build-dev -G Ninja
+cmake --build build-dev
+ctest --test-dir build-dev --output-on-failure   # unit tests, fixtures, simulator scenarios
+ctest --test-dir build-dev -R <test_name>        # e.g. -R logging, -R sim_can_faults
+cmake --build build-dev --target fixtures        # regenerate golden fixtures (format change)
+python3 dev/tools/lbr_decode.py --selftest       # reference decoder vs fixtures
+python3 dev/sim/ui/server.py                     # simulator UI at http://127.0.0.1:8765/
 ```
+
+The simulator ([`dev/sim/README.md`](dev/sim/README.md)) runs every node's real firmware
+logic on a simulated car: a 2D view of the nodes, sensors, and CAN bus, the hardware commands
+each node issues, fault injection (unplugged parts and cables, bus-off, noise, clock drift, SD
+card loss, reboots), and scripted scenarios that run in CI.
 
 Bench tools:
 
@@ -330,13 +343,14 @@ The node projects are `lbr_gateway`, `lbr_imu_gps`, `lbr_suspension`, `lbr_drive
 Before merging firmware changes:
 
 1. run host-side unit tests for protocol encoding/decoding, CAN record (de)serialization, timestamp/sequence rollover, time-base sync, queues, log recovery, and configuration validation;
+   and the simulator scenarios, adding one for any behavior the change touches;
 2. build every affected node with **warnings treated as errors**;
 3. run formatting and static-analysis checks;
 4. replay golden fixtures through the dashboard compatibility tests;
 5. complete hardware-in-the-loop smoke tests - multi-node CAN acquisition, time sync, gateway SD logging, LoRa/USB/WiFi/BLE framing, node disconnect/reconnect, bus-off recovery, and fault reporting - when hardware behavior changes.
 
-CI (`.github/workflows/ci.yml`) runs all host tests with gcc and clang, formatting, static
-analysis, the fixture replay, and builds every node on each pull request. Hardware-in-the-loop
+CI (`.github/workflows/ci.yml`) runs all host tests and simulator scenarios with gcc and clang,
+formatting, static analysis, the fixture replay, and builds every node on each pull request. Hardware-in-the-loop
 tests may run on a dedicated runner or be recorded as a required release checklist when hardware
 is unavailable to CI.
 

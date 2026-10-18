@@ -1,6 +1,7 @@
 #include <stdlib.h>
 
 #include "lbr/bytes.h"
+#include "lbr/log_keeper.h"
 #include "lbr/logging.h"
 #include "lbr/version.h"
 #include "lbr_test.h"
@@ -356,6 +357,99 @@ static void test_sync_interval(void)
     CHECK_EQ_I(m.syncs, 2);
 }
 
+/* ---- SD session keeper -------------------------------------------------- */
+
+typedef struct {
+    bool        card;
+    int         mounts, unmounts, opens;
+    mem_store_t store;
+    int         events[0x40];
+} card_t;
+
+static bool kc_mount(void *ctx)
+{
+    card_t *c = ctx;
+    c->mounts++;
+    return c->card;
+}
+
+static void kc_unmount(void *ctx)
+{
+    ((card_t *)ctx)->unmounts++;
+}
+
+static bool kc_open(void *ctx, lbr_log_storage_t *st, char name[LBR_LOG_KEEPER_NAME_MAX])
+{
+    card_t *c = ctx;
+    c->opens++;
+    *st = storage_for(&c->store);
+    snprintf(name, LBR_LOG_KEEPER_NAME_MAX, "%08d.LBR", c->opens);
+    return true;
+}
+
+static void kc_event(void *ctx, uint16_t code, bool fault)
+{
+    (void)fault;
+    ((card_t *)ctx)->events[code & 0x3F]++;
+}
+
+static void test_keeper_card_lifecycle(void)
+{
+    static card_t       c;
+    static lbr_logger_t lg;
+    memset(&c, 0, sizeof c);
+    lbr_log_config_t cfg = {
+        .queue_mem        = s_queue,
+        .queue_cap        = sizeof s_queue,
+        .chunk            = s_chunk,
+        .chunk_cap        = sizeof s_chunk,
+        .sync_interval_ms = 1000,
+    };
+    CHECK_EQ_I(lbr_log_init(&lg, &cfg), 0);
+    lbr_log_keeper_hal_t hal     = {&c, kc_mount, kc_unmount, kc_open, kc_event};
+    lbr_log_session_t    session = {.node_id = 1, .config_text = "node=gateway\n"};
+    lbr_log_keeper_t     k;
+    lbr_log_keeper_init(&k, &lg, &hal, &session);
+
+    /* No card: one SD_MISSING, then retries only every LBR_LOG_KEEPER_RETRY_US. */
+    lbr_log_keeper_step(&k, 1000, 1000);
+    CHECK(!k.sd_present);
+    CHECK_EQ_I(c.events[LBR_EVT_SD_MISSING & 0x3F], 1);
+    lbr_log_keeper_step(&k, 2000, 2000);
+    CHECK_EQ_I(c.mounts, 1);
+    lbr_log_keeper_step(&k, 1000 + LBR_LOG_KEEPER_RETRY_US, 3000);
+    CHECK_EQ_I(c.mounts, 2);
+    CHECK_EQ_I(c.events[LBR_EVT_SD_MISSING & 0x3F], 1); /* reported once per outage */
+
+    /* Card in: session opens at the next attempt and records flow. */
+    c.card = true;
+    lbr_log_keeper_step(&k, 1000 + 2 * LBR_LOG_KEEPER_RETRY_US, 4000);
+    CHECK(k.sd_present);
+    CHECK(lbr_log_is_open(&lg));
+    CHECK_EQ_I(c.events[LBR_EVT_SD_MOUNTED & 0x3F], 1);
+    CHECK(strcmp(k.name, "00000001.LBR") == 0);
+    CHECK_EQ_I(lbr_log_append_text(&lg, "hello"), 0);
+    lbr_log_keeper_step(&k, 20000000, 5000);
+    size_t written = c.store.len;
+    CHECK(written > 0);
+
+    /* Write error: the session is closed out and the card remounted later. */
+    c.store.fail_writes = 1;
+    CHECK_EQ_I(lbr_log_append_text(&lg, "lost"), 0);
+    lbr_log_keeper_step(&k, 20020000, 6000);
+    CHECK(!lbr_log_is_open(&lg));
+    CHECK(!k.sd_present);
+    CHECK_EQ_I(c.events[LBR_EVT_SD_WRITE_ERROR & 0x3F], 1);
+    CHECK_EQ_I(c.unmounts, 3); /* two failed mounts + the write error */
+    CHECK(k.name[0] == '\0');
+    lbr_log_keeper_step(&k, 20020000 + LBR_LOG_KEEPER_RETRY_US, 7000);
+    CHECK(lbr_log_is_open(&lg));
+    CHECK_EQ_I(c.opens, 2); /* a new session file, never appending to the old one */
+
+    lbr_log_keeper_close(&k, 8000);
+    CHECK(!lbr_log_is_open(&lg));
+}
+
 int main(void)
 {
     RUN(test_write_and_read_back);
@@ -365,5 +459,6 @@ int main(void)
     RUN(test_failed_card);
     RUN(test_counter_rollover_in_records);
     RUN(test_sync_interval);
+    RUN(test_keeper_card_lifecycle);
     TEST_MAIN_END();
 }

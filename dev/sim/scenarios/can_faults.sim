@@ -1,0 +1,24 @@
+# CAN wiring and bus faults: a node unplugged from the bus is reported lost
+# and found again; bus-off recovers on its own; a noisy bus costs
+# retransmissions but no data.
+at 3.0  disconnect imu_gps
+at 7.0  expect imu_gps seen == 0
+at 7.0  expect gateway event:NODE_LOST >= 1
+at 7.0  expect suspension seen == 1
+at 8.0  connect imu_gps
+at 9.0  expect imu_gps seen == 1
+
+at 10.0 busoff suspension
+at 12.0 expect suspension event:CAN_BUS_OFF >= 1
+at 12.0 expect suspension bus_off == 1
+at 13.0 expect suspension state == RUN
+
+at 14.0 noise 20
+at 18.0 expect bus errors > 50
+at 18.0 expect all seen == 1
+at 18.0 expect all synced == 1
+at 18.0 expect all sync_err_us < 100
+at 18.0 noise 0
+at 18.0 expect gateway log_dropped == 0
+at 18.0 expect log intact == 1
+end 18.0

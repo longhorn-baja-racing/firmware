@@ -97,4 +97,4 @@ Edit the node's plan and run the host tests: `test_plans` checks the node's own 
 signal ownership across nodes, and the whole bus. A channel decimated on CAN
 (`publish_div > 1`) requires the node to keep a local log, so no sample is discarded unrecorded.
 A new signal goes at the end of its group in `signals.def` (append only), followed by
-`cmake --build build-host --target fixtures` and a matching update in `lbr-dashboard`.
+`cmake --build build-dev --target fixtures` and a matching update in `lbr-dashboard`.

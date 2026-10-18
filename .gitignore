@@ -22,3 +22,9 @@ build-host/
 .vscode/
 .idea/
 .DS_Store
+
+# Simulator output
+sim-out/
+
+# Python bytecode
+__pycache__/

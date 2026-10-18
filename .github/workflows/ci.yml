@@ -22,11 +22,15 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Configure (warnings as errors, ASan + UBSan)
-        run: cmake -S dev/tests/host -B build-host -G Ninja -DCMAKE_C_COMPILER=${{ matrix.cc }}
-      - name: Build
-        run: cmake --build build-host
-      - name: Test (includes golden fixture check)
-        run: ctest --test-dir build-host --output-on-failure
+        run: cmake -S dev -B build-dev -G Ninja -DCMAKE_C_COMPILER=${{ matrix.cc }}
+      - name: Build (unit tests, fixtures, simulator)
+        run: cmake --build build-dev
+      - name: Test (unit tests, golden fixtures, simulator scenarios)
+        run: ctest --test-dir build-dev --output-on-failure
+      - name: Simulator output decodes with the reference decoder
+        run: |
+          for f in build-dev/sim/runs/*/*.LBR; do python3 -I dev/tools/lbr_decode.py log "$f" > /dev/null; done
+          python3 -I dev/tools/lbr_decode.py stream build-dev/sim/runs/nominal/usb_stream.bin > /dev/null
 
   checks:
     name: format, static analysis, decoder
@@ -61,9 +65,9 @@ jobs:
           if [ $bad -ne 0 ]; then echo "car/ references dev/ (see above)"; exit 1; fi
       - name: Static analysis (clang-tidy on pure sources)
         run: |
-          cmake -S dev/tests/host -B build-host -G Ninja -DCMAKE_C_COMPILER=clang -DLBR_SANITIZE=OFF
+          cmake -S dev -B build-dev -G Ninja -DCMAKE_C_COMPILER=clang -DLBR_SANITIZE=OFF
           find car/components -name '*.c' ! -name '*_esp.c' -print0 |
-            xargs -0 clang-tidy -p build-host --quiet
+            xargs -0 clang-tidy -p build-dev --quiet
       - name: Reference decoder replays the golden fixtures
         run: python3 -I dev/tools/lbr_decode.py --selftest
 

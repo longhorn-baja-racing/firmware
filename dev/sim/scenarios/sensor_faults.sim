@@ -1,0 +1,41 @@
+# A sensor that stops responding is reported, retried, and recovers; an open
+# circuit on one channel is reported on that channel only; nothing is ever
+# published as a fake zero.
+at 3.0  unplug suspension travel
+at 3.5  expect suspension state == DEGRADED
+at 3.5  expect suspension event:SENSOR_INIT_FAIL >= 1
+at 3.5  expect SUSP_TRAVEL_FL valid == 0
+at 3.5  expect SUSP_TRAVEL_FL reason == SENSOR_FAULT
+at 3.5  expect driver_inputs state == RUN
+at 5.0  plug suspension travel
+at 8.0  expect suspension event:SENSOR_RECOVERED >= 1
+at 8.0  expect suspension state == RUN
+at 8.0  expect SUSP_TRAVEL_FL valid == 1
+
+# Broken wire on the front brake transducer: ADC reads ~0 mV, below the
+# input spec's window.
+at 9.0  open BRAKE_PRESS_FRONT
+at 9.5  expect BRAKE_PRESS_FRONT reason == SENSOR_FAULT
+at 9.5  expect BRAKE_PRESS_REAR valid == 1
+at 9.5  expect driver_inputs state == RUN
+at 10.0 close BRAKE_PRESS_FRONT
+at 10.5 expect BRAKE_PRESS_FRONT valid == 1
+
+# Beyond the throttle spec's physical range (max=105) but inside its electrical
+# window (hi=2450 mV); 112 % would read 2540 mV and be a SENSOR_FAULT instead.
+at 11.0 set THROTTLE_POS 107
+at 11.5 expect THROTTLE_POS reason == OUT_OF_RANGE
+at 12.0 auto THROTTLE_POS
+at 12.5 expect THROTTLE_POS valid == 1
+
+# The GPS receiver goes quiet: NO_DATA after the parser's 2 s staleness.
+at 13.0 unplug imu_gps gps
+at 15.5 expect GPS_LATITUDE reason == NO_DATA
+at 15.5 expect GPS_FIX reason == NO_DATA
+at 16.0 plug imu_gps gps
+at 17.0 expect GPS_LATITUDE valid == 1
+at 17.0 expect GPS_FIX value == 3
+
+at 17.0 expect all tx_dropped == 0
+at 17.0 expect log intact == 1
+end 17.0

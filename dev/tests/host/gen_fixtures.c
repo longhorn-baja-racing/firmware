@@ -613,7 +613,7 @@ static int emit(const char *dir, const char *name, const buf_t *b, int write)
     if (!same) {
         fprintf(stderr,
                 "fixture %s no longer matches the codec. If the format change is intended,\n"
-                "bump the version, regenerate (cmake --build build-host --target fixtures),\n"
+                "bump the version, regenerate (cmake --build build-dev --target fixtures),\n"
                 "and update lbr-dashboard in the same change.\n",
                 path);
         return 1;
