@@ -27,11 +27,6 @@ static SemaphoreHandle_t s_lock;
 static lbr_value_table_t s_values;
 static lbr_node_table_t  s_nodes;
 
-static const lbr_signal_id_t k_watch[] = {
-    LBR_SIG_GPS_SPEED,       LBR_SIG_TEMP_ENGINE, LBR_SIG_TEMP_CVT,     LBR_SIG_TEMP_BRAKE_FRONT,
-    LBR_SIG_TEMP_BRAKE_REAR, LBR_SIG_FUEL_LEVEL,  LBR_SIG_BATT_VOLTAGE, LBR_SIG_FAULT,
-};
-
 static void on_frame(const lbr_can_frame_t *f, uint64_t rx_shared_us, void *ctx)
 {
     (void)ctx;
@@ -73,8 +68,8 @@ void app_main(void)
     s_lock = xSemaphoreCreateMutex();
     lbr_value_table_init(&s_values, STALE_US);
     lbr_node_table_init(&s_nodes, NODE_TIMEOUT_US);
-    for (size_t i = 0; i < sizeof k_watch / sizeof k_watch[0]; i++) {
-        lbr_value_table_watch(&s_values, k_watch[i], 0);
+    for (size_t i = 0; i < lbr_dashboard_watch_count; i++) {
+        lbr_value_table_watch(&s_values, lbr_dashboard_watch[i], 0);
     }
 
     lbr_node_build(&lbr_plan_dashboard, LBR_NODE_UNBOUND_DRIVER, s_sensors, s_acq, &s_cfg);

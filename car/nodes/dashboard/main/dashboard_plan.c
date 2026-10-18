@@ -34,3 +34,9 @@ const lbr_node_plan_t lbr_plan_dashboard = {
     .local_log        = false,
     .listen_all       = true,
 };
+
+const lbr_signal_id_t lbr_dashboard_watch[] = {
+    LBR_SIG_GPS_SPEED,       LBR_SIG_TEMP_ENGINE, LBR_SIG_TEMP_CVT,     LBR_SIG_TEMP_BRAKE_FRONT,
+    LBR_SIG_TEMP_BRAKE_REAR, LBR_SIG_FUEL_LEVEL,  LBR_SIG_BATT_VOLTAGE, LBR_SIG_FAULT,
+};
+const size_t lbr_dashboard_watch_count = sizeof lbr_dashboard_watch / sizeof lbr_dashboard_watch[0];

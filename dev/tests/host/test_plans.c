@@ -10,9 +10,11 @@
 #include "lbr_test.h"
 
 /* Defaults the firmware ships with (CONFIG_LBR_CAN_BITRATE,
- * CONFIG_LBR_CAN_NODE_BUDGET_PERMILLE). Keep in sync with car/components/can/Kconfig. */
+ * CONFIG_LBR_CAN_NODE_BUDGET_PERMILLE, CONFIG_LBR_CAN_TX_QUEUE_LEN). Keep in
+ * sync with car/components/can/Kconfig. */
 #define BITRATE          1000000u
 #define NODE_BUDGET_PERM 150u
+#define TX_QUEUE_LEN     64u
 
 static const lbr_node_plan_t *const k_plans[] = {
     &lbr_plan_imu_gps,    &lbr_plan_suspension, &lbr_plan_driver_inputs, &lbr_plan_temperature,
@@ -118,6 +120,28 @@ static void test_decimation_only_with_local_log(void)
     CHECK(local <= 2);
 }
 
+/*
+ * Every slot of a node can come due in the same instant as its heartbeat
+ * (their periods divide one second), and all of those frames are queued
+ * before the first one is on the wire. The TX queue must hold that burst
+ * plus a couple of events, or frames are dropped every second. Found by the
+ * simulator on imu_gps with a 32-frame queue.
+ */
+static void test_burst_fits_tx_queue(void)
+{
+    for (size_t i = 0; i < N_PLANS; i++) {
+        size_t burst = LBR_HEALTH_PAGE_COUNT + 2u; /* heartbeat + EVENT/FAULT */
+        for (size_t k = 0; k < k_plans[i]->n_slots; k++) {
+            burst += k_plans[i]->slots[k].n_signals;
+        }
+        if (burst > TX_QUEUE_LEN) {
+            fprintf(stderr, "  %s: worst-case burst %u > TX queue %u\n",
+                    lbr_node_name(k_plans[i]->node_id), (unsigned)burst, TX_QUEUE_LEN);
+        }
+        CHECK(burst <= TX_QUEUE_LEN);
+    }
+}
+
 int main(void)
 {
     RUN(test_each_plan_valid);
@@ -125,5 +149,6 @@ int main(void)
     RUN(test_each_signal_has_one_owner);
     RUN(test_system_budget);
     RUN(test_decimation_only_with_local_log);
+    RUN(test_burst_fits_tx_queue);
     TEST_MAIN_END();
 }

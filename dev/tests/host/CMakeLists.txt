@@ -24,6 +24,7 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/can/can.c"
     "${LBR_COMPONENTS}/timebase/timebase.c"
     "${LBR_COMPONENTS}/logging/logging.c"
+    "${LBR_COMPONENTS}/logging/log_keeper.c"
     "${LBR_COMPONENTS}/sensors/sensor_unconfigured.c"
     "${LBR_COMPONENTS}/sensors/sensor_sim.c"
     "${LBR_COMPONENTS}/sensors/sensor_io.c"

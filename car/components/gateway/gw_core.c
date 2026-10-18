@@ -140,8 +140,9 @@ void lbr_gw_core_event(lbr_gw_core_t *c, lbr_event_code_t code, uint16_t arg, bo
     uint32_t        pub_seq = 0;
     lbr_can_frame_t f;
 
-    say(c, fault ? LBR_LOG_LVL_ERROR : LBR_LOG_LVL_WARN, "%s 0x%04x arg %u",
-        fault ? "FAULT" : "event", (unsigned)code, (unsigned)arg);
+    const char *name = lbr_event_name(code);
+    say(c, fault ? LBR_LOG_LVL_ERROR : LBR_LOG_LVL_WARN, "%s %s (0x%04x) arg %u",
+        fault ? "FAULT" : "event", name != NULL ? name : "?", (unsigned)code, (unsigned)arg);
     uint64_t t = c->hal.now_us(c->hal.ctx);
     lock(c, LBR_GW_LOCK_EVENT);
     lbr_stream_sample(fault ? &c->fault_stream : &c->evt_stream, 1, NODE_ID,

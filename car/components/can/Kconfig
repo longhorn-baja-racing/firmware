@@ -32,7 +32,11 @@ menu "LBR CAN bus"
 
     config LBR_CAN_TX_QUEUE_LEN
         int "TX queue length (frames)"
-        default 32
+        default 64
+        help
+            Must hold a node's worst-case burst: every slot and the 12
+            heartbeat pages can come due at the same instant (checked for
+            every plan in dev/tests/host/test_plans.c).
 
     config LBR_CAN_NODE_BUDGET_PERMILLE
         int "Per-node CAN bandwidth budget (permille of bit rate)"

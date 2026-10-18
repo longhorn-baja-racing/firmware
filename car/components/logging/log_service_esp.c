@@ -9,18 +9,19 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "lbr/log_keeper.h"
 #include "lbr/protocol.h"
 #include "lbr/version.h"
 
 static const char *TAG = "lbr_logsvc";
 
 #define PUMP_PERIOD_MS 20
-#define MOUNT_RETRY_US 5000000u
 #define CHUNK_SIZE     8192
 #define TASK_PRIO      5
 
 static lbr_log_service_config_t s_cfg;
 static lbr_logger_t             s_log;
+static lbr_log_keeper_t         s_keeper;
 static SemaphoreHandle_t        s_lock;
 static atomic_bool              s_sd_present;
 static char                     s_name[LBR_SD_NAME_MAX];
@@ -49,53 +50,48 @@ static void set_name(const char *name)
     portEXIT_CRITICAL(&s_name_mux);
 }
 
-static void event(uint16_t code, bool fault)
+_Static_assert(LBR_LOG_KEEPER_NAME_MAX == LBR_SD_NAME_MAX, "keeper and SD name sizes differ");
+
+/* Keeper HAL: the SD card through log_sd_esp.c. */
+static bool k_mount(void *ctx)
 {
+    (void)ctx;
+    return lbr_sd_mount() == LBR_SD_OK;
+}
+
+static void k_unmount(void *ctx)
+{
+    (void)ctx;
+    lbr_sd_unmount();
+}
+
+static bool k_open_file(void *ctx, lbr_log_storage_t *st, char name[LBR_LOG_KEEPER_NAME_MAX])
+{
+    (void)ctx;
+    return lbr_sd_open_session(st, name) == LBR_SD_OK;
+}
+
+static void k_event(void *ctx, uint16_t code, bool fault)
+{
+    (void)ctx;
+    if (code == LBR_EVT_SD_WRITE_ERROR) {
+        ESP_LOGE(TAG, "SD write error; closing session and remounting");
+    }
     if (s_cfg.on_event != NULL) {
         s_cfg.on_event(code, fault);
     }
 }
 
-static bool open_session(void)
-{
-    lbr_log_storage_t st;
-    char              name[LBR_SD_NAME_MAX];
-    lbr_log_session_t session = {
-        .fw_version    = LBR_FW_VERSION,
-        .node_id       = s_cfg.node_id,
-        .reset_reason  = s_cfg.reset_reason,
-        .boot_count    = s_cfg.boot_count,
-        .start_time_us = s_cfg.now_us(),
-        .config_text   = s_cfg.config_text,
-    };
-    if (lbr_sd_open_session(&st, name) != LBR_SD_OK) {
-        return false;
-    }
-    if (lbr_log_open(&s_log, &st, &session) != 0) {
-        st.close(st.ctx);
-        return false;
-    }
-    set_name(name);
-    return true;
-}
-
 static void writer_task(void *arg)
 {
     (void)arg;
-    uint64_t next_mount  = 0;
-    uint32_t last_errors = 0;
-    bool     reported    = false;
-
     for (;;) {
         /* Sleep one pump period, or less if a close is requested. */
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(PUMP_PERIOD_MS));
-        uint64_t mono = (uint64_t)esp_timer_get_time();
 
         if (s_close_waiter != NULL) {
             /* Only this task touches the file, so closing here cannot race a pump. */
-            if (lbr_log_is_open(&s_log)) {
-                lbr_log_close(&s_log, s_cfg.now_us());
-            }
+            lbr_log_keeper_close(&s_keeper, s_cfg.now_us());
             set_name("");
             atomic_store(&s_closed_for_good, true);
             TaskHandle_t waiter = s_close_waiter;
@@ -105,43 +101,9 @@ static void writer_task(void *arg)
         if (atomic_load(&s_closed_for_good)) {
             continue;
         }
-
-        if (!lbr_log_is_open(&s_log)) {
-            if (mono < next_mount) {
-                continue;
-            }
-            next_mount = mono + MOUNT_RETRY_US;
-            if (lbr_sd_mount() != LBR_SD_OK || !open_session()) {
-                lbr_sd_unmount();
-                atomic_store(&s_sd_present, false);
-                if (!reported) {
-                    event(LBR_EVT_SD_MISSING, true);
-                    reported = true;
-                }
-                continue;
-            }
-            atomic_store(&s_sd_present, true);
-            reported = false;
-            lbr_log_stats_t ls;
-            lbr_log_get_stats(&s_log, &ls);
-            last_errors = ls.write_errors;
-            event(LBR_EVT_SD_MOUNTED, false);
-            continue;
-        }
-
-        lbr_log_pump(&s_log, s_cfg.now_us());
-        lbr_log_stats_t ls;
-        lbr_log_get_stats(&s_log, &ls);
-        if (ls.write_errors != last_errors) {
-            /* Card pulled or failing: close out, remount on a later pass. */
-            ESP_LOGE(TAG, "SD write error; closing session and remounting");
-            event(LBR_EVT_SD_WRITE_ERROR, true);
-            lbr_log_close(&s_log, s_cfg.now_us());
-            lbr_sd_unmount();
-            set_name("");
-            atomic_store(&s_sd_present, false);
-            next_mount = mono + MOUNT_RETRY_US;
-        }
+        lbr_log_keeper_step(&s_keeper, (uint64_t)esp_timer_get_time(), s_cfg.now_us());
+        atomic_store(&s_sd_present, s_keeper.sd_present);
+        set_name(s_keeper.name);
     }
 }
 
@@ -167,6 +129,25 @@ bool lbr_log_service_start(const lbr_log_service_config_t *cfg)
     if (lbr_log_init(&s_log, &lc) != 0) {
         return false;
     }
+    static const lbr_log_keeper_hal_t hal = {
+        .mount     = k_mount,
+        .unmount   = k_unmount,
+        .open_file = k_open_file,
+        .on_event  = k_event,
+    };
+    lbr_log_session_t session = {
+        .fw_version   = LBR_FW_VERSION,
+        .node_id      = cfg->node_id,
+        .reset_reason = cfg->reset_reason,
+        .boot_count   = cfg->boot_count,
+        .config_text  = cfg->config_text,
+    };
+    lbr_log_keeper_init(&s_keeper, &s_log, &hal, &session);
+    /* Mount and open the first session now, before the caller logs its boot
+     * events and first samples (they would be rejected as "log closed"). */
+    lbr_log_keeper_step(&s_keeper, (uint64_t)esp_timer_get_time(), cfg->now_us());
+    atomic_store(&s_sd_present, s_keeper.sd_present);
+    set_name(s_keeper.name);
     return xTaskCreate(writer_task, "lbr_logw", 4096, NULL, TASK_PRIO, &s_writer) == pdPASS;
 }
 

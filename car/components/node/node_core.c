@@ -66,8 +66,9 @@ void lbr_node_core_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg
     lbr_sample_t  s;
     uint32_t      pub_seq = 0;
 
-    say(c, fault ? LBR_LOG_LVL_ERROR : LBR_LOG_LVL_WARN, "%s 0x%04x arg %u",
-        fault ? "FAULT" : "event", (unsigned)code, (unsigned)arg);
+    const char *name = lbr_event_name(code);
+    say(c, fault ? LBR_LOG_LVL_ERROR : LBR_LOG_LVL_WARN, "%s %s (0x%04x) arg %u",
+        fault ? "FAULT" : "event", name != NULL ? name : "?", (unsigned)code, (unsigned)arg);
     uint64_t t      = c->hal.now_us(c->hal.ctx);
     bool     synced = c->hal.time_synced(c->hal.ctx);
     lock(c);
