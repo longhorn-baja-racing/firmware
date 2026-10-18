@@ -12,20 +12,28 @@ companion desktop application lives in
 The recommended runtime is **C/C++ on ESP-IDF** (Espressif's official framework), using the
 ESP32's built-in **TWAI** controller for CAN with an external CAN transceiver.
 
-There is **no GPS requirement for the 2026 system**.
+The 2026 vehicle carries seven sensor projects, each its own CAN node: **IMU/GPS, suspension,
+driver inputs, temperature, fuel gauge, stress (strain), and the cockpit dashboard**, plus the
+gateway/logger.
 
 ## Project status
 
-The repository skeleton is in place and the host test build is green:
+The framework is in place and tested; sensor parts and pins are not chosen yet.
 
-- shared libraries scaffolded in `components/` (protocol with a stable signal catalog,
-  transport interface, logging, health, timebase, generic sensor interface);
-- one ESP-IDF app per node in `nodes/` (`gateway`, `powertrain`, `dynamics`);
-- a `tests/host/` CMake/CTest build that compiles the pure logic with warnings as errors.
+- **Shared libraries** (`components/`): protocol + signal catalog, CAN ID map and TWAI
+  adapter, CAN-distributed time sync, recoverable SD logging, heartbeat/health, sensor
+  framework, node runtime, live transports (USB, LoRa, WiFi, BLE), and gateway logic. The
+  hardware-independent parts run in host tests under ASan/UBSan.
+- **Node apps** (`nodes/`): the gateway plus one app per sensor project. Every sensor node
+  publishes its full channel list today; channels without a chosen part report
+  `valid = false / NOT_FITTED` until a driver is bound (or simulated data with
+  `CONFIG_LBR_SENSOR_SIM`, bench only).
+- **CI** runs host tests (gcc + clang), formatting, static analysis, the golden-fixture
+  replay, and builds every node twice (shipped config and a link-coverage overlay).
 
-Firmware logic is still stubbed (`TODO`s), and the following are deliberately **TBD** pending
-decisions: concrete sensor parts, per-node GPIO/pins, the frozen wire/log byte layout, and the
-exact CAN ID map. See `docs/` for the per-topic trackers.
+Open, by design: concrete sensor parts and drivers (#10), per-node GPIO and CAN bus
+parameters (#15), and agreeing the canonical spec location with `lbr-dashboard` (#14). All
+pins default to `-1` in Kconfig and the firmware refuses to drive an unset pin.
 
 ## 2026 goals
 
@@ -57,6 +65,22 @@ The firmware must:
 ```
 
 ### Nodes
+
+| Node | Id | Signals (catalog names) | Notes |
+| --- | --- | --- | --- |
+| `gateway` | 0x01 | events/faults, its own heartbeat | logger, time master, telemetry |
+| `imu_gps` | 0x02 | `ACCEL_*`, `GYRO_*` 100 Hz; `ORIENT_QUAT_*` 20 Hz; `MAG_*` 10 Hz; `GPS_*` 10 Hz | |
+| `suspension` | 0x03 | `SUSP_TRAVEL_FL/FR/RL/RR` 200 Hz | |
+| `driver_inputs` | 0x04 | `THROTTLE_POS`, `BRAKE_PRESS_FRONT/REAR`, `STEERING_ANGLE` 100 Hz; `BRAKE_SWITCH` 50 Hz | |
+| `temperature` | 0x05 | engine, CVT, gearbox, brakes 10 Hz; ambient 1 Hz; 4 aux 2 Hz | |
+| `fuel_gauge` | 0x06 | `FUEL_LEVEL`, `FUEL_VOLUME` 5 Hz | |
+| `stress` | 0x07 | `STRAIN_1..8` 1 kHz | local SD log at full rate; CAN gets 100 Hz |
+| `dashboard` | 0x08 | `DASH_BUTTONS` 20 Hz | in-cockpit display; listens to the whole bus |
+
+Rates are starting points in each node's plan (`nodes/<name>/main/<name>_plan.c`). The host
+tests validate every plan and the system-wide CAN load whenever one changes. The cockpit
+`dashboard` node is the driver's display in the car; it is unrelated to the `lbr-dashboard`
+desktop app.
 
 Each sensor node is an independent, independently testable ESP32 that:
 
@@ -92,10 +116,10 @@ counters rather than blocking one another indefinitely.
 CAN is the backbone. Every measurement, event, and health record travels as a schema-driven
 CAN frame; nodes are decoupled publishers/subscribers rather than point-to-point links.
 
-- Transport: ESP32 **TWAI** peripheral + an external CAN transceiver (e.g. SN65HVD230 / TJA1051). Classic CAN (up to 1 Mbit/s, shared across all nodes) is the baseline; CAN FD is a documented future option if bandwidth gets tight.
-- The bus is **bandwidth-limited and shared**: high-rate data may be logged locally at full fidelity while a reduced version is published on CAN. CAN fidelity is a budget, not an assumption.
-- Define a stable, documented CAN ID / arbitration plan (message IDs, priorities, source node identity). Safety/alarm and time-sync frames get priority IDs.
-- Specify bus bit rate, termination (120 ohm at both physical ends), and topology against the final harness before bring-up.
+- Transport: ESP32 **TWAI** peripheral + an external CAN transceiver (e.g. SN65HVD230 / TJA1051). Classic CAN at 1 Mbit/s (provisional, #15) is the baseline; CAN FD is a documented future option if bandwidth gets tight.
+- The bus is **bandwidth-limited and shared**: high-rate data may be logged locally at full fidelity while a reduced version is published on CAN. CAN fidelity is a budget, not an assumption: every node configuration is checked against a per-node budget at boot, and the host tests check the whole system (48.7% of 1 Mbit/s today, ceiling 60%).
+- The CAN ID plan (`docs/can-ids.md`) uses 29-bit IDs carrying priority, kind, source node, and signal id. Faults and time sync have the highest priorities.
+- Bus bit rate, termination (120 ohm at both physical ends), and topology are verified against the final harness before bring-up.
 
 ## Time, sequence, and freshness
 
@@ -201,59 +225,88 @@ harness before any hardware-initialization code is merged.
 ```text
 cmake/warnings.cmake      # shared warnings-as-errors policy
 docs/
-  hardware.md             # node grouping + pin map (TBD)
-  protocol.md             # firmware-side view of the shared protocol
-  can-ids.md              # CAN ID / arbitration map (draft)
-components/               # shared, host-testable libraries (ESP-IDF components)
-  protocol/               #   signal catalog (signals.h) + sample encode/decode
-  transport/              #   one record model behind LoRa/USB/WiFi/BLE
-  logging/                #   append-oriented, recoverable SD log
-  health/                 #   heartbeat/status record
-  timebase/               #   shared CAN-distributed monotonic clock
-  sensors/                #   generic sensor interface (concrete parts TBD)
-nodes/                    # one standalone ESP-IDF app per physical node
+  protocol.md             # firmware-side view of the shared protocol (byte layouts)
+  can-ids.md              # CAN ID / arbitration map and bandwidth budget
+  hardware.md             # node grouping + pin map (TBD) + Kconfig pin settings
+  sensors.md              # how to add a sensor driver
+components/               # shared libraries (ESP-IDF components); *_esp.c = hardware side
+  util/                   #   byte order, CRC-32, COBS, bounded ring buffer
+  protocol/               #   signal catalog (signals.def), sample codec, node ids
+  health/                 #   heartbeat record + CAN page codec, reset reason
+  can/                    #   CAN ID map + frame codec; TWAI adapter
+  timebase/               #   CAN-distributed time sync servo
+  logging/                #   recoverable log format, bounded queue, SD service
+  sensors/                #   driver interface, unconfigured + simulator drivers
+  node/                   #   node plans/validation, shared sensor-node runtime
+  transport/              #   packet framing, LoRa policy; USB/LoRa/WiFi/BLE links
+  gateway/                #   gateway runtime config + status text
+nodes/                    # one ESP-IDF app per physical node
+  sdkconfig.common        #   settings shared by every node
   gateway/                #   CAN logger + telemetry + time-sync source
-  powertrain/             #   engine RPM, engine/CVT temps, fuel level
-  dynamics/               #   IMU, vehicle/wheel speed
+  imu_gps/ suspension/ driver_inputs/ temperature/ fuel_gauge/ stress/ dashboard/
 tests/
-  host/                   #   plain-CMake/CTest build of the pure logic
+  host/                   #   CMake/CTest build of the pure logic + fixture generator
   fixtures/               #   golden fixtures shared with lbr-dashboard
-tools/
-.github/workflows/
+  ci/                     #   CI-only sdkconfig overlays (not pin maps)
+tools/lbr_decode.py       # reference decoder: logs, streams, USB serial, fixture self-test
+.github/workflows/ci.yml
 ```
 
 Each node in `nodes/` is a self-contained ESP-IDF project (its own top-level `CMakeLists.txt`
-+ `main/`) that pulls in the shared `components/` via `EXTRA_COMPONENT_DIRS`. Node apps stay
-thin - wiring, configuration, and their sensor set. Shared logic lives in `components/` behind
-narrow interfaces so protocol, queue, time-sync, and log-recovery behavior is exercised in host
-tests without hardware. The node grouping above is a starting point (grouped by vehicle zone to
-shorten the harness); adding a node means copying a `nodes/<name>/` directory.
++ `main/`) that pulls in the shared `components/` via `EXTRA_COMPONENT_DIRS` and builds only
+what its `main` needs. Node apps stay thin: a plan (pure data: node id, channels, rates) and
+driver binding. Shared logic lives in `components/` behind narrow interfaces so protocol,
+queue, time-sync, and log-recovery behavior is exercised in host tests without hardware.
+Adding a node means copying a `nodes/<name>/` directory, giving it a new id in
+`components/protocol/include/lbr/nodes.h`, and adding its plan to `tests/host/CMakeLists.txt`.
 
 ## Build workflow
 
-Prerequisites: install **ESP-IDF** (pin a known version) and its toolchain, and run its export
-script so `idf.py` is on your `PATH`.
+Prerequisites: ESP-IDF **v6.1** and its toolchain, with its export script sourced so `idf.py`
+is on your `PATH`.
 
 ```sh
 # from a node app directory, e.g. nodes/gateway
 idf.py set-target esp32
 idf.py build
 idf.py -p <PORT> flash monitor
+idf.py menuconfig          # LBR menus: CAN, microSD, node runtime, transports
 ```
 
-Host-side unit tests build and run without hardware (e.g. with CMake/CTest against the
-`components/` libraries):
+Pins live in Kconfig (`CONFIG_LBR_CAN_*_GPIO`, `CONFIG_LBR_SD_*`, `CONFIG_LBR_LORA_*`) and
+default to `-1` until the schematic confirms them (`docs/hardware.md`). Bench options:
+`CONFIG_LBR_SENSOR_SIM=y` (simulated sensor data, flagged in every heartbeat and log) and,
+on the gateway, `CONFIG_LBR_WIFI_PASSWORD` (WiFi stays off until it is set; never commit it).
+
+An extra sdkconfig overlay can be layered on any node:
+
+```sh
+idf.py -DLBR_SDKCONFIG_EXTRA=$PWD/../../tests/ci/sdkconfig.linkcheck build
+```
+
+Host-side unit tests build and run without hardware:
 
 ```sh
 cmake -S tests/host -B build-host -G Ninja
 cmake --build build-host
 ctest --test-dir build-host --output-on-failure
-ctest --test-dir build-host -R <test_name>   # run a single test
+ctest --test-dir build-host -R <test_name>        # e.g. -R logging
+cmake --build build-host --target fixtures       # regenerate golden fixtures (format change)
+python3 tools/lbr_decode.py --selftest           # reference decoder vs fixtures
 ```
 
-The node projects are `lbr_gateway`, `lbr_powertrain`, and `lbr_dynamics` (one per directory
-under `nodes/`). Production/release builds pin an ESP-IDF version and a reproducible toolchain
-in CI.
+Bench tools:
+
+```sh
+python3 tools/lbr_decode.py log 00000012.LBR             # decode a session log
+python3 tools/lbr_decode.py serial /dev/ttyUSB0          # live gateway view over USB
+python3 tools/lbr_decode.py serial /dev/ttyUSB0 --cmd LIST
+python3 tools/lbr_decode.py serial /dev/ttyUSB0 --cmd "DUMP 00000012.LBR" --out run.lbr
+```
+
+The node projects are `lbr_gateway`, `lbr_imu_gps`, `lbr_suspension`, `lbr_driver_inputs`,
+`lbr_temperature`, `lbr_fuel_gauge`, `lbr_stress`, and `lbr_dashboard`. CI pins the IDF
+version with the `espressif/idf:v6.1` image.
 
 ## Test workflow
 
@@ -265,9 +318,10 @@ Before merging firmware changes:
 4. replay golden fixtures through the dashboard compatibility tests;
 5. complete hardware-in-the-loop smoke tests - multi-node CAN acquisition, time sync, gateway SD logging, LoRa/USB/WiFi/BLE framing, node disconnect/reconnect, bus-off recovery, and fault reporting - when hardware behavior changes.
 
-CI runs all host tests and compiles every node on each pull request. Hardware-in-the-loop tests
-may run on a dedicated runner or be recorded as a required release checklist when hardware is
-unavailable to CI.
+CI (`.github/workflows/ci.yml`) runs all host tests with gcc and clang, formatting, static
+analysis, the fixture replay, and builds every node on each pull request. Hardware-in-the-loop
+tests may run on a dedicated runner or be recorded as a required release checklist when hardware
+is unavailable to CI.
 
 ## Reliability rules
 
