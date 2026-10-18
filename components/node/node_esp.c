@@ -13,6 +13,7 @@
 #include "lbr/log_service.h"
 #include "lbr/node.h"
 #include "lbr/nodes.h"
+#include "lbr/sensor_io.h"
 #include "lbr/timebase.h"
 #include "lbr/version.h"
 #include "sdkconfig.h"
@@ -27,7 +28,7 @@ static const char *TAG = "lbr_node";
 #define SD_RETRY_US      5000000u
 #define LOG_PUMP_MS      20
 #define LOG_CHUNK_SIZE   8192
-#define CONFIG_TEXT_MAX  1536
+#define CONFIG_TEXT_MAX  LBR_NODE_CONFIG_TEXT_MAX
 
 typedef struct {
     const lbr_acq_t   *acq;
@@ -382,6 +383,16 @@ static void health_task(void *arg)
 
 /* ------------------------------------------------------------------------ */
 /* Entry                                                                     */
+
+void lbr_node_bind_io(const lbr_node_plan_t *plan, size_t slot, lbr_sensor_t *sensors,
+                      const char *spec)
+{
+    if (spec == NULL || spec[0] == '\0' || slot >= plan->n_slots) {
+        return;
+    }
+    const lbr_slot_t *s = &plan->slots[slot];
+    lbr_sensor_io(&sensors[slot], s->name, s->signals, s->n_signals, spec);
+}
 
 void lbr_node_run(const lbr_node_config_t *cfg)
 {

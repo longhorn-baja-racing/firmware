@@ -1,4 +1,5 @@
 #include "imu_gps_plan.h"
+#include "lbr/nmea.h"
 #include "sdkconfig.h"
 
 /*
@@ -23,12 +24,24 @@ void app_main(void)
     lbr_node_build(&lbr_plan_imu_gps, sim, s_sensors, s_acq, &s_cfg);
 
     /*
-     * Bind real drivers here as parts are chosen (issue #10), e.g.:
+     * GPS: any NMEA 0183 module on a UART (CONFIG_LBR_GPS_*). The IMU slots
+     * wait for a part-specific driver (issue #10), bound the same way:
      *
      *     lbr_sensor_<part>(&s_sensors[IMU_GPS_SLOT_IMU], ...);
      *
      * A bound driver must produce exactly the slot's signals, in order.
      */
+#if CONFIG_LBR_GPS_RX_GPIO >= 0
+    static const lbr_gps_uart_cfg_t gps = {
+        .uart_num = CONFIG_LBR_GPS_UART_NUM,
+        .rx_gpio  = CONFIG_LBR_GPS_RX_GPIO,
+        .tx_gpio  = CONFIG_LBR_GPS_TX_GPIO,
+        .baud     = CONFIG_LBR_GPS_BAUD,
+    };
+    const lbr_slot_t *slot = &lbr_plan_imu_gps.slots[IMU_GPS_SLOT_GPS];
+    lbr_sensor_gps_nmea(&s_sensors[IMU_GPS_SLOT_GPS], "gps_nmea", slot->signals, slot->n_signals,
+                        &gps);
+#endif
 
     lbr_node_run(&s_cfg);
 }

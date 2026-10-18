@@ -23,12 +23,20 @@ void app_main(void)
     lbr_node_build(&lbr_plan_driver_inputs, sim, s_sensors, s_acq, &s_cfg);
 
     /*
-     * Bind real drivers here as parts are chosen (issue #10), e.g.:
+     * Slots wired to on-chip ADC / pulse / digital inputs are configured in
+     * menuconfig (CONFIG_LBR_IO_*); empty settings leave them not fitted.
+     * Part-specific drivers (issue #10) replace a slot the same way:
      *
-     *     lbr_sensor_<part>(&s_sensors[DRIVER_INPUTS_SLOT_PEDALS], ...);
+     *     lbr_sensor_<part>(&s_sensors[DRIVER_INPUTS_SLOT_...], ...);
      *
      * A bound driver must produce exactly the slot's signals, in order.
      */
+    lbr_node_bind_io(&lbr_plan_driver_inputs, DRIVER_INPUTS_SLOT_PEDALS, s_sensors,
+                     CONFIG_LBR_IO_PEDALS);
+    lbr_node_bind_io(&lbr_plan_driver_inputs, DRIVER_INPUTS_SLOT_STEERING, s_sensors,
+                     CONFIG_LBR_IO_STEERING);
+    lbr_node_bind_io(&lbr_plan_driver_inputs, DRIVER_INPUTS_SLOT_BRAKE_SWITCH, s_sensors,
+                     CONFIG_LBR_IO_BRAKE_SWITCH);
 
     lbr_node_run(&s_cfg);
 }

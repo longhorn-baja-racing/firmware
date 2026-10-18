@@ -14,8 +14,9 @@
  * local SD logging, and fault reporting are identical on every node.
  */
 
-#define LBR_NODE_MAX_SENSORS 16u /* sensor_status / calibration bitmasks are 32-bit */
-#define LBR_NODE_MAX_RATE_HZ 1000u
+#define LBR_NODE_MAX_SENSORS     16u /* sensor_status / calibration bitmasks are 32-bit */
+#define LBR_NODE_MAX_RATE_HZ     1000u
+#define LBR_NODE_CONFIG_TEXT_MAX 4096u /* canonical config text, including driver params */
 
 /* One driver scheduled at one rate. */
 typedef struct {
@@ -120,6 +121,12 @@ bool lbr_stream_sample(lbr_stream_t *st, uint16_t publish_div, uint8_t source,
  * return. A configuration that fails validation still runs CAN and the
  * heartbeat (state CONFIG_INVALID) so the fault is visible on the bus. */
 void lbr_node_run(const lbr_node_config_t *cfg);
+
+/* Bind the part-independent input driver (lbr/sensor_io.h) to plan slot
+ * `slot` when `spec` is non-empty; an empty spec leaves the slot as built.
+ * Call between lbr_node_build() and lbr_node_run(). */
+void lbr_node_bind_io(const lbr_node_plan_t *plan, size_t slot, lbr_sensor_t *sensors,
+                      const char *spec);
 
 /* Publish an event or fault (LBR_SIG_EVENT / LBR_SIG_FAULT) from app code. */
 void lbr_node_emit_event(lbr_event_code_t code, uint16_t arg, bool fault);

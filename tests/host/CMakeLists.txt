@@ -26,6 +26,8 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/logging/logging.c"
     "${LBR_COMPONENTS}/sensors/sensor_unconfigured.c"
     "${LBR_COMPONENTS}/sensors/sensor_sim.c"
+    "${LBR_COMPONENTS}/sensors/sensor_io.c"
+    "${LBR_COMPONENTS}/sensors/nmea.c"
     "${LBR_COMPONENTS}/node/node_config.c"
     "${LBR_COMPONENTS}/node/node_table.c"
     "${LBR_COMPONENTS}/transport/packet.c"

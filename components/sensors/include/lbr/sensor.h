@@ -57,6 +57,10 @@ struct lbr_sensor {
      * LBR_HF_SIM_SENSORS so no log mistakes it for a measurement. */
     bool simulated;
 
+    /* Optional: the driver's configuration text (e.g. an input spec), recorded
+     * verbatim in the session config. NULL = none. Printable ASCII only. */
+    const char *params;
+
     void *ctx;
 };
 

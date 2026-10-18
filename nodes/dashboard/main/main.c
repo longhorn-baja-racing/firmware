@@ -82,7 +82,9 @@ void app_main(void)
     }
 
     lbr_node_build(&lbr_plan_dashboard, sim, s_sensors, s_acq, &s_cfg);
-    /* Bind the button driver here once the panel is chosen (issue #10). */
+    /* Buttons on GPIOs are set in menuconfig (CONFIG_LBR_IO_BUTTONS); a panel
+     * with its own driver replaces the slot instead (issue #10). */
+    lbr_node_bind_io(&lbr_plan_dashboard, DASHBOARD_SLOT_BUTTONS, s_sensors, CONFIG_LBR_IO_BUTTONS);
     s_cfg.on_frame = on_frame;
 
     xTaskCreate(display_task, "dash_display", 4096, NULL, 4, NULL);

@@ -27,11 +27,13 @@ The framework is in place and tested; sensor parts and pins are not chosen yet.
 - **Node apps** (`nodes/`): the gateway plus one app per sensor project. Every sensor node
   publishes its full channel list today; channels without a chosen part report
   `valid = false / NOT_FITTED` until a driver is bound (or simulated data with
-  `CONFIG_LBR_SENSOR_SIM`, bench only).
+  `CONFIG_LBR_SENSOR_SIM`, bench only). Analog, pulse, and switch sensors and any NMEA GPS
+  need no driver code: they are wired and calibrated from menuconfig
+  ([`docs/sensors.md`](docs/sensors.md)).
 - **CI** runs host tests (gcc + clang), formatting, static analysis, the golden-fixture
   replay, and builds every node twice (shipped config and a link-coverage overlay).
 
-Open, by design: concrete sensor parts and drivers (#10), per-node GPIO and CAN bus
+Open, by design: part-specific drivers (IMU, strain amplifier, thermocouples; #10), per-node GPIO and CAN bus
 parameters (#15), and agreeing the canonical spec location with `lbr-dashboard` (#14). All
 pins default to `-1` in Kconfig and the firmware refuses to drive an unset pin.
 

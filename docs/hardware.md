@@ -35,7 +35,9 @@ Set per node with `idf.py menuconfig` or in that node's `sdkconfig.defaults` onc
 | microSD over SDMMC | `CONFIG_LBR_SD_BUS_SDMMC` (fixed ESP32 slot-1 pins), `CONFIG_LBR_SD_SDMMC_4BIT` | alternative |
 | LoRa (SX127x, SPI3) | `CONFIG_LBR_LORA_{SCLK,MOSI,MISO,CS,RST,DIO0}_GPIO` | gateway |
 | USB serial | UART0 through the module's USB-UART bridge | gateway |
-| Sensor buses | per driver, when parts are chosen | sensor nodes |
+| GPS (NMEA) | `CONFIG_LBR_GPS_{UART_NUM,RX_GPIO,TX_GPIO,BAUD}` | imu_gps |
+| On-chip ADC / pulse / digital inputs | `CONFIG_LBR_IO_<SLOT>` input specs (pins inside the spec, see [`sensors.md`](sensors.md)) | sensor nodes |
+| Sensor buses (I2C/SPI parts) | per driver, when parts are chosen | sensor nodes |
 
 `tests/ci/sdkconfig.linkcheck` contains placeholder pins used only so CI can link every
 hardware path. It is **not** a pin map.
@@ -58,7 +60,10 @@ hardware path. It is **not** a pin map.
 
 ## To verify against the final schematic and harness before bring-up (#15)
 
-- [ ] per-node GPIO for every setting above
+- [ ] per-node GPIO for every setting above (analog sensors on ADC1 pins 32..39 only; ADC2
+      cannot be used)
+- [ ] dividers that keep every analog input inside 150..2450 mV, and conditioning (pull-ups,
+      filtering) on pulse pickups
 - [ ] voltage levels and pull-ups on CAN, SD, sensor buses
 - [ ] CAN bit rate, sample point, termination, and topology
 - [ ] SD card-detect, LoRa reset/DIO0 wiring, power control of radios and sensors

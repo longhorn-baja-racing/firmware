@@ -23,12 +23,21 @@ void app_main(void)
     lbr_node_build(&lbr_plan_temperature, sim, s_sensors, s_acq, &s_cfg);
 
     /*
-     * Bind real drivers here as parts are chosen (issue #10), e.g.:
+     * Slots wired to on-chip ADC / pulse / digital inputs are configured in
+     * menuconfig (CONFIG_LBR_IO_*); empty settings leave them not fitted.
+     * Part-specific drivers (issue #10) replace a slot the same way:
      *
-     *     lbr_sensor_<part>(&s_sensors[TEMPERATURE_SLOT_DRIVETRAIN], ...);
+     *     lbr_sensor_<part>(&s_sensors[TEMPERATURE_SLOT_...], ...);
      *
      * A bound driver must produce exactly the slot's signals, in order.
      */
+    lbr_node_bind_io(&lbr_plan_temperature, TEMPERATURE_SLOT_DRIVETRAIN, s_sensors,
+                     CONFIG_LBR_IO_DRIVETRAIN);
+    lbr_node_bind_io(&lbr_plan_temperature, TEMPERATURE_SLOT_BRAKES, s_sensors,
+                     CONFIG_LBR_IO_BRAKES);
+    lbr_node_bind_io(&lbr_plan_temperature, TEMPERATURE_SLOT_AMBIENT, s_sensors,
+                     CONFIG_LBR_IO_AMBIENT);
+    lbr_node_bind_io(&lbr_plan_temperature, TEMPERATURE_SLOT_AUX, s_sensors, CONFIG_LBR_IO_AUX);
 
     lbr_node_run(&s_cfg);
 }

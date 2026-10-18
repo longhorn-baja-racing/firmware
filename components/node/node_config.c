@@ -167,13 +167,16 @@ size_t lbr_node_config_text(const lbr_node_config_t *cfg, char *buf, size_t cap)
             put(&t, "%s%s", c ? "," : "", info ? info->name : "?");
         }
         put(&t, "\n");
+        if (a->sensor->params != NULL && a->sensor->params[0] != '\0') {
+            put(&t, "sensor.%u.params=%s\n", (unsigned)i, a->sensor->params);
+        }
     }
     return t.len;
 }
 
 uint32_t lbr_node_config_crc(const lbr_node_config_t *cfg)
 {
-    char   text[1536];
+    char   text[LBR_NODE_CONFIG_TEXT_MAX];
     size_t n = lbr_node_config_text(cfg, text, sizeof text);
     return lbr_crc32(text, n);
 }
