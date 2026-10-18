@@ -264,8 +264,21 @@ Adding a node means copying a `nodes/<name>/` directory, giving it a new id in
 
 ## Build workflow
 
-Prerequisites: ESP-IDF **v6.1** and its toolchain, with its export script sourced so `idf.py`
-is on your `PATH`.
+Prerequisites: ESP-IDF **exactly the release in [`.idf-version`](.idf-version)** (currently
+**v6.1**) and its toolchain, with its export script sourced so `idf.py` is on your `PATH`.
+Every node build checks this (`cmake/idf_version.cmake`) and stops with an error on any other
+version, or on a git checkout of IDF that is not sitting on that release tag, so every
+developer and CI produce firmware from the same IDF. Install it with Espressif's installer
+(EIM) or:
+
+```sh
+git clone -b v6.1 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf-v6.1
+~/esp/esp-idf-v6.1/install.sh esp32
+. ~/esp/esp-idf-v6.1/export.sh
+```
+
+Moving to a new IDF release is a deliberate change: update `.idf-version` in its own PR (CI
+takes its `espressif/idf` container tag from the same file) and rebuild every node.
 
 ```sh
 # from a node app directory, e.g. nodes/gateway
@@ -307,8 +320,8 @@ python3 tools/lbr_decode.py serial /dev/ttyUSB0 --cmd "DUMP 00000012.LBR" --out 
 ```
 
 The node projects are `lbr_gateway`, `lbr_imu_gps`, `lbr_suspension`, `lbr_driver_inputs`,
-`lbr_temperature`, `lbr_fuel_gauge`, `lbr_stress`, and `lbr_dashboard`. CI pins the IDF
-version with the `espressif/idf:v6.1` image.
+`lbr_temperature`, `lbr_fuel_gauge`, `lbr_stress`, and `lbr_dashboard`. CI builds them in the
+`espressif/idf` image whose tag is read from `.idf-version`.
 
 ## Test workflow
 

@@ -57,10 +57,26 @@ jobs:
       - name: Reference decoder replays the golden fixtures
         run: python3 -I tools/lbr_decode.py --selftest
 
+  idf-version:
+    name: ESP-IDF pin
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.pin.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pin
+        name: Read .idf-version
+        run: |
+          tag=$(head -n1 .idf-version | tr -d '[:space:]')
+          echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "bad .idf-version: $tag"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   firmware:
     name: ${{ matrix.node }} (${{ matrix.variant }})
+    needs: idf-version
     runs-on: ubuntu-24.04
-    container: espressif/idf:v6.1
+    # The same ESP-IDF release every developer must use (cmake/idf_version.cmake).
+    container: espressif/idf:${{ needs.idf-version.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
