@@ -4,7 +4,7 @@ Protocol version **2** (`LBR_PROTOCOL_VERSION`), log format version **1**
 (`LBR_LOG_FORMAT_VERSION`).
 
 The dashboard and firmware implement **one versioned protocol/log specification**. This file is
-the firmware-side statement of it; the golden fixtures in `tests/fixtures/` pin every byte. Where
+the firmware-side statement of it; the golden fixtures in `dev/tests/fixtures/` pin every byte. Where
 this file and the fixtures disagree, the fixtures win and this file has a bug. The CAN-level
 details (ID layout, frame payloads, bus budget) are in [`can-ids.md`](can-ids.md).
 
@@ -13,7 +13,7 @@ All multi-byte fields are **little-endian**. All text is ASCII.
 ## Principles
 
 - **Schema-driven.** Signal identity, value type, unit, and CAN priority come from the catalog
-  (`components/protocol/include/lbr/signals.def`, exported as `tests/fixtures/catalog.json`).
+  (`car/components/protocol/include/lbr/signals.def`, exported as `dev/tests/fixtures/catalog.json`).
   Nothing about a signal is implied by its position in a frame.
 - **Stable identifiers.** Signal ids and node ids are append-only. Never renumber or reuse one.
 - **Explicit unavailability.** A missing measurement is a sample with `valid = false` and a
@@ -100,7 +100,7 @@ resets or saturates within a session; receivers compare with modular arithmetic
 
 ## Heartbeat (health) record
 
-Twelve 8-byte pages; layout in `components/health/include/lbr/health.h`. On CAN each page is one
+Twelve 8-byte pages; layout in `car/components/health/include/lbr/health.h`. On CAN each page is one
 frame (see `can-ids.md`); in logs and packets the record is `node_id u8` followed by all twelve
 pages (97 bytes). Reserved fields are zero and a decoder rejects a page where they are not.
 `*_age_ms = 0xFFFFFFFF` means "not applicable" (e.g. no SD card on that node).
@@ -172,7 +172,7 @@ data`), `FILE_END` (0x12: `bytes u32, crc32 u32, name`).
   i.e. the same data as the authoritative log, batched every `stream_batch_ms`.
 - **LoRa** sends one packet per radio packet (max 255 bytes, no COBS): faults/events first, then
   compact health, then the latest value of each in-race subset signal (see
-  `components/transport/include/lbr/lora_policy.h`). Downsampling happens here only; the SD log
+  `car/components/transport/include/lbr/lora_policy.h`). Downsampling happens here only; the SD log
   keeps everything.
 - **BLE** is read-only GATT (status and version text), no stream.
 
@@ -205,9 +205,9 @@ that tracks offset and rate:
 
 ## Golden fixtures
 
-`tests/fixtures/` holds binary fixtures produced by the firmware codecs, each with the expected
+`dev/tests/fixtures/` holds binary fixtures produced by the firmware codecs, each with the expected
 decode as JSON: `catalog.json`, `samples.bin`, `health.bin`, `can_capture.bin`, `session.lbr`,
-`stream_usb.bin`. CTest fails if a fixture no longer matches the codecs; `tools/lbr_decode.py
+`stream_usb.bin`. CTest fails if a fixture no longer matches the codecs; `dev/tools/lbr_decode.py
 --selftest` is an independent decoder that must reproduce every expected JSON. `lbr-dashboard`
 should run the same fixtures through its decoder in its own CI.
 

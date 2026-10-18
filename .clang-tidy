@@ -1,5 +1,5 @@
 # Static analysis for the host-compiled (pure) sources; run in CI on the
-# compile_commands.json of tests/host. Findings are errors.
+# compile_commands.json of dev/tests/host. Findings are errors.
 #
 # Disabled on purpose:
 #   bugprone-signed-bitwise: flags every uint8_t shift (integer promotion)
@@ -24,4 +24,4 @@ Checks: >
   misc-redundant-expression,
   misc-misplaced-const
 WarningsAsErrors: '*'
-HeaderFilterRegex: 'components/.*'
+HeaderFilterRegex: 'car/components/.*'

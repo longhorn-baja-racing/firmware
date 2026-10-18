@@ -1,7 +1,7 @@
 # CAN ID / arbitration map
 
 Part of protocol version 2. Keep synchronized with `lbr-dashboard` and every node's firmware;
-`components/can/include/lbr/can.h` is the implementation and `tests/fixtures/can_capture.*` the
+`car/components/can/include/lbr/can.h` is the implementation and `dev/tests/fixtures/can_capture.*` the
 byte-level reference.
 
 ## Frame format

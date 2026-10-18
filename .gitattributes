@@ -1,4 +1,4 @@
 # Golden fixtures are byte-exact: never convert line endings or diff as text.
-tests/fixtures/*.bin binary
-tests/fixtures/*.lbr binary
-tests/fixtures/*.json text eol=lf
+dev/tests/fixtures/*.bin binary
+dev/tests/fixtures/*.lbr binary
+dev/tests/fixtures/*.json text eol=lf

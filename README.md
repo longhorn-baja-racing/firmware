@@ -20,11 +20,11 @@ gateway/logger.
 
 The framework is in place and tested; sensor parts and pins are not chosen yet.
 
-- **Shared libraries** (`components/`): protocol + signal catalog, CAN ID map and TWAI
+- **Shared libraries** (`car/components/`): protocol + signal catalog, CAN ID map and TWAI
   adapter, CAN-distributed time sync, recoverable SD logging, heartbeat/health, sensor
   framework, node runtime, live transports (USB, LoRa, WiFi, BLE), and gateway logic. The
   hardware-independent parts run in host tests under ASan/UBSan.
-- **Node apps** (`nodes/`): the gateway plus one app per sensor project. Every sensor node
+- **Node apps** (`car/nodes/`): the gateway plus one app per sensor project. Every sensor node
   publishes its full channel list today; channels without a chosen part report
   `valid = false / NOT_FITTED` until a driver is bound (or simulated data with
   `CONFIG_LBR_SENSOR_SIM`, bench only). Analog, pulse, and switch sensors and any NMEA GPS
@@ -79,7 +79,7 @@ The firmware must:
 | `stress` | 0x07 | `STRAIN_1..8` 1 kHz | local SD log at full rate; CAN gets 100 Hz |
 | `dashboard` | 0x08 | `DASH_BUTTONS` 20 Hz | in-cockpit display; listens to the whole bus |
 
-Rates are starting points in each node's plan (`nodes/<name>/main/<name>_plan.c`). The host
+Rates are starting points in each node's plan (`car/nodes/<name>/main/<name>_plan.c`). The host
 tests validate every plan and the system-wide CAN load whenever one changes. The cockpit
 `dashboard` node is the driver's display in the car; it is unrelated to the `lbr-dashboard`
 desktop app.
@@ -225,48 +225,50 @@ harness before any hardware-initialization code is merged.
 ## Repository layout
 
 ```text
-cmake/warnings.cmake      # shared warnings-as-errors policy
-docs/
-  protocol.md             # firmware-side view of the shared protocol (byte layouts)
-  can-ids.md              # CAN ID / arbitration map and bandwidth budget
-  hardware.md             # node grouping + pin map (TBD) + Kconfig pin settings
-  sensors.md              # how to add a sensor driver
-components/               # shared libraries (ESP-IDF components); *_esp.c = hardware side
-  util/                   #   byte order, CRC-32, COBS, bounded ring buffer
-  protocol/               #   signal catalog (signals.def), sample codec, node ids
-  health/                 #   heartbeat record + CAN page codec, reset reason
-  can/                    #   CAN ID map + frame codec; TWAI adapter
-  timebase/               #   CAN-distributed time sync servo
-  logging/                #   recoverable log format, bounded queue, SD service
-  sensors/                #   driver interface, unconfigured + simulator drivers
-  node/                   #   node plans/validation, shared sensor-node runtime
-  transport/              #   packet framing, LoRa policy; USB/LoRa/WiFi/BLE links
-  gateway/                #   gateway runtime config + status text
-nodes/                    # one ESP-IDF app per physical node
-  sdkconfig.common        #   settings shared by every node
-  gateway/                #   CAN logger + telemetry + time-sync source
-  imu_gps/ suspension/ driver_inputs/ temperature/ fuel_gauge/ stress/ dashboard/
-tests/
-  host/                   #   CMake/CTest build of the pure logic + fixture generator
-  fixtures/               #   golden fixtures shared with lbr-dashboard
-  ci/                     #   CI-only sdkconfig overlays (not pin maps)
-tools/lbr_decode.py       # reference decoder: logs, streams, USB serial, fixture self-test
+car/                          # ON THE CAR: everything that is flashed to an ESP32
+  cmake/                      #   warnings-as-errors policy, ESP-IDF version pin check
+  components/                 #   shared libraries (ESP-IDF components); *_esp.c = hardware side
+    util/                     #     byte order, CRC-32, COBS, bounded ring buffer
+    protocol/                 #     signal catalog (signals.def), sample codec, node ids
+    health/                   #     heartbeat record + CAN page codec, reset reason
+    can/                      #     CAN ID map + frame codec; TWAI adapter
+    timebase/                 #     CAN-distributed time sync servo
+    logging/                  #     recoverable log format, bounded queue, SD service
+    sensors/                  #     driver interface, configurable inputs, NMEA GPS
+    node/                     #     node plans/validation, shared sensor-node runtime
+    transport/                #     packet framing, LoRa policy; USB/LoRa/WiFi/BLE links
+    gateway/                  #     gateway runtime config + status text
+  nodes/                      #   one ESP-IDF app per physical node
+    sdkconfig.common          #     settings shared by every node
+    gateway/                  #     CAN logger + telemetry + time-sync source
+    imu_gps/ suspension/ driver_inputs/ temperature/ fuel_gauge/ stress/ dashboard/
+dev/                          # DEVELOPMENT ONLY: never built into firmware
+  tests/host/                 #   CMake/CTest build of the pure logic + fixture generator
+  tests/fixtures/             #   golden fixtures shared with lbr-dashboard
+  ci/                         #   CI-only sdkconfig overlays (not pin maps)
+  tools/lbr_decode.py         #   reference decoder: logs, streams, USB serial, fixture self-test
+docs/                         # protocol, CAN ids, hardware, sensors
+.idf-version                  # the one ESP-IDF release every build must use
 .github/workflows/ci.yml
 ```
 
-Each node in `nodes/` is a self-contained ESP-IDF project (its own top-level `CMakeLists.txt`
-+ `main/`) that pulls in the shared `components/` via `EXTRA_COMPONENT_DIRS` and builds only
+**`car/` is what goes on the car; `dev/` never does.** Node builds only see `car/`, CI fails if
+anything in `car/` includes or builds from `dev/`, and the bench sensor simulator
+(`CONFIG_LBR_SENSOR_SIM`) is compiled into a node only when that bench option is on.
+
+Each node in `car/nodes/` is a self-contained ESP-IDF project (its own top-level `CMakeLists.txt`
++ `main/`) that pulls in the shared `car/components/` via `EXTRA_COMPONENT_DIRS` and builds only
 what its `main` needs. Node apps stay thin: a plan (pure data: node id, channels, rates) and
-driver binding. Shared logic lives in `components/` behind narrow interfaces so protocol,
+driver binding. Shared logic lives in `car/components/` behind narrow interfaces so protocol,
 queue, time-sync, and log-recovery behavior is exercised in host tests without hardware.
-Adding a node means copying a `nodes/<name>/` directory, giving it a new id in
-`components/protocol/include/lbr/nodes.h`, and adding its plan to `tests/host/CMakeLists.txt`.
+Adding a node means copying a `car/nodes/<name>/` directory, giving it a new id in
+`car/components/protocol/include/lbr/nodes.h`, and adding its plan to `dev/tests/host/CMakeLists.txt`.
 
 ## Build workflow
 
 Prerequisites: ESP-IDF **exactly the release in [`.idf-version`](.idf-version)** (currently
 **v6.1**) and its toolchain, with its export script sourced so `idf.py` is on your `PATH`.
-Every node build checks this (`cmake/idf_version.cmake`) and stops with an error on any other
+Every node build checks this (`car/cmake/idf_version.cmake`) and stops with an error on any other
 version, or on a git checkout of IDF that is not sitting on that release tag, so every
 developer and CI produce firmware from the same IDF. Install it with Espressif's installer
 (EIM) or:
@@ -281,7 +283,7 @@ Moving to a new IDF release is a deliberate change: update `.idf-version` in its
 takes its `espressif/idf` container tag from the same file) and rebuild every node.
 
 ```sh
-# from a node app directory, e.g. nodes/gateway
+# from a node app directory, e.g. car/nodes/gateway
 idf.py set-target esp32
 idf.py build
 idf.py -p <PORT> flash monitor
@@ -296,27 +298,27 @@ on the gateway, `CONFIG_LBR_WIFI_PASSWORD` (WiFi stays off until it is set; neve
 An extra sdkconfig overlay can be layered on any node:
 
 ```sh
-idf.py -DLBR_SDKCONFIG_EXTRA=$PWD/../../tests/ci/sdkconfig.linkcheck build
+idf.py -DLBR_SDKCONFIG_EXTRA=$PWD/../../../dev/ci/sdkconfig.linkcheck build
 ```
 
 Host-side unit tests build and run without hardware:
 
 ```sh
-cmake -S tests/host -B build-host -G Ninja
+cmake -S dev/tests/host -B build-host -G Ninja
 cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 ctest --test-dir build-host -R <test_name>        # e.g. -R logging
 cmake --build build-host --target fixtures       # regenerate golden fixtures (format change)
-python3 tools/lbr_decode.py --selftest           # reference decoder vs fixtures
+python3 dev/tools/lbr_decode.py --selftest           # reference decoder vs fixtures
 ```
 
 Bench tools:
 
 ```sh
-python3 tools/lbr_decode.py log 00000012.LBR             # decode a session log
-python3 tools/lbr_decode.py serial /dev/ttyUSB0          # live gateway view over USB
-python3 tools/lbr_decode.py serial /dev/ttyUSB0 --cmd LIST
-python3 tools/lbr_decode.py serial /dev/ttyUSB0 --cmd "DUMP 00000012.LBR" --out run.lbr
+python3 dev/tools/lbr_decode.py log 00000012.LBR             # decode a session log
+python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0          # live gateway view over USB
+python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd LIST
+python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd "DUMP 00000012.LBR" --out run.lbr
 ```
 
 The node projects are `lbr_gateway`, `lbr_imu_gps`, `lbr_suspension`, `lbr_driver_inputs`,

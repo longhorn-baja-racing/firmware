@@ -1,0 +1,3 @@
+# stress node. Shared settings: car/nodes/sdkconfig.common. Generated sdkconfig is gitignored.
+# Full-rate local log: bigger queue to ride out SD write stalls (~0.4 s at 8 kHz).
+CONFIG_LBR_LOG_QUEUE_KB=96

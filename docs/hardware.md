@@ -8,7 +8,7 @@
 ## Nodes
 
 One ESP32 per sensor project. Zones and parts are TBD; the signal list of each node is fixed by
-its plan (`nodes/<name>/main/<name>_plan.c`).
+its plan (`car/nodes/<name>/main/<name>_plan.c`).
 
 | Node | Zone | Sensors (parts TBD) | SD card |
 | --- | --- | --- | --- |
@@ -39,7 +39,7 @@ Set per node with `idf.py menuconfig` or in that node's `sdkconfig.defaults` onc
 | On-chip ADC / pulse / digital inputs | `CONFIG_LBR_IO_<SLOT>` input specs (pins inside the spec, see [`sensors.md`](sensors.md)) | sensor nodes |
 | Sensor buses (I2C/SPI parts) | per driver, when parts are chosen | sensor nodes |
 
-`tests/ci/sdkconfig.linkcheck` contains placeholder pins used only so CI can link every
+`dev/ci/sdkconfig.linkcheck` contains placeholder pins used only so CI can link every
 hardware path. It is **not** a pin map.
 
 ## CAN bus
@@ -51,10 +51,10 @@ hardware path. It is **not** a pin map.
 
 ## Board and memory
 
-- ESP32 (classic) with **4 MB flash** assumed by `nodes/sdkconfig.common`; the gateway uses two
+- ESP32 (classic) with **4 MB flash** assumed by `car/nodes/sdkconfig.common`; the gateway uses two
   1.875 MB OTA slots. Confirm the module.
 - The gateway runs WiFi, BLE, CAN, SD, and LoRa together. With everything linked it needs the
-  WiFi IRAM optimizations moved to flash (set in `nodes/gateway/sdkconfig.defaults`).
+  WiFi IRAM optimizations moved to flash (set in `car/nodes/gateway/sdkconfig.defaults`).
 - The TWAI interrupt is cache-safe (`CONFIG_TWAI_ISR_CACHE_SAFE`), so CAN reception and time
   sync keep running while flash is written (OTA, config push, boot counter).
 

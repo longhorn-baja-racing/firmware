@@ -16,7 +16,7 @@ build-host/
 *.bin
 *.map
 # ...except the golden fixtures shared with lbr-dashboard
-!tests/fixtures/*.bin
+!dev/tests/fixtures/*.bin
 
 # Editor / OS
 .vscode/

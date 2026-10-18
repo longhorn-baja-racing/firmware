@@ -1,0 +1,17 @@
+menu "LBR stress inputs"
+
+    config LBR_IO_STRAIN
+        string "Slot 'strain' input spec"
+        default ""
+        help
+            Channels, in order: STRAIN_1 .. STRAIN_8.
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+            The on-chip ADC is too slow and noisy for strain gauges at 1 kHz;
+            a bridge amplifier/ADC part is expected here (issue #10). Use avg=1
+            if the on-chip ADC is used for bench work.
+
+endmenu

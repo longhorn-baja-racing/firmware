@@ -1,0 +1,36 @@
+menu "LBR driver_inputs inputs"
+
+    config LBR_IO_PEDALS
+        string "Slot 'pedals' input spec"
+        default ""
+        help
+            Channels, in order: THROTTLE_POS, BRAKE_PRESS_FRONT, BRAKE_PRESS_REAR.
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+
+    config LBR_IO_STEERING
+        string "Slot 'steering' input spec"
+        default ""
+        help
+            Channels, in order: STEERING_ANGLE.
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+
+    config LBR_IO_BRAKE_SWITCH
+        string "Slot 'brake_switch' input spec"
+        default ""
+        help
+            Channels, in order: BRAKE_SWITCH.
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+
+endmenu
