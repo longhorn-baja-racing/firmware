@@ -1,0 +1,11 @@
+{"packets": [
+  {"link": 1, "source": 1, "seq": 4294967295, "t_us": 7000000, "records": [
+      {"type": 4, "len": 22, "frame": {"t_us": 1000250, "flags": 1, "id": 268566786, "prio": 4, "kind": 0, "source": 2, "sub": 258, "dlc": 8, "data": "0ae81cc140420fc0", "sample": {"signal": 258, "name": "ACCEL_Z", "source": 2, "type": "f32", "valid": true, "synced": true, "seq_short": true, "seq": 0, "t_us": 1000000, "value_bits": "c11ce80a"}}},
+      {"type": 4, "len": 22, "frame": {"t_us": 1000350, "flags": 1, "id": 335676672, "prio": 5, "kind": 0, "source": 2, "sub": 1280, "dlc": 8, "data": "4e1f0d12a4420fc1", "sample": {"signal": 1280, "name": "GPS_LATITUDE", "source": 2, "type": "i32", "valid": true, "synced": true, "seq_short": true, "seq": 1, "t_us": 1000100, "value_bits": "120d1f4e"}}},
+      {"type": 4, "len": 22, "frame": {"t_us": 1000450, "flags": 1, "id": 402785542, "prio": 6, "kind": 0, "source": 2, "sub": 1286, "dlc": 8, "data": "0b00000008430fc2", "sample": {"signal": 1286, "name": "GPS_SATELLITES", "source": 2, "type": "u32", "valid": true, "synced": true, "seq_short": true, "seq": 2, "t_us": 1000200, "value_bits": "0000000b"}}},
+      {"type": 4, "len": 22, "frame": {"t_us": 2000250, "flags": 1, "id": 201590788, "prio": 3, "kind": 0, "source": 4, "sub": 2052, "dlc": 8, "data": "0100000080841eff", "sample": {"signal": 2052, "name": "BRAKE_SWITCH", "source": 4, "type": "bool", "valid": true, "synced": true, "seq_short": true, "seq": 63, "t_us": 2000000, "value_bits": "00000001"}}}
+  ]},
+  {"link": 1, "source": 1, "seq": 0, "t_us": 7000001, "records": [
+      {"type": 6, "len": 32, "text": "I (7000) gateway: stream fixture"}
+  ]}
+], "bad_frames": 1}

@@ -86,6 +86,10 @@ typedef enum {
     LBR_EVT_CAN_PINS_UNSET   = 0x0060, /* CAN GPIO still TBD in Kconfig */
 } lbr_event_code_t;
 
+/* Spec names for enum values (ASCII, upper case); "?" if unknown. */
+const char *lbr_unavail_reason_name(lbr_unavail_reason_t why);
+const char *lbr_event_name(lbr_event_code_t code);
+
 static inline uint32_t lbr_event_value(lbr_event_code_t code, uint16_t arg)
 {
     return (uint32_t)code | ((uint32_t)arg << 16);
@@ -128,12 +132,12 @@ void     lbr_sample_set_value_bits(lbr_sample_t *s, uint32_t bits);
 /* Catalog                                                                   */
 
 typedef struct {
-    lbr_signal_id_t  id;
     const char      *name; /* catalog NAME, e.g. "ACCEL_X" */
+    const char      *desc;
+    lbr_signal_id_t  id;
     lbr_value_type_t type;
     lbr_unit_t       unit;
     uint8_t          can_prio; /* 0 highest .. 7 lowest */
-    const char      *desc;
 } lbr_signal_info_t;
 
 /* NULL if the id is not in this build's catalog. */

@@ -6,7 +6,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enable_testing()
 
-set(LBR_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
+get_filename_component(LBR_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 set(LBR_COMPONENTS "${LBR_ROOT}/components")
 include("${LBR_ROOT}/cmake/warnings.cmake")
 
@@ -76,3 +76,14 @@ foreach(name IN LISTS LBR_TESTS)
     lbr_apply_warnings(test_${name})
     add_test(NAME ${name} COMMAND test_${name})
 endforeach()
+
+# Golden fixtures shared with lbr-dashboard. CTest checks the committed files
+# still match the codecs; the "fixtures" target regenerates them on purpose.
+add_executable(gen_fixtures gen_fixtures.c)
+target_link_libraries(gen_fixtures PRIVATE lbr_core)
+lbr_apply_warnings(gen_fixtures)
+add_test(NAME fixtures COMMAND gen_fixtures check "${LBR_ROOT}/tests/fixtures")
+add_custom_target(fixtures
+    COMMAND gen_fixtures write "${LBR_ROOT}/tests/fixtures"
+    DEPENDS gen_fixtures
+    COMMENT "Regenerating golden fixtures in tests/fixtures")

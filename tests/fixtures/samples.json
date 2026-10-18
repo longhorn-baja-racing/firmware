@@ -1,0 +1,10 @@
+{"record_size": 20, "samples": [
+  {"signal": 258, "name": "ACCEL_Z", "source": 2, "type": "f32", "valid": true, "synced": true, "seq_short": false, "seq": 0, "t_us": 1000000, "value_bits": "c11ce80a"},
+  {"signal": 1280, "name": "GPS_LATITUDE", "source": 2, "type": "i32", "valid": true, "synced": true, "seq_short": false, "seq": 1, "t_us": 1000100, "value_bits": "120d1f4e"},
+  {"signal": 1286, "name": "GPS_SATELLITES", "source": 2, "type": "u32", "valid": true, "synced": true, "seq_short": false, "seq": 2, "t_us": 1000200, "value_bits": "0000000b"},
+  {"signal": 2052, "name": "BRAKE_SWITCH", "source": 4, "type": "bool", "valid": true, "synced": true, "seq_short": false, "seq": 4294967295, "t_us": 2000000, "value_bits": "00000001"},
+  {"signal": 1285, "name": "GPS_FIX", "source": 2, "type": "status", "valid": true, "synced": true, "seq_short": false, "seq": 3, "t_us": 2000300, "value_bits": "00000003"},
+  {"signal": 769, "name": "TEMP_CVT", "source": 5, "type": "f32", "valid": false, "synced": true, "seq_short": false, "seq": 7, "t_us": 3000000, "value_bits": "00000001", "reason": "NOT_FITTED"},
+  {"signal": 1793, "name": "FAULT", "source": 1, "type": "status", "valid": true, "synced": true, "seq_short": false, "seq": 0, "t_us": 4000000, "value_bits": "00070050", "event": "NODE_LOST", "event_arg": 7},
+  {"signal": 2306, "name": "STRAIN_3", "source": 7, "type": "f32", "valid": true, "synced": false, "seq_short": false, "seq": 123456, "t_us": 20015998343868, "value_bits": "43ce4000"}
+]}

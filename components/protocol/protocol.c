@@ -17,7 +17,7 @@ static const lbr_signal_info_t s_catalog[] = {
         .type     = LBR_VAL_##type_,                                                               \
         .unit     = LBR_UNIT_##unit_,                                                              \
         .can_prio = (prio_),                                                                       \
-        .desc     = desc_,                                                                         \
+        .desc     = (desc_),                                                                       \
     },
 #include "lbr/signals.def"
 #undef LBR_SIGNAL
@@ -79,6 +79,68 @@ const char *lbr_value_type_name(lbr_value_type_t type)
         [LBR_VAL_RAW] = "raw",
     };
     return ((unsigned)type < LBR_VAL_COUNT_) ? names[type] : "?";
+}
+
+const char *lbr_unavail_reason_name(lbr_unavail_reason_t why)
+{
+    switch (why) {
+        case LBR_UNAVAIL_UNSPECIFIED:
+            return "UNSPECIFIED";
+        case LBR_UNAVAIL_NOT_FITTED:
+            return "NOT_FITTED";
+        case LBR_UNAVAIL_NO_DATA:
+            return "NO_DATA";
+        case LBR_UNAVAIL_SENSOR_FAULT:
+            return "SENSOR_FAULT";
+        case LBR_UNAVAIL_OUT_OF_RANGE:
+            return "OUT_OF_RANGE";
+        case LBR_UNAVAIL_NOT_CALIBRATED:
+            return "NOT_CALIBRATED";
+        case LBR_UNAVAIL_BUS_ERROR:
+            return "BUS_ERROR";
+        default:
+            return "?";
+    }
+}
+
+const char *lbr_event_name(lbr_event_code_t code)
+{
+    switch (code) {
+        case LBR_EVT_BOOT:
+            return "BOOT";
+        case LBR_EVT_SESSION_START:
+            return "SESSION_START";
+        case LBR_EVT_TIME_SYNCED:
+            return "TIME_SYNCED";
+        case LBR_EVT_TIME_STEP:
+            return "TIME_STEP";
+        case LBR_EVT_CONFIG_INVALID:
+            return "CONFIG_INVALID";
+        case LBR_EVT_SENSOR_INIT_FAIL:
+            return "SENSOR_INIT_FAIL";
+        case LBR_EVT_SENSOR_RECOVERED:
+            return "SENSOR_RECOVERED";
+        case LBR_EVT_CAN_BUS_OFF:
+            return "CAN_BUS_OFF";
+        case LBR_EVT_CAN_RECOVERED:
+            return "CAN_RECOVERED";
+        case LBR_EVT_SD_MISSING:
+            return "SD_MISSING";
+        case LBR_EVT_SD_WRITE_ERROR:
+            return "SD_WRITE_ERROR";
+        case LBR_EVT_SD_MOUNTED:
+            return "SD_MOUNTED";
+        case LBR_EVT_QUEUE_OVERFLOW:
+            return "QUEUE_OVERFLOW";
+        case LBR_EVT_NODE_LOST:
+            return "NODE_LOST";
+        case LBR_EVT_NODE_FOUND:
+            return "NODE_FOUND";
+        case LBR_EVT_CAN_PINS_UNSET:
+            return "CAN_PINS_UNSET";
+        default:
+            return "?";
+    }
 }
 
 uint32_t lbr_catalog_hash(void)
