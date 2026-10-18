@@ -1,0 +1,46 @@
+menu "LBR CAN bus"
+
+    config LBR_CAN_TX_GPIO
+        int "TWAI TX GPIO (to transceiver TXD)"
+        range -1 48
+        default -1
+        help
+            GPIO driving the CAN transceiver TXD pin. -1 means not configured:
+            pins are TBD until the node schematic is confirmed (issue #15),
+            and the node refuses to start CAN while this is -1.
+
+    config LBR_CAN_RX_GPIO
+        int "TWAI RX GPIO (from transceiver RXD)"
+        range -1 48
+        default -1
+        help
+            GPIO reading the CAN transceiver RXD pin. -1 means not configured.
+
+    config LBR_CAN_BITRATE
+        int "CAN bit rate (bit/s)"
+        default 1000000
+        help
+            Shared bus bit rate; every node must use the same value. The
+            1 Mbit/s default suits a vehicle-length harness (well under the
+            ~40 m limit) and is provisional until harness length, stub
+            lengths, and topology are confirmed (issue #15). The system CAN
+            budget in docs/can-ids.md is computed at this rate.
+
+    config LBR_CAN_RX_QUEUE_LEN
+        int "RX queue length (frames)"
+        default 256
+
+    config LBR_CAN_TX_QUEUE_LEN
+        int "TX queue length (frames)"
+        default 32
+
+    config LBR_CAN_NODE_BUDGET_PERMILLE
+        int "Per-node CAN bandwidth budget (permille of bit rate)"
+        range 10 800
+        default 150
+        help
+            A node configuration whose worst-case CAN load exceeds this share
+            of the bus is rejected at boot. The system-wide plan lives in
+            docs/can-ids.md.
+
+endmenu
