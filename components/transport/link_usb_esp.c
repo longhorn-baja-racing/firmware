@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "driver/uart.h"
+#include "driver/uart_vfs.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -262,6 +263,9 @@ lbr_transport_t *lbr_link_usb_start(const lbr_link_hooks_t *hooks)
         xTaskCreate(rx_task, "lbr_usb_rx", 4096, NULL, 5, NULL) != pdPASS) {
         return NULL;
     }
+    /* Route console writes (printf, stdio) through the driver too, so they
+     * queue whole and cannot land in the middle of a COBS frame. */
+    uart_vfs_dev_use_driver(UART_PORT);
     atomic_store(&s_ready, true);
     s_link = (lbr_transport_t){
         .name      = "usb",

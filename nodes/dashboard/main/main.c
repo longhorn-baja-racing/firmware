@@ -47,15 +47,20 @@ static void on_frame(const lbr_can_frame_t *f, uint64_t rx_shared_us, void *ctx)
 static void display_task(void *arg)
 {
     (void)arg;
-    uint8_t lost[LBR_NODE_TABLE_SIZE];
+    /* Render from a snapshot: drawing is slow and must not hold up CAN RX. */
+    static lbr_value_table_t values;
+    static lbr_node_table_t  nodes;
+    uint8_t                  lost[LBR_NODE_TABLE_SIZE];
     dash_display_init();
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(RENDER_PERIOD_MS));
         uint64_t now = lbr_time_now_us();
         xSemaphoreTake(s_lock, portMAX_DELAY);
         lbr_node_table_expire(&s_nodes, now, lost, sizeof lost);
-        dash_display_render(&s_values, &s_nodes, now);
+        values = s_values;
+        nodes  = s_nodes;
         xSemaphoreGive(s_lock);
+        dash_display_render(&values, &nodes, now);
     }
 }
 

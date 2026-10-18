@@ -284,12 +284,22 @@ static void test_failed_card(void)
     CHECK_EQ_U(st.write_errors, 1u);
     CHECK_EQ_U(st.records_lost_write, 5u);
 
-    /* Card works again: logging continues. */
+    /* Card works again: logging continues, and the file says what was lost. */
     lbr_sample_t s = make_sample(99);
     lbr_log_append_sample(&lg, &s);
     lbr_log_pump(&lg, 0);
     lbr_log_get_stats(&lg, &st);
     CHECK_EQ_U(st.write_errors, 1u);
+    lbr_log_reader_t r;
+    lbr_log_record_t rec;
+    uint32_t         lost = 0;
+    lbr_log_reader_init(&r, m.buf, m.len);
+    while (lbr_log_reader_next(&r, &rec)) {
+        if (rec.type == LBR_REC_LOSS) {
+            lost += lbr_get_u32(rec.payload);
+        }
+    }
+    CHECK_EQ_U(lost, 5u);
 
     /* Open on a dead card fails cleanly. */
     lbr_logger_t      lg2;

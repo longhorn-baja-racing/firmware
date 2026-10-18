@@ -266,7 +266,8 @@ static esp_err_t h_ota(httpd_req_t *req)
     }
     ESP_LOGW(TAG, "OTA image accepted into %s; restarting", part->label);
     httpd_resp_sendstr(req, "ok: rebooting into the new image\n");
-    xTaskCreate(reboot_task, "lbr_reboot", 2048, NULL, 1, NULL);
+    /* Room for the log hook and ESP_LOG formatting on the way down. */
+    xTaskCreate(reboot_task, "lbr_reboot", 4096, NULL, 1, NULL);
     return ESP_OK;
 }
 

@@ -62,9 +62,10 @@ bool lbr_can_bus_send(const lbr_can_frame_t *f);
 bool lbr_can_bus_receive(lbr_can_rx_t *out, uint32_t timeout_ms);
 
 /* Gateway time sync: call arm from the sync task before sending TIME_SYNC,
- * then wait returns the local monotonic time at which that frame finished
- * transmitting (captured in the TX-done ISR), for the FOLLOW_UP. */
+ * then wait returns the local monotonic time at which the TIME_SYNC with
+ * `sync_seq` finished transmitting (captured in the TX-done ISR), for the
+ * FOLLOW_UP. Completions of other (older, retried) sync frames are ignored. */
 void lbr_can_bus_arm_sync_tx(void);
-bool lbr_can_bus_wait_sync_tx_done(uint64_t *tx_local_us, uint32_t timeout_ms);
+bool lbr_can_bus_wait_sync_tx_done(uint8_t sync_seq, uint64_t *tx_local_us, uint32_t timeout_ms);
 
 void lbr_can_bus_get_stats(lbr_can_stats_t *out);

@@ -53,8 +53,8 @@ hardware path. It is **not** a pin map.
   1.875 MB OTA slots. Confirm the module.
 - The gateway runs WiFi, BLE, CAN, SD, and LoRa together. With everything linked it needs the
   WiFi IRAM optimizations moved to flash (set in `nodes/gateway/sdkconfig.defaults`).
-- While flash is being written (OTA, config push) the CAN ISR is deferred, so frames can be lost
-  during those pit-only operations. They show up in `can_rx_dropped` / bus error counters.
+- The TWAI interrupt is cache-safe (`CONFIG_TWAI_ISR_CACHE_SAFE`), so CAN reception and time
+  sync keep running while flash is written (OTA, config push, boot counter).
 
 ## To verify against the final schematic and harness before bring-up (#15)
 

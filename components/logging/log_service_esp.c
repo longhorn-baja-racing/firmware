@@ -24,6 +24,9 @@ static lbr_logger_t             s_log;
 static SemaphoreHandle_t        s_lock;
 static atomic_bool              s_sd_present;
 static char                     s_name[LBR_SD_NAME_MAX];
+static TaskHandle_t             s_writer;
+static TaskHandle_t             s_close_waiter; /* set while a close is requested */
+static atomic_bool              s_closed_for_good;
 static portMUX_TYPE             s_name_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static void lock(void *ctx)
@@ -84,8 +87,24 @@ static void writer_task(void *arg)
     bool     reported    = false;
 
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(PUMP_PERIOD_MS));
+        /* Sleep one pump period, or less if a close is requested. */
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(PUMP_PERIOD_MS));
         uint64_t mono = (uint64_t)esp_timer_get_time();
+
+        if (s_close_waiter != NULL) {
+            /* Only this task touches the file, so closing here cannot race a pump. */
+            if (lbr_log_is_open(&s_log)) {
+                lbr_log_close(&s_log, s_cfg.now_us());
+            }
+            set_name("");
+            atomic_store(&s_closed_for_good, true);
+            TaskHandle_t waiter = s_close_waiter;
+            s_close_waiter      = NULL;
+            xTaskNotifyGive(waiter);
+        }
+        if (atomic_load(&s_closed_for_good)) {
+            continue;
+        }
 
         if (!lbr_log_is_open(&s_log)) {
             if (mono < next_mount) {
@@ -148,7 +167,18 @@ bool lbr_log_service_start(const lbr_log_service_config_t *cfg)
     if (lbr_log_init(&s_log, &lc) != 0) {
         return false;
     }
-    return xTaskCreate(writer_task, "lbr_logw", 4096, NULL, TASK_PRIO, NULL) == pdPASS;
+    return xTaskCreate(writer_task, "lbr_logw", 4096, NULL, TASK_PRIO, &s_writer) == pdPASS;
+}
+
+bool lbr_log_service_close(uint32_t timeout_ms)
+{
+    if (s_writer == NULL) {
+        return false;
+    }
+    ulTaskNotifyTake(pdTRUE, 0);
+    s_close_waiter = xTaskGetCurrentTaskHandle();
+    xTaskNotifyGive(s_writer);
+    return ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms)) > 0;
 }
 
 lbr_logger_t *lbr_log_service_logger(void)

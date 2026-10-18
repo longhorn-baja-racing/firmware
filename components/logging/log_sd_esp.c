@@ -11,6 +11,8 @@
 
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "sdkconfig.h"
 #include "sdmmc_cmd.h"
 #if CONFIG_LBR_SD_BUS_SPI
@@ -24,6 +26,33 @@ static const char *TAG = "lbr_sd";
 
 static sdmmc_card_t *s_card;
 static bool          s_spi_bus_ready;
+
+/*
+ * Mount state lock (recursive). The writer may unmount a failing card while
+ * a USB or HTTP dump is reading it; every function that touches the card
+ * holds this, so an unmount waits for readers instead of pulling the
+ * filesystem out from under them.
+ */
+static SemaphoreHandle_t s_mount_lock;
+static StaticSemaphore_t s_mount_lock_buf;
+static portMUX_TYPE      s_mount_lock_init = portMUX_INITIALIZER_UNLOCKED;
+
+static void mount_lock(void)
+{
+    if (s_mount_lock == NULL) {
+        portENTER_CRITICAL(&s_mount_lock_init);
+        if (s_mount_lock == NULL) {
+            s_mount_lock = xSemaphoreCreateRecursiveMutexStatic(&s_mount_lock_buf);
+        }
+        portEXIT_CRITICAL(&s_mount_lock_init);
+    }
+    xSemaphoreTakeRecursive(s_mount_lock, portMAX_DELAY);
+}
+
+static void mount_unlock(void)
+{
+    xSemaphoreGiveRecursive(s_mount_lock);
+}
 
 typedef struct {
     int fd;
@@ -45,7 +74,7 @@ bool lbr_sd_valid_name(const char *name)
     return true;
 }
 
-lbr_sd_err_t lbr_sd_mount(void)
+static lbr_sd_err_t lbr_sd_mount_locked(void)
 {
     if (s_card != NULL) {
         return LBR_SD_OK;
@@ -109,7 +138,7 @@ lbr_sd_err_t lbr_sd_mount(void)
     return LBR_SD_OK;
 }
 
-void lbr_sd_unmount(void)
+static void lbr_sd_unmount_locked(void)
 {
     if (s_file.fd >= 0) {
         close(s_file.fd);
@@ -174,7 +203,7 @@ static uint32_t highest_session_number(void)
     return max;
 }
 
-lbr_sd_err_t lbr_sd_open_session(lbr_log_storage_t *out, char name[LBR_SD_NAME_MAX])
+static lbr_sd_err_t lbr_sd_open_session_locked(lbr_log_storage_t *out, char name[LBR_SD_NAME_MAX])
 {
     if (s_card == NULL) {
         return LBR_SD_ERR_NOT_MOUNTED;
@@ -201,7 +230,7 @@ lbr_sd_err_t lbr_sd_open_session(lbr_log_storage_t *out, char name[LBR_SD_NAME_M
     return LBR_SD_OK;
 }
 
-int lbr_sd_list(lbr_sd_list_cb cb, void *ctx)
+static int lbr_sd_list_locked(lbr_sd_list_cb cb, void *ctx)
 {
     if (s_card == NULL) {
         return LBR_SD_ERR_NOT_MOUNTED;
@@ -223,7 +252,7 @@ int lbr_sd_list(lbr_sd_list_cb cb, void *ctx)
     return count;
 }
 
-int32_t lbr_sd_file_size(const char *name)
+static int32_t lbr_sd_file_size_locked(const char *name)
 {
     char        path[64];
     struct stat st;
@@ -234,7 +263,7 @@ int32_t lbr_sd_file_size(const char *name)
     return stat(path, &st) == 0 ? (int32_t)st.st_size : -1;
 }
 
-int lbr_sd_read(const char *name, uint32_t offset, uint8_t *buf, size_t cap)
+static int lbr_sd_read_locked(const char *name, uint32_t offset, uint8_t *buf, size_t cap)
 {
     char path[64];
     if (s_card == NULL) {
@@ -254,4 +283,51 @@ int lbr_sd_read(const char *name, uint32_t offset, uint8_t *buf, size_t cap)
     }
     close(fd);
     return n < 0 ? LBR_SD_ERR_FILE : n;
+}
+
+lbr_sd_err_t lbr_sd_mount(void)
+{
+    mount_lock();
+    lbr_sd_err_t r = lbr_sd_mount_locked();
+    mount_unlock();
+    return r;
+}
+
+void lbr_sd_unmount(void)
+{
+    mount_lock();
+    lbr_sd_unmount_locked();
+    mount_unlock();
+}
+
+lbr_sd_err_t lbr_sd_open_session(lbr_log_storage_t *out, char name[LBR_SD_NAME_MAX])
+{
+    mount_lock();
+    lbr_sd_err_t r = lbr_sd_open_session_locked(out, name);
+    mount_unlock();
+    return r;
+}
+
+int lbr_sd_list(lbr_sd_list_cb cb, void *ctx)
+{
+    mount_lock();
+    int r = lbr_sd_list_locked(cb, ctx);
+    mount_unlock();
+    return r;
+}
+
+int32_t lbr_sd_file_size(const char *name)
+{
+    mount_lock();
+    int32_t r = lbr_sd_file_size_locked(name);
+    mount_unlock();
+    return r;
+}
+
+int lbr_sd_read(const char *name, uint32_t offset, uint8_t *buf, size_t cap)
+{
+    mount_lock();
+    int r = lbr_sd_read_locked(name, offset, buf, cap);
+    mount_unlock();
+    return r;
 }

@@ -99,13 +99,11 @@ int lbr_log_open(lbr_logger_t *lg, const lbr_log_storage_t *storage,
     }
 
     lock(lg);
-    lg->st                   = *storage;
-    lg->open                 = true;
-    lg->dirty                = false;
-    lg->last_sync_us         = session->start_time_us;
-    lg->pending_loss_records = 0;
-    lg->pending_loss_bytes   = 0;
-    lg->stats.last_write_us  = session->start_time_us;
+    lg->st                  = *storage;
+    lg->open                = true;
+    lg->dirty               = false;
+    lg->last_sync_us        = session->start_time_us;
+    lg->stats.last_write_us = session->start_time_us;
     lg->stats.records_written++;
     unlock(lg);
     return 0;
@@ -215,8 +213,14 @@ static int write_chunk(lbr_logger_t *lg, size_t used, uint32_t records, uint64_t
         return 0;
     }
     if (lg->st.write(lg->st.ctx, lg->cfg.chunk, used) != 0) {
+        lock(lg);
         lg->stats.write_errors++;
         lg->stats.records_lost_write += records;
+        /* The next record that lands (this session or the next one opened
+         * by the same logger) is preceded by a LOSS record for these. */
+        lg->pending_loss_records += records;
+        lg->pending_loss_bytes += (uint32_t)used;
+        unlock(lg);
         return -1;
     }
     lg->stats.records_written += records;

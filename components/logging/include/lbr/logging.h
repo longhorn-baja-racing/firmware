@@ -17,6 +17,8 @@
  * bounded in-memory queue and never block; a single writer drains it to
  * storage. A full queue drops the record, counts it, and writes a LOSS record
  * into the log as soon as space returns, so every gap is visible in the file.
+ * Records lost to a storage write error are reported the same way, in the
+ * next session if the card had to be remounted.
  *
  * File format (all little-endian):
  *

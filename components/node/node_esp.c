@@ -288,11 +288,12 @@ static void build_health(lbr_health_record_t *h, uint32_t period_ms)
 
     uint32_t sensor_ok  = 0;
     uint32_t calibrated = 0;
-    for (size_t i = 0; i < s_cfg->n_acq; i++) {
+    size_t   n_acq      = s_cfg->n_acq < LBR_NODE_MAX_SENSORS ? s_cfg->n_acq : LBR_NODE_MAX_SENSORS;
+    for (size_t i = 0; i < n_acq; i++) {
         sensor_ok |= atomic_load(&s_acq[i].healthy) ? (1u << i) : 0u;
         calibrated |= atomic_load(&s_acq[i].calibrated) ? (1u << i) : 0u;
     }
-    uint32_t all_sensors = s_cfg->n_acq >= 32 ? 0xFFFFFFFFu : (1u << s_cfg->n_acq) - 1u;
+    uint32_t all_sensors = (1u << n_acq) - 1u;
 
     uint16_t flags = 0;
     flags |= ts.synced ? LBR_HF_TIME_SYNCED : 0;
@@ -314,24 +315,24 @@ static void build_health(lbr_health_record_t *h, uint32_t period_ms)
 
     uint64_t now = lbr_time_now_us();
     *h           = (lbr_health_record_t){
-        .node_id               = s_cfg->node_id,
-        .state                 = (uint8_t)state,
-        .flags                 = flags,
-        .fw_version            = LBR_FW_VERSION,
-        .protocol_version      = LBR_PROTOCOL_VERSION,
-        .boot_count            = (uint16_t)s_boot_count,
-        .catalog_hash          = lbr_catalog_hash(),
-        .config_crc            = s_config_crc,
-        .uptime_ms             = (uint32_t)(lbr_time_mono_us() / 1000u),
-        .reset_reason          = (uint8_t)s_reset_reason,
-        .acquire_hz            = rate_hz(atomic_load(&s_acquired), &prev_acq, period_ms),
-        .publish_hz            = rate_hz(atomic_load(&s_published), &prev_pub, period_ms),
-        .log_hz                = rate_hz(atomic_load(&s_logged), &prev_log, period_ms),
-        .queue_high_water      = ls.queue_high_water,
-        .overflow_count        = atomic_load(&s_overruns) + ls.records_dropped +
-                                 (s_cfg->local_log ? ls.records_rejected_closed : 0u),
-        .rejected_count        = cs.rx_foreign + atomic_load(&s_sync_unmatched),
-        .write_error_count     = ls.write_errors + ls.sync_errors,
+        .node_id           = s_cfg->node_id,
+        .state             = (uint8_t)state,
+        .flags             = flags,
+        .fw_version        = LBR_FW_VERSION,
+        .protocol_version  = LBR_PROTOCOL_VERSION,
+        .boot_count        = (uint16_t)s_boot_count,
+        .catalog_hash      = lbr_catalog_hash(),
+        .config_crc        = s_config_crc,
+        .uptime_ms         = (uint32_t)(lbr_time_mono_us() / 1000u),
+        .reset_reason      = (uint8_t)s_reset_reason,
+        .acquire_hz        = rate_hz(atomic_load(&s_acquired), &prev_acq, period_ms),
+        .publish_hz        = rate_hz(atomic_load(&s_published), &prev_pub, period_ms),
+        .log_hz            = rate_hz(atomic_load(&s_logged), &prev_log, period_ms),
+        .queue_high_water  = ls.queue_high_water,
+        .overflow_count    = atomic_load(&s_overruns) + ls.records_dropped + ls.records_lost_write +
+                             (s_cfg->local_log ? ls.records_rejected_closed : 0u),
+        .rejected_count    = cs.rx_foreign + atomic_load(&s_sync_unmatched),
+        .write_error_count = ls.write_errors + ls.sync_errors,
         .transport_error_count = cs.tx_failed,
         .can_tec               = cs.tec,
         .can_rec               = cs.rec,

@@ -11,6 +11,12 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
 CONFIG_ESP_BROWNOUT_DET=y
 
+# Keep the TWAI ISR running while flash is written (NVS, OTA, boot counter):
+# otherwise the 64-byte RX FIFO overruns and the driver drops frames without
+# a callback, and time-sync timestamps are taken late. The lbr callbacks are
+# IRAM_ATTR for this.
+CONFIG_TWAI_ISR_CACHE_SAFE=y
+
 # Modules on the shortlist carry 4 MB flash (confirm with the board set, #15).
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 

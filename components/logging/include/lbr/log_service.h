@@ -33,5 +33,10 @@ bool          lbr_log_service_start(const lbr_log_service_config_t *cfg);
 lbr_logger_t *lbr_log_service_logger(void);
 bool          lbr_log_service_sd_present(void);
 
+/* Drain, write END, sync, and close the session from the writer task (the
+ * only task that touches the file), then stop logging. For a clean shutdown
+ * before a reboot. Waits up to `timeout_ms`; true when the log is closed. */
+bool lbr_log_service_close(uint32_t timeout_ms);
+
 /* Name of the open session file ("" if none). */
 void lbr_log_service_file_name(char out[LBR_SD_NAME_MAX]);

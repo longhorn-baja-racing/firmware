@@ -72,6 +72,10 @@ static SemaphoreHandle_t s_evt_lock;
 static lbr_stream_t      s_evt_stream;
 static lbr_stream_t      s_fault_stream;
 
+/* Last heartbeat, built only by health_task (rates are per period); the
+ * status hooks read this copy. Guarded by s_state_lock. */
+static lbr_health_record_t s_last_health;
+
 static atomic_uint s_frames_rx;
 static atomic_uint s_frames_logged;
 static atomic_uint s_sync_tx_fail;
@@ -230,7 +234,7 @@ static void sync_task(void *arg)
         lbr_can_bus_arm_sync_tx();
         lbr_can_encode_time_sync(NODE_ID, seq, epoch, &f);
         gw_tx(&f);
-        if (lbr_can_bus_wait_sync_tx_done(&tx_local, 50)) {
+        if (lbr_can_bus_wait_sync_tx_done(seq, &tx_local, 50)) {
             lbr_can_encode_time_follow_up(NODE_ID, seq, lbr_time_local_to_shared(tx_local), &f);
             gw_tx(&f);
         } else {
@@ -314,22 +318,22 @@ static void build_health(lbr_health_record_t *h)
     uint32_t logged = atomic_load(&s_frames_logged);
     uint64_t now    = lbr_time_now_us();
     *h              = (lbr_health_record_t){
-        .node_id               = NODE_ID,
-        .state                 = (uint8_t)state,
-        .flags                 = flags,
-        .fw_version            = LBR_FW_VERSION,
-        .protocol_version      = LBR_PROTOCOL_VERSION,
-        .boot_count            = (uint16_t)s_boot_count,
-        .catalog_hash          = lbr_catalog_hash(),
-        .config_crc            = lbr_crc32(s_config_text, strlen(s_config_text)),
-        .uptime_ms             = (uint32_t)(lbr_time_mono_us() / 1000u),
-        .reset_reason          = (uint8_t)s_reset_reason,
-        .acquire_hz            = (uint16_t)((rx - prev_rx) * 1000u / HEALTH_PERIOD_MS),
-        .publish_hz            = 0,
-        .log_hz                = (uint16_t)((logged - prev_logged) * 1000u / HEALTH_PERIOD_MS),
-        .queue_high_water      = ls.queue_high_water,
-        .overflow_count        = ls.records_dropped + ls.records_rejected_closed,
-        .rejected_count        = cs.rx_foreign,
+        .node_id          = NODE_ID,
+        .state            = (uint8_t)state,
+        .flags            = flags,
+        .fw_version       = LBR_FW_VERSION,
+        .protocol_version = LBR_PROTOCOL_VERSION,
+        .boot_count       = (uint16_t)s_boot_count,
+        .catalog_hash     = lbr_catalog_hash(),
+        .config_crc       = lbr_crc32(s_config_text, strlen(s_config_text)),
+        .uptime_ms        = (uint32_t)(lbr_time_mono_us() / 1000u),
+        .reset_reason     = (uint8_t)s_reset_reason,
+        .acquire_hz       = (uint16_t)((rx - prev_rx) * 1000u / HEALTH_PERIOD_MS),
+        .publish_hz       = 0,
+        .log_hz           = (uint16_t)((logged - prev_logged) * 1000u / HEALTH_PERIOD_MS),
+        .queue_high_water = ls.queue_high_water,
+        .overflow_count   = ls.records_dropped + ls.records_rejected_closed + ls.records_lost_write,
+        .rejected_count   = cs.rx_foreign,
         .write_error_count     = ls.write_errors + ls.sync_errors,
         .transport_error_count = link_dropped + link_errors + atomic_load(&s_sync_tx_fail),
         .can_tec               = cs.tec,
@@ -372,6 +376,7 @@ static void health_task(void *arg)
         }
 
         xSemaphoreTake(s_state_lock, portMAX_DELAY);
+        s_last_health = h;
         lbr_lora_policy_offer_health(&s_lora_policy, &h);
         size_t n_lost = lbr_node_table_expire(&s_nodes, lbr_time_now_us(), lost, sizeof lost);
         xSemaphoreGive(s_state_lock);
@@ -386,19 +391,19 @@ static void health_task(void *arg)
 
 static size_t hook_status(char *buf, size_t cap)
 {
-    lbr_health_record_t h;
-    char                name[LBR_SD_NAME_MAX];
-    build_health(&h);
+    char name[LBR_SD_NAME_MAX];
     lbr_log_service_file_name(name);
     xSemaphoreTake(s_state_lock, portMAX_DELAY);
-    size_t n = lbr_status_format(&h, name, &s_nodes, lbr_time_now_us(), buf, cap);
+    size_t n = lbr_status_format(&s_last_health, name, &s_nodes, lbr_time_now_us(), buf, cap);
     xSemaphoreGive(s_state_lock);
     return n;
 }
 
 static void hook_before_reboot(void)
 {
-    lbr_log_close(s_log, lbr_time_now_us());
+    if (!lbr_log_service_close(3000)) {
+        ESP_LOGE(TAG, "log did not close cleanly before reboot");
+    }
 }
 
 static int log_vprintf(const char *fmt, va_list ap)

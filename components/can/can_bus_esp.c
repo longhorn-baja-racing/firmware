@@ -35,7 +35,9 @@ static tx_slot_t          s_slots[MAX_TX_SLOTS];
 static size_t             s_slot_count;
 static TaskHandle_t       s_recover_task;
 static TaskHandle_t       s_sync_waiter;
-static volatile uint64_t  s_sync_tx_us;
+static uint64_t           s_sync_tx_us; /* guarded by s_sync_mux */
+static uint8_t            s_sync_tx_seq;
+static portMUX_TYPE       s_sync_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t           s_sync_id;
 
 static atomic_uint s_tx_frames;
@@ -101,7 +103,12 @@ static bool IRAM_ATTR on_tx_done(twai_node_handle_t handle, const twai_tx_done_e
     }
     const twai_frame_t *done = ed->done_tx_frame;
     if (done != NULL && done->header.id == s_sync_id && ed->is_tx_success) {
-        s_sync_tx_us = (uint64_t)esp_timer_get_time();
+        /* Record which sync this completion belongs to: a frame retried for
+         * a long time (no ACK) must not be paired with a later FOLLOW_UP. */
+        portENTER_CRITICAL_ISR(&s_sync_mux);
+        s_sync_tx_us  = (uint64_t)esp_timer_get_time();
+        s_sync_tx_seq = done->buffer_len > 0 ? done->buffer[0] : 0;
+        portEXIT_CRITICAL_ISR(&s_sync_mux);
         if (s_sync_waiter != NULL) {
             vTaskNotifyGiveFromISR(s_sync_waiter, &woken);
         }
@@ -269,13 +276,25 @@ void lbr_can_bus_arm_sync_tx(void)
     ulTaskNotifyTake(pdTRUE, 0);
 }
 
-bool lbr_can_bus_wait_sync_tx_done(uint64_t *tx_local_us, uint32_t timeout_ms)
+bool lbr_can_bus_wait_sync_tx_done(uint8_t sync_seq, uint64_t *tx_local_us, uint32_t timeout_ms)
 {
-    bool got = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms)) > 0;
-    if (got) {
-        *tx_local_us = s_sync_tx_us;
+    TickType_t start = xTaskGetTickCount();
+    TickType_t limit = pdMS_TO_TICKS(timeout_ms);
+    for (;;) {
+        TickType_t waited = xTaskGetTickCount() - start;
+        if (waited >= limit || ulTaskNotifyTake(pdTRUE, limit - waited) == 0) {
+            return false;
+        }
+        portENTER_CRITICAL(&s_sync_mux);
+        uint8_t  seq = s_sync_tx_seq;
+        uint64_t t   = s_sync_tx_us;
+        portEXIT_CRITICAL(&s_sync_mux);
+        if (seq == sync_seq) {
+            *tx_local_us = t;
+            return true;
+        }
+        /* A completion of an older sync frame: keep waiting for ours. */
     }
-    return got;
 }
 
 void lbr_can_bus_get_stats(lbr_can_stats_t *out)
