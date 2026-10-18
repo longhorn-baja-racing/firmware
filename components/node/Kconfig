@@ -1,0 +1,17 @@
+menu "LBR node runtime"
+
+    config LBR_HEALTH_PERIOD_MS
+        int "Heartbeat period (ms)"
+        range 100 10000
+        default 1000
+
+    config LBR_SENSOR_SIM
+        bool "Use simulated sensor data (bench only)"
+        default n
+        help
+            Replace every not-yet-implemented driver with the simulator so the
+            CAN/logging/telemetry pipeline can be exercised without parts.
+            Heartbeats raise the SIM_SENSORS flag and every session config
+            records sim=1. Never race with this enabled.
+
+endmenu

@@ -24,6 +24,11 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/can/can.c"
     "${LBR_COMPONENTS}/timebase/timebase.c"
     "${LBR_COMPONENTS}/logging/logging.c"
+    "${LBR_COMPONENTS}/sensors/sensor_unconfigured.c"
+    "${LBR_COMPONENTS}/sensors/sensor_sim.c"
+    "${LBR_COMPONENTS}/node/node_config.c"
+    "${LBR_COMPONENTS}/node/node_table.c"
+    "${LBR_COMPONENTS}/node/value_table.c"
     port_host.c
 )
 target_include_directories(lbr_core PUBLIC
@@ -33,6 +38,8 @@ target_include_directories(lbr_core PUBLIC
     "${LBR_COMPONENTS}/can/include"
     "${LBR_COMPONENTS}/timebase/include"
     "${LBR_COMPONENTS}/logging/include"
+    "${LBR_COMPONENTS}/sensors/include"
+    "${LBR_COMPONENTS}/node/include"
     "${CMAKE_CURRENT_LIST_DIR}"
 )
 target_link_libraries(lbr_core PUBLIC m)
@@ -44,7 +51,7 @@ if(LBR_SANITIZE AND NOT CMAKE_C_COMPILER_ID STREQUAL "MSVC")
     target_link_options(lbr_core PUBLIC -fsanitize=address,undefined)
 endif()
 
-set(LBR_TESTS util protocol health can timebase logging)
+set(LBR_TESTS util protocol health can timebase logging sensors node)
 foreach(name IN LISTS LBR_TESTS)
     add_executable(test_${name} test_${name}.c)
     target_link_libraries(test_${name} PRIVATE lbr_core)
