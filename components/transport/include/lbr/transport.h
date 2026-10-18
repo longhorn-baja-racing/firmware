@@ -7,7 +7,7 @@
 /*
  * One logical record model behind every live transport. Each implementation
  * owns its framing and bandwidth policy but MUST NOT change the meaning of a
- * record. See README "Live transports".
+ * record. See README "Live transports" and packet.h.
  */
 
 typedef enum {
@@ -15,9 +15,18 @@ typedef enum {
     LBR_LINK_USB,      /* wired bench/pit, bulk */
     LBR_LINK_WIFI,     /* pit, bulk / OTA / config */
     LBR_LINK_BLE,      /* walk-up diagnostics, low power */
+    LBR_LINK_COUNT_
 } lbr_link_kind_t;
 
 typedef struct lbr_transport lbr_transport_t;
+
+typedef struct {
+    uint32_t packets_sent;
+    uint32_t packets_dropped; /* queue full / link down: counted, never blocking */
+    uint32_t bytes_sent;
+    uint32_t errors;
+    bool     connected;
+} lbr_transport_stats_t;
 
 struct lbr_transport {
     const char     *name;
@@ -25,10 +34,12 @@ struct lbr_transport {
 
     int (*init)(lbr_transport_t *self);
 
-    /* Non-blocking: enqueue one framed record. Returns 0 on success, <0 if the
-     * bounded queue is full. The caller MUST count the drop and continue - a
-     * slow/absent link must never block acquisition or the authoritative log. */
-    int (*send)(lbr_transport_t *self, const uint8_t *buf, size_t len);
+    /* Non-blocking: enqueue one finished packet (packet.h). Returns 0 on
+     * success, <0 if it was dropped. The transport counts the drop; a slow or
+     * absent link never blocks acquisition or the authoritative log. */
+    int (*send)(lbr_transport_t *self, const uint8_t *pkt, size_t len);
+
+    void (*get_stats)(lbr_transport_t *self, lbr_transport_stats_t *out);
 
     void *ctx; /* implementation state */
 };

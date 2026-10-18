@@ -28,6 +28,8 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/sensors/sensor_sim.c"
     "${LBR_COMPONENTS}/node/node_config.c"
     "${LBR_COMPONENTS}/node/node_table.c"
+    "${LBR_COMPONENTS}/transport/packet.c"
+    "${LBR_COMPONENTS}/transport/lora_policy.c"
     port_host.c
 )
 target_include_directories(lbr_core PUBLIC
@@ -39,6 +41,7 @@ target_include_directories(lbr_core PUBLIC
     "${LBR_COMPONENTS}/logging/include"
     "${LBR_COMPONENTS}/sensors/include"
     "${LBR_COMPONENTS}/node/include"
+    "${LBR_COMPONENTS}/transport/include"
     "${CMAKE_CURRENT_LIST_DIR}"
 )
 target_link_libraries(lbr_core PUBLIC m)
@@ -63,7 +66,7 @@ endforeach()
 target_link_libraries(lbr_plans PUBLIC lbr_core)
 lbr_apply_warnings(lbr_plans)
 
-set(LBR_TESTS util protocol health can timebase logging sensors node plans)
+set(LBR_TESTS util protocol health can timebase logging sensors node plans transport)
 foreach(name IN LISTS LBR_TESTS)
     add_executable(test_${name} test_${name}.c)
     target_link_libraries(test_${name} PRIVATE lbr_core lbr_plans)
