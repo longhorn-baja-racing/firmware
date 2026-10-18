@@ -20,6 +20,9 @@
 
 #define LBR_NODE_ID 0x01u
 
+/* Entry point called by the ESP-IDF startup code. */
+void app_main(void);
+
 void app_main(void)
 {
     /* TODO: init TWAI (CAN) + external transceiver. */

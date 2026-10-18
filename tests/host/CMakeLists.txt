@@ -28,7 +28,6 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/sensors/sensor_sim.c"
     "${LBR_COMPONENTS}/node/node_config.c"
     "${LBR_COMPONENTS}/node/node_table.c"
-    "${LBR_COMPONENTS}/node/value_table.c"
     port_host.c
 )
 target_include_directories(lbr_core PUBLIC
@@ -51,10 +50,23 @@ if(LBR_SANITIZE AND NOT CMAKE_C_COMPILER_ID STREQUAL "MSVC")
     target_link_options(lbr_core PUBLIC -fsanitize=address,undefined)
 endif()
 
-set(LBR_TESTS util protocol health can timebase logging sensors node)
+target_sources(lbr_core PRIVATE "${LBR_COMPONENTS}/node/value_table.c")
+
+# Every sensor node's plan (pure data) is compiled in, so per-node and
+# system-wide CAN budgets are checked against the real configurations.
+set(LBR_NODE_PLANS imu_gps suspension driver_inputs temperature fuel_gauge stress dashboard)
+add_library(lbr_plans STATIC)
+foreach(node IN LISTS LBR_NODE_PLANS)
+    target_sources(lbr_plans PRIVATE "${LBR_ROOT}/nodes/${node}/main/${node}_plan.c")
+    target_include_directories(lbr_plans PUBLIC "${LBR_ROOT}/nodes/${node}/main")
+endforeach()
+target_link_libraries(lbr_plans PUBLIC lbr_core)
+lbr_apply_warnings(lbr_plans)
+
+set(LBR_TESTS util protocol health can timebase logging sensors node plans)
 foreach(name IN LISTS LBR_TESTS)
     add_executable(test_${name} test_${name}.c)
-    target_link_libraries(test_${name} PRIVATE lbr_core)
+    target_link_libraries(test_${name} PRIVATE lbr_core lbr_plans)
     lbr_apply_warnings(test_${name})
     add_test(NAME ${name} COMMAND test_${name})
 endforeach()
