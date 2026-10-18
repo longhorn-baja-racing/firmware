@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
@@ -11,8 +10,7 @@
 #include "freertos/task.h"
 #include "lbr/can_bus.h"
 #include "lbr/crc32.h"
-#include "lbr/log_sd.h"
-#include "lbr/logging.h"
+#include "lbr/log_service.h"
 #include "lbr/node.h"
 #include "lbr/nodes.h"
 #include "lbr/timebase.h"
@@ -56,11 +54,7 @@ static SemaphoreHandle_t s_evt_lock;
 static lbr_stream_t      s_evt_stream;
 static lbr_stream_t      s_fault_stream;
 
-static lbr_logger_t      s_log;
-static SemaphoreHandle_t s_log_lock;
-static uint8_t          *s_log_queue;
-static uint8_t          *s_log_chunk;
-static atomic_bool       s_sd_present;
+static lbr_logger_t *s_log; /* local log (local_log nodes only) */
 
 static atomic_uint   s_acquired;
 static atomic_uint   s_published;
@@ -83,7 +77,7 @@ static void publish(const lbr_sample_t *s)
 
 static void log_sample(const lbr_sample_t *s)
 {
-    if (s_cfg->local_log && lbr_log_append_sample(&s_log, s) == 0) {
+    if (s_log != NULL && lbr_log_append_sample(s_log, s) == 0) {
         atomic_fetch_add(&s_logged, 1);
     }
     /* Drops are counted by the logger (records_dropped / rejected_closed). */
@@ -244,102 +238,28 @@ static void rx_task(void *arg)
 /* ------------------------------------------------------------------------ */
 /* Local SD log (redundancy nodes only)                                      */
 
-static void log_lock(void *ctx)
+static void on_log_event(uint16_t code, bool fault)
 {
-    (void)ctx;
-    xSemaphoreTake(s_log_lock, portMAX_DELAY);
-}
-
-static void log_unlock(void *ctx)
-{
-    (void)ctx;
-    xSemaphoreGive(s_log_lock);
-}
-
-static void log_task(void *arg)
-{
-    (void)arg;
-    uint64_t next_mount  = 0;
-    uint32_t last_errors = 0;
-    bool     reported    = false;
-
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(LOG_PUMP_MS));
-        uint64_t now = lbr_time_mono_us();
-
-        if (!lbr_log_is_open(&s_log)) {
-            if (now < next_mount) {
-                continue;
-            }
-            next_mount = now + SD_RETRY_US;
-            if (lbr_sd_mount() != LBR_SD_OK) {
-                atomic_store(&s_sd_present, false);
-                if (!reported) {
-                    lbr_node_emit_event(LBR_EVT_SD_MISSING, 0, true);
-                    reported = true;
-                }
-                continue;
-            }
-            atomic_store(&s_sd_present, true);
-            lbr_log_storage_t st;
-            char              name[LBR_SD_NAME_MAX];
-            lbr_log_session_t session = {
-                .fw_version    = LBR_FW_VERSION,
-                .node_id       = s_cfg->node_id,
-                .reset_reason  = (uint8_t)s_reset_reason,
-                .boot_count    = s_boot_count,
-                .start_time_us = lbr_time_now_us(),
-                .config_text   = s_config_text,
-            };
-            if (lbr_sd_open_session(&st, name) != LBR_SD_OK ||
-                lbr_log_open(&s_log, &st, &session) != 0) {
-                lbr_sd_unmount();
-                atomic_store(&s_sd_present, false);
-                continue;
-            }
-            reported = false;
-            lbr_log_stats_t ls;
-            lbr_log_get_stats(&s_log, &ls);
-            last_errors = ls.write_errors;
-            lbr_node_emit_event(LBR_EVT_SD_MOUNTED, 0, false);
-            continue;
-        }
-
-        lbr_log_pump(&s_log, lbr_time_now_us());
-        lbr_log_stats_t ls;
-        lbr_log_get_stats(&s_log, &ls);
-        if (ls.write_errors != last_errors) {
-            /* Card pulled or failing: close out, remount on the next pass. */
-            last_errors = ls.write_errors;
-            lbr_node_emit_event(LBR_EVT_SD_WRITE_ERROR, 0, true);
-            lbr_log_close(&s_log, lbr_time_now_us());
-            lbr_sd_unmount();
-            atomic_store(&s_sd_present, false);
-            next_mount = now + SD_RETRY_US;
-        }
-    }
+    lbr_node_emit_event((lbr_event_code_t)code, 0, fault);
 }
 
 static bool start_local_log(void)
 {
-    size_t queue_size = (size_t)CONFIG_LBR_LOG_QUEUE_KB * 1024u;
-    s_log_lock        = xSemaphoreCreateMutex();
-    s_log_queue       = heap_caps_malloc(queue_size, MALLOC_CAP_8BIT);
-    s_log_chunk       = heap_caps_malloc(LOG_CHUNK_SIZE, MALLOC_CAP_DMA);
-    if (s_log_lock == NULL || s_log_queue == NULL || s_log_chunk == NULL) {
+    lbr_log_service_config_t lc = {
+        .node_id          = s_cfg->node_id,
+        .reset_reason     = (uint8_t)s_reset_reason,
+        .boot_count       = s_boot_count,
+        .config_text      = s_config_text,
+        .queue_size       = (size_t)CONFIG_LBR_LOG_QUEUE_KB * 1024u,
+        .sync_interval_ms = CONFIG_LBR_LOG_SYNC_INTERVAL_MS,
+        .now_us           = lbr_time_now_us,
+        .on_event         = on_log_event,
+    };
+    if (!lbr_log_service_start(&lc)) {
         return false;
     }
-    lbr_log_config_t cfg = {
-        .queue_mem        = s_log_queue,
-        .queue_cap        = queue_size,
-        .chunk            = s_log_chunk,
-        .chunk_cap        = LOG_CHUNK_SIZE,
-        .sync_interval_ms = CONFIG_LBR_LOG_SYNC_INTERVAL_MS,
-        .lock             = log_lock,
-        .unlock           = log_unlock,
-    };
-    return lbr_log_init(&s_log, &cfg) == 0 &&
-           xTaskCreate(log_task, "lbr_log", 4096, NULL, LOG_TASK_PRIO, NULL) == pdPASS;
+    s_log = lbr_log_service_logger();
+    return true;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -361,9 +281,10 @@ static void build_health(lbr_health_record_t *h, uint32_t period_ms)
 
     lbr_can_bus_get_stats(&cs);
     lbr_time_get_servo(&ts);
-    if (s_cfg->local_log) {
-        lbr_log_get_stats(&s_log, &ls);
+    if (s_log != NULL) {
+        lbr_log_get_stats(s_log, &ls);
     }
+    bool log_open = s_log != NULL && lbr_log_is_open(s_log);
 
     uint32_t sensor_ok  = 0;
     uint32_t calibrated = 0;
@@ -375,8 +296,8 @@ static void build_health(lbr_health_record_t *h, uint32_t period_ms)
 
     uint16_t flags = 0;
     flags |= ts.synced ? LBR_HF_TIME_SYNCED : 0;
-    flags |= atomic_load(&s_sd_present) ? LBR_HF_SD_PRESENT : 0;
-    flags |= lbr_log_is_open(&s_log) ? LBR_HF_SD_LOGGING : 0;
+    flags |= (s_log != NULL && lbr_log_service_sd_present()) ? LBR_HF_SD_PRESENT : 0;
+    flags |= log_open ? LBR_HF_SD_LOGGING : 0;
     flags |= s_sim ? LBR_HF_SIM_SENSORS : 0;
     flags |= s_config_valid ? LBR_HF_CONFIG_VALID : 0;
     flags |= cs.running ? LBR_HF_CAN_UP : 0;
@@ -387,7 +308,7 @@ static void build_health(lbr_health_record_t *h, uint32_t period_ms)
     } else if (!s_can_up) {
         state = LBR_NODE_FAULT;
     } else if (sensor_ok != all_sensors || !ts.synced || !cs.running ||
-               (s_cfg->local_log && !lbr_log_is_open(&s_log))) {
+               (s_cfg->local_log && !log_open)) {
         state = LBR_NODE_DEGRADED;
     }
 
@@ -452,8 +373,8 @@ static void health_task(void *arg)
                 lbr_can_bus_send(&f);
             }
         }
-        if (s_cfg->local_log) {
-            lbr_log_append_health(&s_log, &h);
+        if (s_log != NULL) {
+            lbr_log_append_health(s_log, &h);
         }
     }
 }
