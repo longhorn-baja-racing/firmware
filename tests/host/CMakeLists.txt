@@ -20,10 +20,13 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/util/cobs.c"
     "${LBR_COMPONENTS}/util/ringbuf.c"
     "${LBR_COMPONENTS}/protocol/protocol.c"
+    "${LBR_COMPONENTS}/health/health.c"
+    port_host.c
 )
 target_include_directories(lbr_core PUBLIC
     "${LBR_COMPONENTS}/util/include"
     "${LBR_COMPONENTS}/protocol/include"
+    "${LBR_COMPONENTS}/health/include"
     "${CMAKE_CURRENT_LIST_DIR}"
 )
 target_link_libraries(lbr_core PUBLIC m)
@@ -35,7 +38,7 @@ if(LBR_SANITIZE AND NOT CMAKE_C_COMPILER_ID STREQUAL "MSVC")
     target_link_options(lbr_core PUBLIC -fsanitize=address,undefined)
 endif()
 
-set(LBR_TESTS util protocol)
+set(LBR_TESTS util protocol health)
 foreach(name IN LISTS LBR_TESTS)
     add_executable(test_${name} test_${name}.c)
     target_link_libraries(test_${name} PRIVATE lbr_core)
