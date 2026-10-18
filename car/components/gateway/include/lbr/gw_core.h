@@ -1,0 +1,148 @@
+#pragma once
+
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "lbr/can.h"
+#include "lbr/gw_config.h"
+#include "lbr/health.h"
+#include "lbr/logging.h"
+#include "lbr/lora_policy.h"
+#include "lbr/node_core.h"
+#include "lbr/node_table.h"
+#include "lbr/packet.h"
+#include "lbr/transport.h"
+
+/*
+ * Gateway / logger logic, independent of the platform.
+ *
+ * Every frame on the bus (and every frame the gateway sends) goes to the
+ * authoritative log first, then to the USB/WiFi stream and the LoRa policy;
+ * the gateway is the time master and tracks node presence and health. The
+ * hardware is reached only through lbr_gw_hal_t, so the same code runs on the
+ * ESP32 (car/nodes/gateway) and in the simulator (dev/sim).
+ *
+ * Threading: on target, CAN RX, time sync, stream flush, LoRa, and the
+ * heartbeat are separate tasks. Shared state is guarded by hal.lock with one
+ * of the lock ids below; counters are atomic.
+ */
+
+typedef enum {
+    LBR_GW_LOCK_STATE = 0, /* node table, LoRa policy, last heartbeat */
+    LBR_GW_LOCK_STREAM,    /* USB/WiFi stream batcher */
+    LBR_GW_LOCK_EVENT,     /* EVENT/FAULT streams */
+    LBR_GW_LOCK_COUNT_
+} lbr_gw_lock_t;
+
+typedef struct {
+    void *ctx;
+
+    /* Clocks: the gateway is the time master, so shared time is its local
+     * clock (monotonic guard applied by now_us). */
+    uint64_t (*mono_us)(void *ctx);
+    uint64_t (*now_us)(void *ctx);
+    uint64_t (*local_to_shared)(void *ctx, uint64_t local_us);
+
+    /* CAN controller. sync_arm is called right before TIME_SYNC is queued,
+     * so the platform can capture its TX-done time for the FOLLOW_UP. */
+    bool (*can_send)(void *ctx, const lbr_can_frame_t *f);
+    void (*can_stats)(void *ctx, lbr_can_stats_t *out);
+    void (*sync_arm)(void *ctx);
+
+    /* SD card present (authoritative log). */
+    bool (*sd_present)(void *ctx);
+
+    /* LoRa radio free and inside its duty budget. */
+    bool (*lora_ready)(void *ctx);
+
+    void (*lock)(void *ctx, lbr_gw_lock_t which);
+    void (*unlock)(void *ctx, lbr_gw_lock_t which);
+
+    void (*log)(void *ctx, lbr_log_level_t level, const char *text);
+} lbr_gw_hal_t;
+
+typedef struct {
+    lbr_reset_reason_t reset_reason;
+    uint32_t           boot_count;
+    uint16_t           epoch;        /* new random timeline id every boot (never 0) */
+    bool               config_valid; /* stored gateway config passed validation */
+    const char        *config_text;  /* session config; must outlive the core */
+} lbr_gw_boot_t;
+
+/* Live links; any may be NULL (disabled or unavailable). */
+typedef struct {
+    lbr_transport_t *usb;
+    lbr_transport_t *wifi;
+    lbr_transport_t *lora;
+    lbr_transport_t *ble;
+} lbr_gw_links_t;
+
+#define LBR_GW_HEALTH_PERIOD_MS 1000u
+
+typedef struct {
+    lbr_gw_hal_t    hal;
+    lbr_gw_config_t cfg;
+    lbr_gw_boot_t   boot;
+    uint32_t        config_crc;
+    bool            can_up;
+    lbr_logger_t   *log;
+    lbr_gw_links_t  links;
+
+    /* LBR_GW_LOCK_STATE */
+    lbr_node_table_t    nodes;
+    lbr_lora_policy_t   lora_policy;
+    lbr_health_record_t last_health;
+
+    /* LBR_GW_LOCK_STREAM */
+    uint8_t           stream_pkt[LBR_PKT_MAX_SIZE];
+    lbr_pkt_builder_t stream;
+    bool              stream_open;
+
+    /* LBR_GW_LOCK_EVENT */
+    lbr_stream_t evt_stream;
+    lbr_stream_t fault_stream;
+
+    /* Time-sync caller only. */
+    uint8_t sync_seq;
+
+    /* Heartbeat caller only. */
+    uint32_t prev_rx, prev_logged, last_bus_off;
+
+    atomic_uint frames_rx;
+    atomic_uint frames_logged;
+    atomic_uint sync_tx_fail;
+} lbr_gw_core_t;
+
+void lbr_gw_core_init(lbr_gw_core_t *c, const lbr_gw_hal_t *hal, const lbr_gw_config_t *cfg,
+                      const lbr_gw_boot_t *boot);
+
+/* After the platform started the log, the links, and CAN: emit the boot
+ * events. `log` is the authoritative logger (may be NULL if it failed). */
+void lbr_gw_core_start(lbr_gw_core_t *c, lbr_logger_t *log, const lbr_gw_links_t *links,
+                       bool can_up, bool can_pins_unset);
+
+/* A frame received from the bus, with its local receive time. */
+void lbr_gw_core_on_rx(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t rx_local_us);
+
+/* Time sync, LBR_TIME_SYNC_HZ times per second: send TIME_SYNC and return
+ * its seq; the platform then reports when it finished transmitting (local
+ * clock), or that it did not (no ACK, bus-off), with sync_done. */
+uint8_t lbr_gw_core_sync_send(lbr_gw_core_t *c);
+void    lbr_gw_core_sync_done(lbr_gw_core_t *c, bool sent, uint64_t tx_local_us);
+
+/* Every stream_batch_ms: push the pending USB/WiFi batch. */
+void lbr_gw_core_stream_flush(lbr_gw_core_t *c);
+
+/* Every lora_period_ms: build and send one LoRa packet if the radio is ready. */
+void lbr_gw_core_lora_tick(lbr_gw_core_t *c);
+
+/* Every LBR_GW_HEALTH_PERIOD_MS: own heartbeat, node expiry. */
+void lbr_gw_core_heartbeat(lbr_gw_core_t *c, lbr_health_record_t *out);
+
+/* Gateway EVENT / FAULT sample (sent on CAN and logged like any frame). */
+void lbr_gw_core_event(lbr_gw_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault);
+
+/* Status text for the links (STAT, HTTP, BLE). */
+size_t lbr_gw_core_status(lbr_gw_core_t *c, const char *log_name, char *buf, size_t cap);

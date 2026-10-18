@@ -141,3 +141,19 @@ static inline uint32_t lbr_can_frame_bits_worst(uint8_t dlc)
     uint32_t stuffable = 54u + 8u * dlc; /* SOF .. CRC */
     return stuffable + (stuffable - 1u) / 4u + 13u;
 }
+
+/* Controller statistics (TWAI adapter on target, the virtual bus in the
+ * simulator). Counters wrap. */
+typedef struct {
+    uint32_t tx_frames;
+    uint32_t rx_frames;
+    uint32_t tx_dropped; /* not queued (queue full, bus-off, not started) */
+    uint32_t tx_failed;  /* queued but reported failed by the controller */
+    uint32_t rx_dropped; /* RX queue full */
+    uint32_t rx_foreign; /* standard-id or remote frames: not LBR, not queued */
+    uint32_t bus_off_count;
+    uint32_t bus_errors;
+    uint8_t  tec;
+    uint8_t  rec;
+    bool     running; /* started and not bus-off */
+} lbr_can_stats_t;

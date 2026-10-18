@@ -29,9 +29,11 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/sensors/sensor_io.c"
     "${LBR_COMPONENTS}/sensors/nmea.c"
     "${LBR_COMPONENTS}/node/node_config.c"
+    "${LBR_COMPONENTS}/node/node_core.c"
     "${LBR_COMPONENTS}/node/node_table.c"
     "${LBR_COMPONENTS}/transport/packet.c"
     "${LBR_COMPONENTS}/transport/lora_policy.c"
+    "${LBR_COMPONENTS}/gateway/gw_core.c"
     "${LBR_COMPONENTS}/gateway/gw_config.c"
     "${LBR_COMPONENTS}/gateway/status.c"
     port_host.c
@@ -71,7 +73,7 @@ endforeach()
 target_link_libraries(lbr_plans PUBLIC lbr_core)
 lbr_apply_warnings(lbr_plans)
 
-set(LBR_TESTS util protocol health can timebase logging sensors node plans transport gateway)
+set(LBR_TESTS util protocol health can timebase logging sensors node plans transport gateway cores)
 foreach(name IN LISTS LBR_TESTS)
     add_executable(test_${name} test_${name}.c)
     target_link_libraries(test_${name} PRIVATE lbr_core lbr_plans)

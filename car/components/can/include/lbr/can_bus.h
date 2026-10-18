@@ -29,20 +29,6 @@ typedef struct {
     uint64_t        rx_local_us; /* local monotonic clock in the RX ISR */
 } lbr_can_rx_t;
 
-typedef struct {
-    uint32_t tx_frames;
-    uint32_t rx_frames;
-    uint32_t tx_dropped; /* not queued (queue full, bus-off, not started) */
-    uint32_t tx_failed;  /* queued but reported failed by the controller */
-    uint32_t rx_dropped; /* RX queue full */
-    uint32_t rx_foreign; /* standard-id or remote frames: not LBR, not queued */
-    uint32_t bus_off_count;
-    uint32_t bus_errors;
-    uint8_t  tec;
-    uint8_t  rec;
-    bool     running; /* started and not bus-off */
-} lbr_can_stats_t;
-
 typedef enum {
     LBR_CAN_OK             = 0,
     LBR_CAN_ERR_PINS_UNSET = -1, /* Kconfig GPIOs are still -1 (TBD) */
