@@ -18,7 +18,8 @@ gateway/logger.
 
 ## Project status
 
-The framework is in place and tested; sensor parts and pins are not chosen yet.
+The framework is in place and tested; sensor parts and pins are not chosen yet. To build,
+test, simulate, or flash, see [Getting started](#getting-started).
 
 - **Shared libraries** (`car/components/`): protocol + signal catalog, CAN ID map and TWAI
   adapter, CAN-distributed time sync, recoverable SD logging, heartbeat/health, sensor
@@ -271,72 +272,145 @@ queue, time-sync, and log-recovery behavior is exercised in host tests without h
 Adding a node means copying a `car/nodes/<name>/` directory, giving it a new id in
 `car/components/protocol/include/lbr/nodes.h`, and adding its plan to `dev/tests/host/CMakeLists.txt`.
 
-## Build workflow
+## Getting started
 
-Prerequisites: ESP-IDF **exactly the release in [`.idf-version`](.idf-version)** (currently
-**v6.1**) and its toolchain, with its export script sourced so `idf.py` is on your `PATH`.
-Every node build checks this (`car/cmake/idf_version.cmake`) and stops with an error on any other
-version, or on a git checkout of IDF that is not sitting on that release tag, so every
-developer and CI produce firmware from the same IDF. Install it with Espressif's installer
-(EIM) or:
+Everything below runs from the repository root unless it says otherwise. Steps 1 to 3 need no
+ESP32 and no ESP-IDF; step 4 builds and flashes the firmware.
+
+### 1. Prerequisites
+
+| For | You need |
+| --- | --- |
+| tests and simulator (`dev/`) | CMake 3.16+, Ninja, a C11 compiler (gcc or clang), Python 3.8+ |
+| firmware (`car/`) | ESP-IDF, **exactly the release in [`.idf-version`](.idf-version)** (currently **v6.1**) |
+
+On Windows, use WSL or MSYS2 (MinGW-w64) for the C build; the simulator UI only needs Python.
+Debian/Ubuntu: `sudo apt install cmake ninja-build gcc python3`.
+
+ESP-IDF, with Espressif's installer (EIM) or by hand:
 
 ```sh
 git clone -b v6.1 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf-v6.1
 ~/esp/esp-idf-v6.1/install.sh esp32
-. ~/esp/esp-idf-v6.1/export.sh
+. ~/esp/esp-idf-v6.1/export.sh        # in every new shell before using idf.py
 ```
 
-Moving to a new IDF release is a deliberate change: update `.idf-version` in its own PR (CI
-takes its `espressif/idf` container tag from the same file) and rebuild every node.
+Every node build checks the active IDF against `.idf-version` (`car/cmake/idf_version.cmake`)
+and stops on any other release, or on an IDF git checkout that is not exactly on that tag, so
+every developer and CI build the same firmware. Moving to a new release is a deliberate change:
+update `.idf-version` in its own PR (CI reads its `espressif/idf` container tag from the same
+file) and rebuild every node.
 
-```sh
-# from a node app directory, e.g. car/nodes/gateway
-idf.py set-target esp32
-idf.py build
-idf.py -p <PORT> flash monitor
-idf.py menuconfig          # LBR menus: CAN, microSD, node runtime, transports
-```
-
-Pins live in Kconfig (`CONFIG_LBR_CAN_*_GPIO`, `CONFIG_LBR_SD_*`, `CONFIG_LBR_LORA_*`) and
-default to `-1` until the schematic confirms them (`docs/hardware.md`). Bench options:
-`CONFIG_LBR_SENSOR_SIM=y` (simulated sensor data, flagged in every heartbeat and log) and,
-on the gateway, `CONFIG_LBR_WIFI_PASSWORD` (WiFi stays off until it is set; never commit it).
-
-An extra sdkconfig overlay can be layered on any node:
-
-```sh
-idf.py -DLBR_SDKCONFIG_EXTRA=$PWD/../../../dev/ci/sdkconfig.linkcheck build
-```
-
-Host-side unit tests and the simulator build and run without hardware:
+### 2. Build and run the tests (no hardware)
 
 ```sh
 cmake -S dev -B build-dev -G Ninja
 cmake --build build-dev
-ctest --test-dir build-dev --output-on-failure   # unit tests, fixtures, simulator scenarios
-ctest --test-dir build-dev -R <test_name>        # e.g. -R logging, -R sim_can_faults
-cmake --build build-dev --target fixtures        # regenerate golden fixtures (format change)
-python3 dev/tools/lbr_decode.py --selftest       # reference decoder vs fixtures
-python3 dev/sim/ui/server.py                     # simulator UI at http://127.0.0.1:8765/
+ctest --test-dir build-dev --output-on-failure   # unit tests, golden fixtures, simulator scenarios
+ctest --test-dir build-dev -R logging            # one suite (or e.g. -R sim_can_faults)
+python3 dev/tools/lbr_decode.py --selftest       # independent decoder vs the golden fixtures
 ```
 
-The simulator ([`dev/sim/README.md`](dev/sim/README.md)) runs every node's real firmware
-logic on a simulated car: a 2D view of the nodes, sensors, and CAN bus, the hardware commands
-each node issues, fault injection (unplugged parts and cables, bus-off, noise, clock drift, SD
-card loss, reboots), and scripted scenarios that run in CI.
+The host build uses ASan and UBSan by default (`-DLBR_SANITIZE=OFF` to turn them off).
+Regenerate the golden fixtures only for an intended format change:
+`cmake --build build-dev --target fixtures`.
 
-Bench tools:
+### 3. Run the simulator
+
+The simulator ([`dev/sim/README.md`](dev/sim/README.md)) runs every node's real firmware logic on
+a simulated car. After step 2:
 
 ```sh
-python3 dev/tools/lbr_decode.py log 00000012.LBR             # decode a session log
-python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0          # live gateway view over USB
-python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd LIST
-python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd "DUMP 00000012.LBR" --out run.lbr
+python3 dev/sim/ui/server.py                     # then open http://127.0.0.1:8765/
+python3 dev/sim/ui/server.py --port 9000 --seed 7 --out /tmp/sim-run   # other port, seed, output
 ```
 
-The node projects are `lbr_gateway`, `lbr_imu_gps`, `lbr_suspension`, `lbr_driver_inputs`,
-`lbr_temperature`, `lbr_fuel_gauge`, `lbr_stress`, and `lbr_dashboard`. CI builds them in the
-`espressif/idf` image whose tag is read from `.idf-version`.
+In the browser:
+
+- the car from above: the eight nodes in their zones, every sensor where it sits, and the CAN
+  trunk with frames moving along it; colors show state (green ok, amber degraded or no data,
+  red fault, grey not fitted or off);
+- **click a node** for its state, time sync, CAN controller, heartbeat, slots, SD card, and links,
+  with buttons to unplug its CAN cable, force bus-off, reboot, power it off, change its clock
+  drift, unplug a part, or pull its SD card; **click a sensor** to override its value or open the
+  circuit; **click the bus** to add noise;
+- **Trace commands** on a node, then the **Commands** tab, shows every hardware call its firmware
+  makes (CAN sends, ADC/GPIO/UART reads, SD writes, time-sync updates, link packets);
+- **Events** lists every event and fault on the bus and scenario results; **Cockpit** shows the
+  driver's display; **Console** takes any simulator command (`help` lists them);
+- the header has pause, step 100 ms, speed (0.05x to 20x), race or pit driving, seed and
+  restart, and **Play scenario**.
+
+Without the browser, run a scenario or a timed run directly:
+
+```sh
+build-dev/sim/lbr_sim dev/sim/scenarios/sensor_faults.sim                    # exit status = failed checks
+build-dev/sim/lbr_sim --trace suspension dev/sim/scenarios/can_faults.sim    # with a node's commands
+build-dev/sim/lbr_sim --seed 7 --duration 30                                 # run 30 s, print the state
+```
+
+The simulated gateway writes real files to `sim-out/` (or `--out`): SD session logs
+(`00000001.LBR`, ...), the stress node's local logs, and the USB stream. Read them like the car's:
+
+```sh
+python3 dev/tools/lbr_decode.py log sim-out/00000001.LBR
+python3 dev/tools/lbr_decode.py stream sim-out/usb_stream.bin
+```
+
+Scenarios are plain text (`at <seconds> <command>`, `expect ...` checks, `end <seconds>`) in
+`dev/sim/scenarios/`; every file there runs in `ctest` and in CI. Add one for each behavior you
+change. The command and check reference is in [`dev/sim/README.md`](dev/sim/README.md).
+
+### 4. Build and flash the firmware
+
+Each node is its own ESP-IDF project in `car/nodes/<node>` (`gateway`, `imu_gps`, `suspension`,
+`driver_inputs`, `temperature`, `fuel_gauge`, `stress`, `dashboard`). With ESP-IDF exported:
+
+```sh
+cd car/nodes/gateway
+idf.py set-target esp32                  # once per build directory
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor     # COM3 on Windows; Ctrl+] leaves the monitor
+idf.py menuconfig                        # LBR menus: pins, CAN, SD, inputs, links, bench options
+```
+
+Build every node from the repository root (warnings are errors, as in CI):
+
+```sh
+for n in gateway imu_gps suspension driver_inputs temperature fuel_gauge stress dashboard; do
+  (cd car/nodes/$n && idf.py build) || break
+done
+```
+
+- **Pins** are Kconfig settings that default to `-1` until the schematics confirm them
+  (`docs/hardware.md`); the firmware refuses to drive an unset pin and reports it. Set them in
+  `menuconfig` per node.
+- **Sensors** on analog, pulse, or switch inputs and an NMEA GPS are wired and calibrated in
+  `menuconfig` with no code (`docs/sensors.md`).
+- **Bench only:** `CONFIG_LBR_SENSOR_SIM=y` feeds simulated sensor data (flagged in every
+  heartbeat and log; never race with it). On the gateway, WiFi stays off until
+  `CONFIG_LBR_WIFI_PASSWORD` is set locally; never commit it.
+- **Link check** (what CI also builds; placeholder pins, not a pin map):
+  `idf.py -DLBR_SDKCONFIG_EXTRA=$PWD/../../../dev/ci/sdkconfig.linkcheck build` from a node directory.
+
+### 5. Bench tools (real gateway)
+
+```sh
+python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0                     # live view over USB (pip install pyserial)
+python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd LIST          # session files on the SD card
+python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd "DUMP 00000012.LBR" --out run.lbr
+python3 dev/tools/lbr_decode.py log run.lbr                             # decode a session log
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `LBR: this project requires ESP-IDF v6.1 ...` | export the IDF from `.idf-version` (`. ~/esp/esp-idf-v6.1/export.sh`) |
+| `... is not checked out at the release tag` | `git -C "$IDF_PATH" checkout v6.1 && git -C "$IDF_PATH" submodule update --init --recursive` |
+| `lbr_sim not found` from the UI | build step 2 first, or pass `--sim path/to/lbr_sim` |
+| UI port already in use | `python3 dev/sim/ui/server.py --port 9000` |
+| a node logs `CAN_PINS_UNSET` / `configuration rejected` | set its pins in `menuconfig`; the log line names the bad setting |
 
 ## Test workflow
 

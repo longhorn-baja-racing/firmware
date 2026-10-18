@@ -270,7 +270,7 @@ def main():
     threading.Thread(target=sim.run, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(sim))
     server.daemon_threads = True
-    print("LBR simulator UI: http://127.0.0.1:%d/  (Ctrl+C to stop)" % args.port)
+    print("LBR simulator UI: http://127.0.0.1:%d/  (Ctrl+C to stop)" % args.port, flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
