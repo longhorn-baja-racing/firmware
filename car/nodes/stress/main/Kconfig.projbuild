@@ -1,0 +1,14 @@
+menu "LBR stress inputs"
+
+    config LBR_IO_STRESS
+        string "Slot 'stress' input spec"
+        default ""
+        help
+            Channels, in order: STRESS_1, STRESS_2, STRESS_3, STRESS_4, STRESS_5, STRESS_6, STRESS_7, STRESS_8 (frames 0x400 and 0x401; needs a bridge amplifier/ADC part, the on-chip ADC is too noisy).
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+
+endmenu

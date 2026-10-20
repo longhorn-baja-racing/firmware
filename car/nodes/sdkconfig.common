@@ -1,0 +1,24 @@
+# Settings shared by every LBR node (listed first in each node's
+# SDKCONFIG_DEFAULTS; a node's own sdkconfig.defaults overrides these).
+# The chip (CONFIG_IDF_TARGET) is set per node: esp32 or esp32c5.
+CONFIG_FREERTOS_HZ=1000
+
+# Hung tasks reset the node; the reset reason is reported next boot.
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+CONFIG_ESP_BROWNOUT_DET=y
+
+# Keep the TWAI ISR running while flash is written (NVS, OTA, boot counter):
+# otherwise the 64-byte RX FIFO overruns and the driver drops frames without
+# a callback, and time-sync timestamps are taken late. The lbr callbacks are
+# IRAM_ATTR for this.
+CONFIG_TWAI_ISR_CACHE_SAFE=y
+
+# Modules on the shortlist carry 4 MB flash (confirm with the board set, #15).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# String literals are const (-Wwrite-strings) across the whole build.
+CONFIG_COMPILER_WARN_WRITE_STRINGS=y

@@ -1,0 +1,34 @@
+# A normal run: every node boots and synchronizes (CAN nodes over CAN, the
+# corners over WiFi through the IMU Controller); the Central logs the whole
+# bus to SD, samples its GPS, and drives LoRa, USB, and the dashboard.
+at 2.0  expect can seen == 1
+at 2.0  expect can synced == 1
+at 3.0  expect corners synced == 1
+at 5.0  expect all state == RUN
+at 5.0  expect central state == RUN
+at 10.0 expect can sync_err_us < 50
+# WiFi round trips jitter by milliseconds: well inside the 10 ms grid.
+at 10.0 expect corners sync_err_us < 1000
+# DAQ-WIRING.md estimates 35-40 % at 500 kbit/s and targets under 50 %.
+at 10.0 expect bus load < 50
+at 10.0 expect bus load > 30
+at 10.0 expect can tx_dropped == 0
+at 10.0 expect can overflow == 0
+at 10.0 expect corners link == 1
+at 10.0 expect corners lost == 0
+at 10.0 expect dashboard link == 1
+at 10.0 expect central log_dropped == 0
+at 10.0 expect central usb_pkts > 150
+# Defaults (SF9, 125 kHz, 10% duty, full packets) give ~1.2 s on air per
+# packet and one packet every ~12 s; see issue #6.
+at 10.0 expect central lora_pkts >= 1
+at 10.0 expect central dash_pkts > 80
+at 10.0 expect GPS_FIX value == 3
+at 10.0 expect CORNER_LINK value == 15
+at 10.0 expect CORNER_SYNCED value == 15
+at 10.0 expect DASH_LINK value == 1
+at 10.0 expect DASH_BATTERY valid == 1
+at 10.0 expect IMU_BR_GYRO_Z valid == 1
+at 10.0 expect log intact == 1
+at 10.0 expect log frames > 13000
+end 10.0

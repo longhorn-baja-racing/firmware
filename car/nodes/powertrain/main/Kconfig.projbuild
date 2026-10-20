@@ -1,0 +1,25 @@
+menu "LBR powertrain inputs"
+
+    config LBR_IO_SPEEDS
+        string "Slot 'speeds' input spec"
+        default ""
+        help
+            Channels, in order: ENGINE_RPM, CVT_RPM (frame 0x200; typically pulse inputs (pickup or hall sensor)).
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+
+    config LBR_IO_FUEL
+        string "Slot 'fuel' input spec"
+        default ""
+        help
+            Channels, in order: FUEL_LEVEL (frame 0x201; typically an adc input (fuel sender)).
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+
+endmenu

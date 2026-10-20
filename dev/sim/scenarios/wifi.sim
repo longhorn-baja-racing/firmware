@@ -1,0 +1,48 @@
+# The 5 GHz links (DAQ-WIRING.md section 8): one lost datagram costs nothing
+# (each carries the previous batch again); heavier loss is counted, never
+# silent; a corner or the dashboard out of range is reported and comes back.
+at 3.0  expect corners lost == 0
+at 3.0  wifi corner_fl loss 50
+at 9.0  expect corner_fl gaps > 3
+at 9.0  expect corner_fr lost == 0
+at 9.0  wifi corner_fl loss 400
+at 15.0 expect corner_fl lost > 0
+at 15.0 expect imu transport_errors > 0
+at 15.0 wifi corner_fl loss 0
+
+# Corner BR out of range: link bit cleared, NODE_LOST, its data goes stale.
+at 16.0 wifi corner_br down
+at 17.5 expect corner_br state == LOST
+at 17.5 expect CORNER_LINK value == 7
+at 17.5 expect CORNER_BR_BATTERY reason == NO_DATA
+at 17.5 expect imu event:NODE_LOST >= 1
+at 17.5 expect imu state == DEGRADED
+at 17.5 expect IMU_BR_ACCEL_X age_ms > 1000
+at 18.0 wifi corner_br up
+at 20.0 expect corner_br state == RUN
+at 20.0 expect CORNER_LINK value == 15
+at 20.0 expect imu event:NODE_FOUND >= 5
+at 20.0 expect IMU_BR_ACCEL_X age_ms < 100
+
+# A low corner battery is reported as a value, not a fault.
+at 20.0 set CORNER_FL_BATTERY 5
+at 22.5 expect CORNER_FL_BATTERY value <= 6
+at 22.5 auto CORNER_FL_BATTERY
+
+# The dashboard out of range: the Central reports it and keeps logging.
+at 23.0 wifi dashboard down
+at 27.0 expect dashboard state == LOST
+at 27.0 expect DASH_LINK value == 0
+at 27.0 expect DASH_BATTERY reason == NO_DATA
+at 27.0 expect central event:NODE_LOST >= 1
+at 27.0 wifi dashboard up
+at 30.0 expect dashboard state == RUN
+at 30.0 expect DASH_LINK value == 1
+
+# A corner reboots: it re-syncs over WiFi and its new timeline is not loss.
+at 30.0 reboot corner_bl
+at 34.0 expect corner_bl synced == 1
+at 34.0 expect corner_bl lost == 0
+at 34.0 expect central log_dropped == 0
+at 34.0 expect log intact == 1
+end 34.0

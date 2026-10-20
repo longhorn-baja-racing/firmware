@@ -1,0 +1,37 @@
+menu "LBR corner node"
+
+    choice LBR_CORNER_POSITION_CHOICE
+        prompt "Position on the car"
+        default LBR_CORNER_FL
+        help
+            The same firmware runs on all four corner nodes; this picks the
+            node id and which IMU frames its samples go into.
+
+        config LBR_CORNER_FL
+            bool "FL (front left)"
+        config LBR_CORNER_FR
+            bool "FR (front right)"
+        config LBR_CORNER_BL
+            bool "BL (back left)"
+        config LBR_CORNER_BR
+            bool "BR (back right)"
+    endchoice
+
+    config LBR_CORNER_POSITION
+        int
+        default 0 if LBR_CORNER_FL
+        default 1 if LBR_CORNER_FR
+        default 2 if LBR_CORNER_BL
+        default 3 if LBR_CORNER_BR
+
+    config LBR_IO_BATTERY
+        string "Slot 'battery' input spec"
+        default ""
+        help
+            Channels, in order: CORNER_xx_BATTERY (percent). Typically an
+            'adc ...' entry on an ADC1 pin of the ESP32-C5 (GPIO 1..6) behind
+            a divider. Empty = not fitted (or simulated with LBR_SENSOR_SIM).
+            Syntax: car/components/sensors/include/lbr/sensor_io.h and
+            docs/sensors.md. Battery capacity and charging are TBD.
+
+endmenu

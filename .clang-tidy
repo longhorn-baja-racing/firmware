@@ -1,0 +1,27 @@
+# Static analysis for the host-compiled (pure) sources; run in CI on the
+# compile_commands.json of dev/tests/host. Findings are errors.
+#
+# Disabled on purpose:
+#   bugprone-signed-bitwise: flags every uint8_t shift (integer promotion)
+#     in the byte packing code.
+#   EnumCastOutOfRange: decoders deliberately carry signal ids that are not
+#     in this build's catalog (forward compatibility); C allows it.
+Checks: >
+  -*,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-reserved-identifier,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-switch-missing-default-case,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-signed-bitwise,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  performance-*,
+  misc-redundant-expression,
+  misc-misplaced-const
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'car/components/.*'

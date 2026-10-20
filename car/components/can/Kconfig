@@ -1,0 +1,44 @@
+menu "LBR CAN bus"
+
+    config LBR_CAN_TX_GPIO
+        int "TWAI TX GPIO (to transceiver TXD)"
+        range -1 48
+        default -1
+        help
+            GPIO driving the CAN transceiver TXD pin. -1 means not configured:
+            pins are TBD until the node schematic is confirmed (issue #15),
+            and the node refuses to start CAN while this is -1.
+
+    config LBR_CAN_RX_GPIO
+        int "TWAI RX GPIO (from transceiver RXD)"
+        range -1 48
+        default -1
+        help
+            GPIO reading the CAN transceiver RXD pin. -1 means not configured.
+
+    config LBR_CAN_BITRATE
+        int "CAN bit rate (bit/s)"
+        default 500000
+        help
+            Shared bus bit rate; every node must use the same value.
+            DAQ-WIRING.md starts at 500 kbit/s (robust on a vibrating, noisy
+            car) and moves to 1 Mbit/s only if the measured bus load is too
+            high. The system CAN budget in docs/can-ids.md is computed at
+            this rate (about 42 % planned, ceiling 50 %).
+
+    config LBR_CAN_RX_QUEUE_LEN
+        int "RX queue length (frames)"
+        default 256
+
+    config LBR_CAN_TX_QUEUE_LEN
+        int "TX queue length (frames)"
+        range 8 127
+        default 64
+        help
+            Must hold a node's worst-case burst: every slot, the heartbeat,
+            and the 12 health pages can come due at the same instant, and
+            the IMU Controller may forward all four corners' batches at once
+            (it sets 127; checked for every plan in
+            dev/tests/host/test_plans.c).
+
+endmenu

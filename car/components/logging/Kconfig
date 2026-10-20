@@ -1,0 +1,67 @@
+menu "LBR microSD logging"
+
+    choice LBR_SD_BUS
+        prompt "microSD bus"
+        default LBR_SD_BUS_SPI
+        help
+            Interface to the microSD socket. Confirm against the node
+            schematic (issue #15).
+
+        config LBR_SD_BUS_SPI
+            bool "SPI (any GPIOs, set below)"
+        config LBR_SD_BUS_SDMMC
+            bool "SDMMC slot 1 (fixed ESP32 IO_MUX pins)"
+    endchoice
+
+    config LBR_SD_SPI_MOSI_GPIO
+        int "SD SPI MOSI GPIO"
+        depends on LBR_SD_BUS_SPI
+        range -1 48
+        default -1
+
+    config LBR_SD_SPI_MISO_GPIO
+        int "SD SPI MISO GPIO"
+        depends on LBR_SD_BUS_SPI
+        range -1 48
+        default -1
+
+    config LBR_SD_SPI_SCLK_GPIO
+        int "SD SPI SCLK GPIO"
+        depends on LBR_SD_BUS_SPI
+        range -1 48
+        default -1
+
+    config LBR_SD_SPI_CS_GPIO
+        int "SD SPI CS GPIO"
+        depends on LBR_SD_BUS_SPI
+        range -1 48
+        default -1
+
+    config LBR_SD_SDMMC_4BIT
+        bool "SDMMC 4-bit bus (otherwise 1-bit)"
+        depends on LBR_SD_BUS_SDMMC
+        default n
+
+    config LBR_SD_CD_GPIO
+        int "Card-detect GPIO (-1 = none)"
+        range -1 48
+        default -1
+
+    config LBR_LOG_QUEUE_KB
+        int "Logger queue size (KiB)"
+        range 8 160
+        default 48
+        help
+            Bounded in-RAM queue between producers and the SD writer. Sized
+            to ride out SD write stalls (a card can pause for 100s of ms
+            during internal erase) at the expected record rate.
+
+    config LBR_LOG_SYNC_INTERVAL_MS
+        int "fsync interval while logging (ms)"
+        range 100 10000
+        default 1000
+        help
+            Upper bound on data lost to power loss, at the cost of more card
+            wear and write latency.
+
+endmenu

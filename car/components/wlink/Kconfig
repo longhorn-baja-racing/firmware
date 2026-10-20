@@ -1,0 +1,60 @@
+menu "LBR wireless links"
+
+    config LBR_WIFI_5GHZ
+        bool "Use the 5 GHz band (ESP32-C5)"
+        depends on SOC_WIFI_SUPPORT_5G
+        default y
+        help
+            5 GHz by default; turn off to fall back to 2.4 GHz
+            (DAQ-WIRING.md section 8: test both on the car). Applies to
+            every LBR WiFi network this node runs or joins.
+
+    config LBR_WIFI_SSID
+        string "Central access point SSID (pit link; the dashboard joins it)"
+        default "lbr-central"
+
+    config LBR_WIFI_PASSWORD
+        string "Central access point WPA2 password (8+ chars; empty disables WiFi)"
+        default ""
+        help
+            Guards OTA and config push on the Central, so it is not
+            hard-coded: set it in sdkconfig on the Central and the dashboard
+            (never commit it). WiFi stays off while this is shorter than 8
+            characters.
+
+    config LBR_WIFI_CHANNEL
+        int "Central access point channel"
+        range 1 177
+        default 36 if LBR_WIFI_5GHZ
+        default 6
+
+    config LBR_CORNER_SSID
+        string "Corner network SSID (IMU Controller access point)"
+        default "lbr-corners"
+        help
+            The IMU Controller runs this access point; the four corner nodes
+            join it and send their IMU samples (DAQ-WIRING.md section 8).
+
+    config LBR_CORNER_PASSWORD
+        string "Corner network WPA2 password (8+ chars; empty disables it)"
+        default ""
+        help
+            Not hard-coded: set it in sdkconfig on the IMU Controller and
+            every corner node (never commit it). The corner links stay off
+            while this is shorter than 8 characters.
+
+    config LBR_CORNER_CHANNEL
+        int "Corner network channel"
+        range 1 177
+        default 149 if LBR_WIFI_5GHZ
+        default 11
+
+    config LBR_DASH_ENABLE
+        bool "Dashboard link over the pit access point"
+        default y
+        help
+            The Central pushes display data to the cockpit dashboard over
+            its WiFi access point (CONFIG_LBR_WIFI_SSID / _PASSWORD), which
+            the dashboard joins.
+
+endmenu

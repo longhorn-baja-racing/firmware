@@ -1,0 +1,10 @@
+{"record_size": 20, "samples": [
+  {"signal": 794, "name": "IMU_CH_ACCEL_Z", "source": 1, "type": "f32", "valid": true, "synced": true, "seq_inferred": false, "seq": 0, "t_us": 1000000, "value_bits": "c11ce80a"},
+  {"signal": 1536, "name": "GPS_LATITUDE", "source": 6, "type": "i32", "valid": true, "synced": true, "seq_inferred": false, "seq": 1, "t_us": 1000100, "value_bits": "120d1f4e"},
+  {"signal": 1542, "name": "GPS_SATELLITES", "source": 6, "type": "u32", "valid": true, "synced": true, "seq_inferred": false, "seq": 2, "t_us": 1000200, "value_bits": "0000000b"},
+  {"signal": 1553, "name": "DASH_LINK", "source": 6, "type": "bool", "valid": true, "synced": true, "seq_inferred": false, "seq": 4294967295, "t_us": 2000000, "value_bits": "00000001"},
+  {"signal": 1541, "name": "GPS_FIX", "source": 6, "type": "status", "valid": true, "synced": true, "seq_inferred": false, "seq": 3, "t_us": 2000300, "value_bits": "00000003"},
+  {"signal": 1284, "name": "TEMP_CVT", "source": 4, "type": "f32", "valid": false, "synced": true, "seq_inferred": false, "seq": 7, "t_us": 3000000, "value_bits": "00000001", "reason": "NOT_FITTED"},
+  {"signal": 1793, "name": "FAULT", "source": 6, "type": "status", "valid": true, "synced": true, "seq_inferred": false, "seq": 0, "t_us": 4000000, "value_bits": "00050050", "event": "NODE_LOST", "event_arg": 5},
+  {"signal": 1026, "name": "STRESS_3", "source": 5, "type": "f32", "valid": true, "synced": false, "seq_inferred": false, "seq": 123456, "t_us": 20015998343868, "value_bits": "43ce4000"}
+]}

@@ -1,0 +1,13 @@
+{"packets": [
+  {"link": 1, "source": 6, "seq": 4294967295, "t_us": 7000000, "records": [
+      {"type": 4, "len": 22, "frame": {"t_us": 50331148, "flags": 0, "id": 1795, "sender": 3, "dlc": 2, "data": "0100", "heartbeat": {"state": 1, "err_flags": 0}}},
+      {"type": 4, "len": 22, "frame": {"t_us": 50331248, "flags": 0, "id": 1793, "sender": 1, "dlc": 2, "data": "0280", "heartbeat": {"state": 2, "err_flags": 128}}},
+      {"type": 4, "len": 22, "frame": {"t_us": 50331348, "flags": 0, "id": 1797, "sender": 5, "dlc": 2, "data": "0203", "heartbeat": {"state": 2, "err_flags": 3}}},
+      {"type": 4, "len": 22, "frame": {"t_us": 50330450, "flags": 0, "id": 256, "sender": 3, "dlc": 8, "data": "e2041522c6fea913", "samples": [{"signal": 256, "name": "BRAKE_PEDAL", "source": 3, "type": "f32", "valid": true, "synced": true, "seq_inferred": false, "seq": 5033, "t_us": 50330000, "value_bits": "41480000"}, {"signal": 257, "name": "GAS_PEDAL", "source": 3, "type": "f32", "valid": true, "synced": true, "seq_inferred": false, "seq": 5033, "t_us": 50330000, "value_bits": "42ae8000"}, {"signal": 258, "name": "STEERING_ANGLE", "source": 3, "type": "f32", "valid": true, "synced": true, "seq_inferred": false, "seq": 5033, "t_us": 50330000, "value_bits": "c1fb3333"}]}},
+      {"type": 4, "len": 22, "frame": {"t_us": 50330600, "flags": 0, "id": 512, "sender": 2, "dlc": 8, "data": "240e00000000a813", "samples": [{"signal": 512, "name": "ENGINE_RPM", "source": 2, "type": "f32", "valid": true, "synced": false, "seq_inferred": false, "seq": 5032, "t_us": 50320000, "value_bits": "45624000"}, {"signal": 513, "name": "CVT_RPM", "source": 2, "type": "f32", "valid": true, "synced": false, "seq_inferred": false, "seq": 5032, "t_us": 50320000, "value_bits": "00000000"}]}},
+      {"type": 4, "len": 22, "frame": {"t_us": 50330800, "flags": 0, "id": 513, "sender": 2, "dlc": 2, "data": "7a02", "samples": [{"signal": 514, "name": "FUEL_LEVEL", "source": 2, "type": "f32", "valid": true, "synced": false, "seq_inferred": true, "seq": 50, "t_us": 50000000, "value_bits": "427d999a"}]}}
+  ]},
+  {"link": 1, "source": 6, "seq": 0, "t_us": 7000001, "records": [
+      {"type": 6, "len": 32, "text": "I (7000) central: stream fixture"}
+  ]}
+], "bad_frames": 1}
