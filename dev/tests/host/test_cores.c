@@ -383,7 +383,7 @@ static void test_node_counts_overruns_and_bus_off(void)
     lbr_node_core_heartbeat(&r.core, &h);
     CHECK_EQ_U(h.overflow_count, 3);
     CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_FAULT, LBR_EVT_CAN_BUS_OFF), 1);
-    uint8_t state, flags;
+    uint8_t state = 0, flags = 0;
     int     hb = find_frame(&r.fake, from, 0x700u + LBR_NODE_POWERTRAIN);
     CHECK(hb >= 0 && lbr_can_decode_heartbeat(&r.fake.tx[hb], &state, &flags) != 0);
     CHECK((flags & (LBR_HB_ERR_CAN | LBR_HB_ERR_LOSS)) == (LBR_HB_ERR_CAN | LBR_HB_ERR_LOSS));
