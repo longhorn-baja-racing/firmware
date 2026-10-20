@@ -106,10 +106,17 @@ typedef struct {
     const char     *spec; /* SIM_SLOT_IO */
     lbr_io_chan_t   chans[LBR_SENSOR_MAX_SIGNALS];
     lbr_io_din_t    din[LBR_SENSOR_MAX_SIGNALS];
-    lbr_nmea_t      nmea;
-    uint64_t        nmea_last_us;
-    bool            unplugged; /* part not responding */
-    uint32_t        reads;
+    /* Pulse inputs: an edge counter fed from the model, read through the
+     * firmware's lbr_io_pulse_update as sensor_io_esp.c does. */
+    lbr_io_pulse_t pulse[LBR_SENSOR_MAX_SIGNALS];
+    double         pulse_phase[LBR_SENSOR_MAX_SIGNALS];
+    uint32_t       pulse_count[LBR_SENSOR_MAX_SIGNALS];
+    uint64_t       pulse_edge_us[LBR_SENSOR_MAX_SIGNALS];
+    uint64_t       pulse_read_us[LBR_SENSOR_MAX_SIGNALS];
+    lbr_nmea_t     nmea;
+    uint64_t       nmea_last_us;
+    bool           unplugged; /* part not responding */
+    uint32_t       reads;
 } sim_slot_t;
 
 /* ------------------------------------------------------------------------ */
@@ -140,9 +147,9 @@ typedef struct {
     bool            powered;
     bool            booted;
     bool            traced;
-    uint32_t        gen; /* bumps on reboot: stale timer events are ignored */
-    uint64_t        boot_at;
-    double          ppm; /* crystal error */
+    uint32_t        gen;     /* bumps on reboot: stale timer events are ignored */
+    int64_t         boot_at; /* sim us; negative after a drift change re-anchors it */
+    double          ppm;     /* crystal error */
     uint32_t        boot_count;
     uint8_t         reset_reason;
 

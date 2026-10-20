@@ -69,26 +69,36 @@ static void test_clock_exchange(void)
     uint8_t      req[LBR_WLINK_TIME_REQ], resp[LBR_WLINK_TIME_RESP];
     uint64_t     shared;
     uint16_t     epoch;
+    bool         srv = false;
 
     /* Local 1000 us; 3 ms each way; the server holds it 200 us. Server clock
      * is 50 s ahead. */
     lbr_wclock_request(&c, 1000, req);
     uint64_t t2 = 50000000 + 1000 + 3000;
     CHECK_EQ_U(lbr_wclock_reply(req, sizeof req, t2, t2 + 200, 0x77, true, resp), sizeof resp);
-    CHECK(lbr_wclock_on_response(&c, resp, sizeof resp, 1000 + 6200, &shared, &epoch));
+    CHECK(lbr_wclock_on_response(&c, resp, sizeof resp, 1000 + 6200, &shared, &epoch, &srv));
     CHECK_EQ_U(shared, 50000000u + 7200u); /* t3 + rtt / 2, rtt = 6 ms */
     CHECK_EQ_U(epoch, 0x77);
     CHECK_EQ_U(c.last_rtt_us, 6000u);
-    CHECK(c.server_synced);
+    CHECK(srv);
 
     /* A reply to nothing outstanding, or a duplicate, is ignored. */
-    CHECK(!lbr_wclock_on_response(&c, resp, sizeof resp, 9000, &shared, &epoch));
+    CHECK(!lbr_wclock_on_response(&c, resp, sizeof resp, 9000, &shared, &epoch, &srv));
     /* A slow round trip is not used. */
     lbr_wclock_request(&c, 100000, req);
     lbr_wclock_reply(req, sizeof req, 0, 0, 1, false, resp);
     CHECK(!lbr_wclock_on_response(&c, resp, sizeof resp, 100000 + LBR_WLINK_MAX_RTT_US + 1, &shared,
-                                  &epoch));
+                                  &epoch, &srv));
     CHECK_EQ_U(c.rejected, 2u);
+
+    /* Within the 20 ms limit but far slower than the best path seen (6 ms):
+     * likely uneven, so not used; one near the best is. */
+    lbr_wclock_request(&c, 200000, req);
+    lbr_wclock_reply(req, sizeof req, 0, 0, 1, true, resp);
+    CHECK(!lbr_wclock_on_response(&c, resp, sizeof resp, 200000 + 12000, &shared, &epoch, &srv));
+    lbr_wclock_request(&c, 300000, req);
+    lbr_wclock_reply(req, sizeof req, 0, 0, 1, true, resp);
+    CHECK(lbr_wclock_on_response(&c, resp, sizeof resp, 300000 + 6500, &shared, &epoch, &srv));
     CHECK_EQ_U(lbr_wclock_reply(req, 3, 0, 0, 0, false, resp), 0u);
 }
 
@@ -337,16 +347,15 @@ static void test_corner_loss_and_recovery(void)
     deliver(&r, 0);
     deliver(&r, 2);
     CHECK_EQ_U(r.rx.peer[0].forwarded, 15u);
-    CHECK_EQ_U(r.rx.peer[0].packet_gaps, 1u);
+    CHECK_EQ_U(r.rx.peer[0].packet_gaps, 0u); /* not yet: it could still arrive late */
     /* Datagrams 3 and 4 lost: batch 3 is gone for good. */
     deliver(&r, 5);
     CHECK_EQ_U(r.rx.peer[0].forwarded, 25u);
-    CHECK_EQ_U(r.rx.peer[0].packet_gaps, 3u);
     uint32_t loss = 0;
     lbr_corner_rx_tick(&r.rx, &loss);
     CHECK_EQ_U(loss, 0u); /* still inside the window: it could arrive late */
-    /* Counted once the samples leave the window. */
-    for (int i = 0; i < 70; i++) {
+    /* Counted once the samples (and the datagrams) leave their windows. */
+    for (int i = 0; i < 170; i++) {
         corner_tick(&r);
     }
     for (size_t i = 6; i < r.cf.n_pkts; i++) {
@@ -354,6 +363,7 @@ static void test_corner_loss_and_recovery(void)
     }
     lbr_corner_rx_tick(&r.rx, &loss);
     CHECK_EQ_U(r.rx.peer[0].lost, 5u);
+    CHECK_EQ_U(r.rx.peer[0].packet_gaps, 3u); /* datagrams 1, 3, 4, once out of the window */
     CHECK_EQ_U(loss, 5u);
     lbr_corner_rx_tick(&r.rx, &loss);
     CHECK_EQ_U(loss, 5u); /* reported once */
@@ -368,6 +378,97 @@ static void test_corner_loss_and_recovery(void)
     }
     deliver(&r, r.cf.n_pkts - 1);
     CHECK_EQ_I(r.imu.found, 2);
+}
+
+/* A raw corner datagram: one IMU_BATCH of zeroed samples k0 .. k0 + n - 1. */
+static size_t raw_batch(uint8_t *buf, size_t cap, uint32_t seq, uint32_t k0, uint8_t n, uint8_t tl)
+{
+    const lbr_frame_def_t *frames[4];
+    size_t                 ss = 0;
+    lbr_wlink_origin_frames(LBR_NODE_CORNER_FL, frames, 4, &ss);
+    uint8_t         samples[LBR_WLINK_MAX_BATCH * LBR_WLINK_MAX_SAMPLE] = {0};
+    lbr_imu_batch_t b = {.k0    = k0,
+                         .n     = n,
+                         .flags = (uint8_t)(LBR_WLINK_F_SENSOR_OK | (tl << LBR_WLINK_F_TL_SHIFT)),
+                         .sample_size = (uint8_t)ss,
+                         .samples     = samples};
+    uint8_t         rec[LBR_WLINK_BATCH_HDR + sizeof samples];
+    size_t          rn = lbr_imu_batch_encode(&b, rec, sizeof rec);
+    CHECK(rn > 0);
+    lbr_pkt_builder_t pb;
+    lbr_pkt_begin(&pb, buf, cap, LBR_LINK_CORNER, LBR_NODE_CORNER_FL, seq, 0);
+    lbr_pkt_add(&pb, LBR_REC_IMU_BATCH, rec, rn);
+    return lbr_pkt_finish(&pb);
+}
+
+static void raw_deliver(corner_rig_t *r, uint32_t seq, uint32_t k0, uint8_t n, uint8_t tl,
+                        uint64_t at)
+{
+    uint8_t pkt[256];
+    size_t  len = raw_batch(pkt, sizeof pkt, seq, k0, n, tl);
+    r->imu.now  = at;
+    lbr_corner_rx_on_packet(&r->rx, pkt, len, at);
+}
+
+static void test_corner_timelines(void)
+{
+    static corner_rig_t r;
+    corner_rig_init(&r);
+    lbr_corner_peer_t *p = &r.rx.peer[0];
+
+    raw_deliver(&r, 0, 1000, 5, 1, 1000000);
+    raw_deliver(&r, 2, 1007, 3, 1, 1010000); /* 1005, 1006 still missing */
+    CHECK_EQ_U(p->forwarded, 8u);
+    CHECK_EQ_U(p->lost, 0u);
+
+    /* The corner's clock stepped back: a new timeline, k far behind. Taken
+     * and forwarded (not late), and the old window's holes counted. */
+    raw_deliver(&r, 3, 200, 5, 2, 1020000);
+    CHECK_EQ_U(p->forwarded, 13u);
+    CHECK_EQ_U(p->late, 0u);
+    CHECK_EQ_U(p->lost, 2u);
+
+    /* The missing datagram, sent before the step, arrives reordered: a
+     * straggler of the old timeline, not another timeline change. */
+    raw_deliver(&r, 1, 1005, 2, 1, 1030000);
+    CHECK_EQ_U(p->stale, 2u);
+    CHECK_EQ_U(p->forwarded, 13u);
+    raw_deliver(&r, 4, 205, 5, 2, 1040000);
+    CHECK_EQ_U(p->forwarded, 18u);
+    CHECK_EQ_U(p->lost, 2u);
+    CHECK_EQ_U(p->packet_gaps, 0u);
+
+    /* A reboot (the link drops while it boots and rejoins WiFi): the
+     * timeline and the seq start again from 0. */
+    r.imu.now = 1040000 + LBR_WLINK_LINK_TIMEOUT_US + 1;
+    lbr_corner_rx_tick(&r.rx, NULL);
+    raw_deliver(&r, 0, 3, 5, 0, 2000000);
+    CHECK_EQ_U(p->forwarded, 23u);
+    CHECK_EQ_U(p->lost, 2u);
+    CHECK_EQ_U(p->late + p->stale, 2u);
+}
+
+static void test_seq_window(void)
+{
+    lbr_seq_window_t w    = {0};
+    uint32_t         gaps = 0;
+    CHECK_EQ_I(lbr_seq_window_take(&w, 10, &gaps), LBR_SEQ_NEW);
+    CHECK_EQ_I(lbr_seq_window_take(&w, 13, &gaps), LBR_SEQ_NEW);
+    CHECK_EQ_U(gaps, 0u); /* 11 and 12 may still come */
+    CHECK_EQ_I(lbr_seq_window_take(&w, 11, &gaps), LBR_SEQ_LATE);
+    CHECK_EQ_I(lbr_seq_window_take(&w, 11, &gaps), LBR_SEQ_DUPLICATE);
+    CHECK_EQ_I(lbr_seq_window_take(&w, 13, &gaps), LBR_SEQ_DUPLICATE);
+    CHECK_EQ_I(lbr_seq_window_take(&w, 13 + 32, &gaps), LBR_SEQ_NEW);
+    CHECK_EQ_U(gaps, 1u); /* 12 left the window unseen; 14 .. 44 still may come */
+    CHECK_EQ_I(lbr_seq_window_take(&w, 12, &gaps), LBR_SEQ_OLD);
+    CHECK_EQ_I(lbr_seq_window_take(&w, 13 + 64, &gaps), LBR_SEQ_NEW);
+    CHECK_EQ_U(gaps, 1u + 31u); /* now 14 .. 44 are gone too */
+    /* Across the 32-bit wrap. */
+    lbr_seq_window_t v = {0};
+    gaps               = 0;
+    CHECK_EQ_I(lbr_seq_window_take(&v, 0xFFFFFFFFu, &gaps), LBR_SEQ_NEW);
+    CHECK_EQ_I(lbr_seq_window_take(&v, 0, &gaps), LBR_SEQ_NEW);
+    CHECK_EQ_U(gaps, 0u);
 }
 
 static void test_corner_clock(void)
@@ -506,6 +607,25 @@ static void test_dashboard_round_trip(void)
     /* A datagram that is not from the Central is rejected. */
     lbr_dash_core_on_packet(&d, df.pkt, df.len, 0);
     CHECK_EQ_U(d.rejected, 1u);
+
+    /* Reordered: an older datagram arriving after a newer one is ignored,
+     * so the display never steps back to the older value. */
+    uint8_t old_pkt[LBR_PKT_MAX_SIZE];
+    rpm.v.f32 = 3000.0f;
+    lbr_value_table_offer(&values, &rpm, 3000000);
+    size_t old_n = lbr_dash_link_build(&link, 3000000, LBR_NODE_CENTRAL, &values, &nodes, old_pkt,
+                                       sizeof old_pkt);
+    rpm.v.f32    = 4000.0f;
+    lbr_value_table_offer(&values, &rpm, 3100000);
+    n = lbr_dash_link_build(&link, 3100000, LBR_NODE_CENTRAL, &values, &nodes, pkt, sizeof pkt);
+    uint32_t packets = d.packets;
+    lbr_dash_core_on_packet(&d, pkt, n, df.mono + 100);
+    lbr_dash_core_on_packet(&d, old_pkt, old_n, df.mono + 200);
+    CHECK_EQ_U(d.packets, packets + 1u);
+    CHECK_EQ_U(d.packet_gaps, 0u);
+    lbr_dash_core_snapshot(&d, &shown, shown_nodes);
+    CHECK_EQ_I(lbr_value_table_get(&shown, LBR_SIG_ENGINE_RPM, df.mono + 200, &s), LBR_VALUE_OK);
+    CHECK(s.v.f32 == 4000.0f);
 }
 
 int main(void)
@@ -515,6 +635,8 @@ int main(void)
     RUN(test_clock_exchange);
     RUN(test_corner_forwarding);
     RUN(test_corner_loss_and_recovery);
+    RUN(test_corner_timelines);
+    RUN(test_seq_window);
     RUN(test_corner_clock);
     RUN(test_dashboard_round_trip);
     TEST_MAIN_END();

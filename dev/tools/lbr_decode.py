@@ -140,6 +140,8 @@ def decode_sample(cat, b):  # 20-byte SAMPLE record
     signal, source, tf, seq, t_us, bits = struct.unpack_from("<HBBIQI", b)
     if tf & 0x80 or (tf & 0x0F) >= len(cat.types):
         raise ValueError("bad sample flags")
+    if cat.types[tf & 0x0F] == "bool" and tf & 0x10:
+        bits = 1 if bits else 0  # a valid bool is 0 or 1; any nonzero value is true
     return cat.sample_dict(signal, source, cat.types[tf & 0x0F], bool(tf & 0x10),
                            bool(tf & 0x20), bool(tf & 0x40), seq, t_us, bits)
 
@@ -182,7 +184,7 @@ def unwrap24(t_lo, ref):
     d = (ref - t_lo) & 0xFFFFFF
     if d >= 0x800000:
         d -= 0x1000000
-    return max(ref - d, 0)
+    return min(max(ref - d, 0), 0xFFFFFFFFFFFFFFFF)
 
 
 def grid_index(counter, rx_us, period):
@@ -209,6 +211,19 @@ class BusDecoder:
         self.imu = next(i for i, n in cat.nodes.items() if n == "imu")
         self.corners = [next(i for i, n in cat.nodes.items() if n == "corner_" + c)
                         for c in ("fl", "fr", "bl", "br")]
+
+    def forget_sync(self, source, value):
+        """A node that booted, or was lost or found again, is not synced
+        until its next heartbeat or CORNER_STATUS says so."""
+        name = self.cat.events.get(value & 0xFFFF)
+        if name not in ("BOOT", "NODE_LOST", "NODE_FOUND"):
+            return
+        node = source if name == "BOOT" else value >> 16
+        if node in self.corners:
+            if self.corner_synced is not None:
+                self.corner_synced &= ~(1 << self.corners.index(node)) & 0xFF
+        elif 1 <= node <= 6:
+            self.hb[node] = self.NOT_SYNCED
 
     def node_synced(self, node):
         if node == self.central:
@@ -282,7 +297,7 @@ def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
     ext = bool(flags & REC_FLAG_EXT)
     d = {"t_us": t_us, "flags": flags, "id": can_id,
          "sender": 0 if ext else can_sender(cat, can_id), "dlc": dlc, "data": data[:dlc].hex()}
-    if ext:
+    if ext or can_id > 0x7FF:
         return d  # not LBR traffic
     ids = cat.ids
     if ids["heartbeat_base"] < can_id <= ids["heartbeat_base"] + 6 and dlc == 2:
@@ -292,9 +307,11 @@ def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
         fl = data[4]
         sig = cat.by_name["FAULT" if fl & 1 else "EVENT"]
         t_lo = data[5] | data[6] << 8 | data[7] << 16
+        value = struct.unpack_from("<I", data)[0]
         d["samples"] = [cat.sample_dict(sig, can_id - ids["event_base"], "status", True,
                                         bool(fl & 2), False, (fl >> 2) & 0x3F,
-                                        unwrap24(t_lo, t_us), struct.unpack_from("<I", data)[0])]
+                                        unwrap24(t_lo, t_us), value)]
+        dec.forget_sync(can_id - ids["event_base"], value)
     elif can_id in cat.frames and dlc == cat.frames[can_id]["dlc"]:
         d["samples"] = decode_data_frame(cat, dec, cat.frames[can_id], t_us, data)
         for smp in d["samples"]:

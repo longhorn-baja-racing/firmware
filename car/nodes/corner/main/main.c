@@ -132,9 +132,10 @@ static void clock_task(void *arg)
     }
 }
 
-static void on_datagram(const uint8_t *buf, size_t len, uint32_t ip, uint16_t port,
+static void on_datagram(lbr_udp_t *self, const uint8_t *buf, size_t len, uint32_t ip, uint16_t port,
                         uint64_t rx_local_us, void *ctx)
 {
+    (void)self;
     (void)ip;
     (void)port;
     (void)ctx;

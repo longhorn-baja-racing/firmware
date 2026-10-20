@@ -173,7 +173,9 @@ int lbr_can_decode_health_page(const lbr_can_frame_t *f, lbr_health_record_t *h)
  * while its latest heartbeat lacks LBR_HB_ERR_NOT_SYNCED; a corner node
  * while the IMU Controller is synced and the latest CORNER_STATUS sets the
  * corner's CORNER_SYNCED bit; the Central always (it is the time master).
- * Nothing heard yet means not synced.
+ * Nothing heard yet means not synced, and a node's BOOT event, or a
+ * NODE_LOST / NODE_FOUND event about it, means not synced until its next
+ * heartbeat or CORNER_STATUS says otherwise.
  */
 typedef struct {
     bool    hb_seen[LBR_NODE_CAN_MAX + 1];

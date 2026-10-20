@@ -45,9 +45,14 @@ bool lbr_acq_slot_tick(lbr_acq_slot_t *a, uint64_t now_shared_us, uint64_t mono_
 {
     uint64_t k      = (now_shared_us + a->period_us / 2u) / a->period_us;
     uint32_t missed = 0;
+    if (a->have_k && k == a->last_k) {
+        /* Woke early or twice for one grid point, or a backward step that
+         * the monotonic guard holds at the point just sampled. */
+        return false;
+    }
     if (a->have_k && timeline == a->timeline) {
-        if (k <= a->last_k) {
-            return false; /* woke early, or twice for one grid point */
+        if (k < a->last_k) {
+            return false;
         }
         uint64_t gap = k - a->last_k - 1u;
         missed       = gap > UINT32_MAX ? UINT32_MAX : (uint32_t)gap;

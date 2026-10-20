@@ -34,7 +34,7 @@ Set per node with `idf.py menuconfig` or in that node's `sdkconfig.defaults` onc
 | CAN (TWAI) | `CONFIG_LBR_CAN_TX_GPIO`, `CONFIG_LBR_CAN_RX_GPIO` | the six CAN nodes |
 | microSD over SPI | `CONFIG_LBR_SD_SPI_{MOSI,MISO,SCLK,CS}_GPIO`, `CONFIG_LBR_SD_CD_GPIO` | central |
 | microSD over SDMMC | `CONFIG_LBR_SD_BUS_SDMMC`, `CONFIG_LBR_SD_SDMMC_4BIT` | alternative (classic ESP32 slot-1 pins) |
-| LoRa (SX127x, SPI) | `CONFIG_LBR_LORA_{SCLK,MOSI,MISO,CS,RST,DIO0}_GPIO` | central (on the C5 it shares the SD card's SPI bus: same SCLK/MOSI/MISO, own CS) |
+| LoRa (SX127x, SPI) | `CONFIG_LBR_LORA_{SCLK,MOSI,MISO,CS,RST,DIO0}_GPIO` | central (on the C5 it shares the SD card's SPI bus: SCLK/MOSI/MISO must equal the SD pins, or LoRa start fails; own CS) |
 | USB serial | UART0 through the module's USB-UART bridge (or the C5's USB serial) | central |
 | GPS (NMEA) | `CONFIG_LBR_GPS_{UART_NUM,RX_GPIO,TX_GPIO,BAUD}` | central |
 | On-chip ADC / pulse / digital inputs | `CONFIG_LBR_IO_<SLOT>` input specs (pins inside the spec, see [`sensors.md`](sensors.md)) | powertrain, driver_input, temperature, corner and dashboard batteries |

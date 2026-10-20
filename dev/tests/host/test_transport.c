@@ -5,18 +5,23 @@
 #include "lbr_test.h"
 
 typedef struct {
-    int     n;
-    uint8_t types[64];
-    size_t  lens[64];
+    int      n;
+    uint8_t  types[64];
+    size_t   lens[64];
+    uint16_t sigs[64]; /* sample records: the signal; health: the node */
 } seen_t;
 
 static void collect(uint8_t type, const uint8_t *payload, size_t len, void *ctx)
 {
-    (void)payload;
     seen_t *s = ctx;
     if (s->n < 64) {
+        lbr_sample_t smp;
         s->types[s->n] = type;
         s->lens[s->n]  = len;
+        s->sigs[s->n]  = type == LBR_REC_SAMPLE && lbr_sample_decode(payload, len, &smp) > 0
+                             ? (uint16_t)smp.signal
+                         : type == LBR_REC_HEALTH_LITE && len > 0 ? payload[0]
+                                                                  : 0;
     }
     s->n++;
 }
@@ -132,8 +137,11 @@ static void test_lora_priorities(void)
     /* Fault first, then health, then one (latest) CVT sample. */
     CHECK_EQ_I(seen.n, 3);
     CHECK_EQ_U(seen.types[0], LBR_REC_SAMPLE);
+    CHECK_EQ_U(seen.sigs[0], LBR_SIG_FAULT);
     CHECK_EQ_U(seen.types[1], LBR_REC_HEALTH_LITE);
+    CHECK_EQ_U(seen.sigs[1], 5u);
     CHECK_EQ_U(seen.types[2], LBR_REC_SAMPLE);
+    CHECK_EQ_U(seen.sigs[2], LBR_SIG_TEMP_CVT);
 
     /* Nothing new: nothing sent. New CVT before its interval: held. */
     CHECK_EQ_U(lbr_lora_policy_build(&p, 2100000, 1, 2, buf, sizeof buf), 0u);

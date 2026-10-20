@@ -48,17 +48,17 @@ void lbr_dash_link_on_packet(lbr_dash_link_t *d, const uint8_t *buf, size_t len,
         d->rejected++;
         return;
     }
-    if (d->have_seq) {
-        int32_t delta = lbr_seq_delta(d->last_seq, hdr.seq);
-        if (delta > 1) {
-            d->packet_gaps += (uint32_t)(delta - 1);
-        }
-        if (delta > 0) {
-            d->last_seq = hdr.seq;
-        }
-    } else {
-        d->have_seq = true;
-        d->last_seq = hdr.seq;
+    if (d->seq.have && rx_us > d->last_rx_us && rx_us - d->last_rx_us > LBR_WLINK_DASH_TIMEOUT_US) {
+        d->seq.have = false; /* back after an outage, maybe rebooted: seq restarts */
+    }
+    lbr_seq_result_t sr = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
+    if (sr == LBR_SEQ_OLD) {
+        d->seq.have = false; /* the dashboard restarted its count */
+        sr          = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
+    }
+    if (sr != LBR_SEQ_NEW) {
+        d->rejected += sr == LBR_SEQ_DUPLICATE ? 1u : 0u; /* older than what we have */
+        return;
     }
     d->packets++;
     d->seen       = true;

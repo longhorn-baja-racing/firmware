@@ -71,17 +71,18 @@ int sim_node_by_id(const sim_t *s, uint8_t id)
 uint64_t sim_local_us(const sim_t *s, int node)
 {
     const sim_node_t *n = &s->nodes[node];
-    if (s->now <= n->boot_at) {
+    if ((int64_t)s->now <= n->boot_at) {
         return 0;
     }
-    double el = (double)(s->now - n->boot_at);
+    double el = (double)((int64_t)s->now - n->boot_at);
     return (uint64_t)(el * (1.0 + n->ppm * 1e-6));
 }
 
 uint64_t sim_from_local(const sim_t *s, int node, uint64_t local_us)
 {
     const sim_node_t *n = &s->nodes[node];
-    return n->boot_at + (uint64_t)ceil((double)local_us / (1.0 + n->ppm * 1e-6));
+    int64_t           t = n->boot_at + (int64_t)ceil((double)local_us / (1.0 + n->ppm * 1e-6));
+    return t < 0 ? 0u : (uint64_t)t;
 }
 
 /* JSON string body (names and messages are ASCII; escape the specials). */
@@ -970,7 +971,7 @@ static void boot_node(sim_t *s, int i)
 {
     sim_node_t *n = &s->nodes[i];
     n->booted     = true;
-    n->boot_at    = s->now;
+    n->boot_at    = (int64_t)s->now;
     n->boot_count++;
     lbr_time_servo_init(&n->servo);
     for (int k = 0; k < s->n_nodes; k++) {
@@ -996,7 +997,8 @@ static void power_off(sim_t *s, int i)
 {
     sim_node_t *n = &s->nodes[i];
     n->booted     = false;
-    n->gen++; /* drop its pending timers */
+    n->gen++;                       /* drop its pending timers */
+    lbr_time_servo_init(&n->servo); /* its clock state is gone with the power */
     n->can.started    = false;
     n->can.st.running = false;
     n->can.tx_len     = 0;
@@ -1220,7 +1222,9 @@ void sim_run_until(sim_t *s, uint64_t t_us)
         s->now    = e.t;
         handle(s, &e);
     }
-    s->now = t_us;
+    if (t_us > s->now) {
+        s->now = t_us;
+    }
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1372,8 +1376,11 @@ void sim_free(sim_t *s)
 
 static int64_t sync_error_us(sim_t *s, int i)
 {
+    if (i == GW || s->nodes[i].kind == SIM_NODE_DASH) {
+        return 0; /* the reference itself, or the dashboard: it keeps no shared clock */
+    }
     if (!s->nodes[i].booted || !s->nodes[GW].booted || !s->nodes[i].servo.synced) {
-        return 0;
+        return INT32_MAX; /* nothing to compare with: never reads as in sync */
     }
     uint64_t est   = lbr_time_servo_map(&s->nodes[i].servo, sim_local_us(s, i));
     uint64_t truth = sim_local_us(s, GW); /* shared time is the Central's clock */
@@ -1517,7 +1524,7 @@ void sim_snapshot(sim_t *s)
                 n->can.connected ? "true" : "false", n->traced ? "true" : "false",
                 (i == GW || gw_sees(s, i)) ? "true" : "false", n->servo.synced ? "true" : "false",
                 (long long)sync_error_us(s, i), n->ppm, (unsigned)n->boot_count,
-                (double)sim_local_us(s, i) / 1e6, (unsigned)h->flags);
+                n->booted ? (double)sim_local_us(s, i) / 1e6 : 0.0, (unsigned)h->flags);
         if (wireless(n)) {
             const lbr_corner_peer_t *p = corner_peer(s, i);
             fprintf(o,
@@ -1568,7 +1575,7 @@ void sim_snapshot(sim_t *s)
             "\"usb_pkts\":%u,\"usb_bytes\":%u,\"wifi_pkts\":%u,\"lora_pkts\":%u,\"lora_bytes\":%u,"
             "\"lora_records\":%u,\"dash_pkts\":%u,\"sync_fail\":%u},",
             (unsigned)s->gw.epoch, s->nodes[GW].sd_inserted ? "true" : "false",
-            s->gw.log.open ? "true" : "false", s->nodes[GW].keeper.name,
+            (s->nodes[GW].booted && s->gw.log.open) ? "true" : "false", s->nodes[GW].keeper.name,
             (unsigned long long)s->nodes[GW].log_bytes, (unsigned)ls.records_written,
             (unsigned)(ls.records_dropped + ls.records_lost_write + ls.records_rejected_closed),
             (unsigned)ls.write_errors, (unsigned)ls.queue_high_water,
@@ -1687,6 +1694,24 @@ static const lbr_signal_info_t *signal_by_name(const char *name)
         }
     }
     return NULL;
+}
+
+/* True if some part or wired input produces `sig` (so it can be opened). */
+static bool has_circuit(const sim_t *s, lbr_signal_id_t sig)
+{
+    for (int i = 0; i < s->n_nodes; i++) {
+        const sim_node_t *n = &s->nodes[i];
+        for (size_t k = 0; n->plan != NULL && k < n->plan->n_slots; k++) {
+            const lbr_slot_t *sl   = &n->plan->slots[k];
+            sim_slot_kind_t   kind = n->slots[k].kind;
+            for (size_t c = 0; c < sl->n_signals; c++) {
+                if (sl->signals[c] == sig) {
+                    return kind == SIM_SLOT_IO || kind == SIM_SLOT_DIRECT;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 static int need_node(sim_t *s, const char *name)
@@ -1810,7 +1835,10 @@ static bool log_metric(sim_t *s, const char *m, double *v)
     char path[512];
     path_in_out(s, s->nodes[GW].log_name, path, sizeof path);
     if (s->gw.log.open) {
-        lbr_log_pump(&s->gw.log, h_now(&s_ctx[GW]));
+        /* What the Central's own pump task would have written by now. */
+        if (s->nodes[GW].booted) {
+            lbr_log_pump(&s->gw.log, h_now(&s_ctx[GW]));
+        }
     }
     if (s->nodes[GW].log_file != NULL) {
         fflush(s->nodes[GW].log_file);
@@ -1892,6 +1920,9 @@ static int cmd_expect(sim_t *s, char **tok, int nt, const char *line)
                 (!all && strcmp(s->nodes[i].name, target) != 0)) {
                 continue;
             }
+            if (strcmp(op, "==") != 0 && strcmp(op, "!=") != 0) {
+                return err(s, "state takes == or !=");
+            }
             bool eq = strcmp(state_of(s, i), want) == 0;
             ok      = ok && (strcmp(op, "!=") == 0 ? !eq : eq);
             if (!eq || !all) {
@@ -1923,6 +1954,10 @@ static int cmd_expect(sim_t *s, char **tok, int nt, const char *line)
         if (strcmp(metric, "valid") == 0) {
             sv_v = sv->seen && sv->s.valid ? 1 : 0;
         } else if (strcmp(metric, "value") == 0) {
+            if (!sv->seen || !sv->s.valid) {
+                check_result(s, false, what, sv->seen ? "unavailable" : "never seen");
+                return 0;
+            }
             sv_v = sig->type == LBR_VAL_F32   ? (double)sv->s.v.f32
                    : sig->type == LBR_VAL_I32 ? (double)sv->s.v.i32
                                               : (double)sv->s.v.u32;
@@ -2075,6 +2110,10 @@ int sim_command(sim_t *s, const char *line)
         if (k < 0) {
             return err(s, "%s has no slot '%s'", tok[1], tok[2]);
         }
+        if (s->nodes[i].slots[k].kind == SIM_SLOT_FIRMWARE) {
+            return err(s, "%s.%s is computed by the firmware, not a part: nothing to unplug",
+                       tok[1], tok[2]);
+        }
         s->nodes[i].slots[k].unplugged = c[0] == 'u';
         sim_note(s, "%s.%s %s", tok[1], tok[2], c[0] == 'u' ? "unplugged" : "plugged in");
     } else if (strcmp(c, "open") == 0 || strcmp(c, "close") == 0 || strcmp(c, "auto") == 0 ||
@@ -2084,6 +2123,12 @@ int sim_command(sim_t *s, const char *line)
             return err(s, "unknown signal '%s'", nt > 1 ? tok[1] : "");
         }
         sim_override_t *o = &s->overrides[info->id];
+        if ((strcmp(c, "open") == 0 || strcmp(c, "close") == 0) && !has_circuit(s, info->id)) {
+            return err(s,
+                       "%s has no wired input or part to open (it is computed or comes "
+                       "from a receiver)",
+                       info->name);
+        }
         if (strcmp(c, "open") == 0) {
             o->open = true;
         } else if (strcmp(c, "close") == 0) {
@@ -2154,7 +2199,7 @@ int sim_command(sim_t *s, const char *line)
         sim_node_t *n     = &s->nodes[i];
         uint64_t    local = sim_local_us(s, i);
         n->ppm            = ppm;
-        n->boot_at        = s->now - (uint64_t)((double)local / (1.0 + ppm * 1e-6));
+        n->boot_at        = (int64_t)s->now - (int64_t)((double)local / (1.0 + ppm * 1e-6));
     } else if (strcmp(c, "reboot") == 0 || strcmp(c, "power") == 0) {
         int i = need_node(s, nt > 1 ? tok[1] : NULL);
         if (i < 0) {
@@ -2186,6 +2231,9 @@ int sim_command(sim_t *s, const char *line)
         sim_node_t *n = &s->nodes[i];
         if (nt <= k || (strcmp(tok[k], "fail") == 0 && nt <= k + 1)) {
             return err(s, "usage: sd [node] remove|insert|fail <writes>");
+        }
+        if (i != GW && (n->plan == NULL || !n->plan->local_log)) {
+            return err(s, "%s has no SD card", n->name);
         }
         if (strcmp(tok[k], "remove") == 0) {
             n->sd_inserted = false;

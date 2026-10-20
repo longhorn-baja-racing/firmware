@@ -71,6 +71,16 @@ typedef struct {
 
 #define LBR_NODE_SLOT_MAX_FRAMES 4u
 
+/* An event raised before the core started (e.g. by the SD log service while
+ * it opens the first session), held and sent once the log and CAN are up. */
+#define LBR_EARLY_EVENTS 8u
+typedef struct {
+    uint16_t code;
+    uint16_t arg;
+    bool     fault;
+    uint64_t t_us;
+} lbr_early_event_t;
+
 /* One slot: its acquisition engine and the frames it fills. */
 typedef struct {
     lbr_acq_slot_t         acq;
@@ -93,8 +103,12 @@ typedef struct lbr_node_core {
     char     config_error[128];
 
     lbr_node_slot_state_t slot[LBR_NODE_MAX_SENSORS];
-    uint32_t              evt_seq; /* guarded by hal.lock */
-    lbr_time_sync_rx_t    sync;    /* touched only by the CAN RX caller */
+    uint32_t              evt_seq; /* guarded by hal.lock, as are the next four */
+    bool                  started;
+    lbr_early_event_t     early[LBR_EARLY_EVENTS];
+    size_t                n_early;
+    uint32_t              early_dropped;
+    lbr_time_sync_rx_t    sync; /* touched only by the CAN RX caller */
 
     atomic_uint   acquired;
     atomic_uint   published;

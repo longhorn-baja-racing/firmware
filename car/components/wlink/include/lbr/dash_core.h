@@ -9,6 +9,7 @@
 #include "lbr/node.h"
 #include "lbr/node_core.h"
 #include "lbr/value_table.h"
+#include "lbr/wlink.h"
 
 /*
  * Cockpit dashboard logic (ESP32-C5, own battery), independent of the
@@ -47,8 +48,7 @@ typedef struct {
     /* hal.lock */
     lbr_value_table_t values;
     lbr_dash_node_t   nodes[LBR_DASH_MAX_NODES];
-    bool              have_seq;
-    uint32_t          last_seq;
+    lbr_seq_window_t  seq;
     uint64_t          last_rx_us;
 
     uint32_t    tx_seq;

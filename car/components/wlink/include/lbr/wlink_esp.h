@@ -24,14 +24,16 @@ bool lbr_wifi_start_sta(const char *ssid, const char *password);
 /* The access point's address once joined (0 until then). */
 uint32_t lbr_wifi_sta_gateway(void);
 
-/* Apply CONFIG_LBR_WIFI_5GHZ after esp_wifi_init (chips without 5 GHz:
- * nothing to do). */
+/* Apply CONFIG_LBR_WIFI_5GHZ. Only valid once esp_wifi_start has run
+ * (ESP_ERR_WIFI_NOT_STARTED before); chips without 5 GHz: nothing to do. */
 void lbr_wifi_apply_band(void);
 
-typedef void (*lbr_udp_rx_cb)(const uint8_t *buf, size_t len, uint32_t from_ip, uint16_t from_port,
-                              uint64_t rx_local_us, void *ctx);
-
 typedef struct lbr_udp lbr_udp_t;
+
+/* `self` is the socket the datagram came in on (valid even before
+ * lbr_udp_open has returned to its caller). */
+typedef void (*lbr_udp_rx_cb)(lbr_udp_t *self, const uint8_t *buf, size_t len, uint32_t from_ip,
+                              uint16_t from_port, uint64_t rx_local_us, void *ctx);
 
 #define LBR_UDP_BROADCAST 0xFFFFFFFFu
 

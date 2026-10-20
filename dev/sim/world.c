@@ -351,6 +351,8 @@ static int part_init(lbr_sensor_t *self)
         return -1;
     }
     memset(sl->din, 0, sizeof sl->din);
+    memset(sl->pulse, 0, sizeof sl->pulse);
+    memset(sl->pulse_read_us, 0, sizeof sl->pulse_read_us);
     return 0;
 }
 
@@ -385,9 +387,27 @@ static void read_io(sim_slot_t *sl, lbr_sensor_t *self, size_t i, lbr_reading_t 
                       (unsigned long)raw);
             break;
         }
-        case LBR_IO_PULSE:
-            *r = (lbr_reading_t){.valid = true, .v.f32 = have ? (float)v : 0.0f};
+        case LBR_IO_PULSE: {
+            /* The pickup: edges at v / scale Hz (none when open), counted as
+             * the GPIO ISR would, then the firmware's own conversion. */
+            double hz = chan_open(s, sig) || !have || v <= 0.0 ? 0.0 : v / c->u.pulse.scale;
+            if (sl->pulse_read_us[i] != 0 && hz > 0.0) {
+                sl->pulse_phase[i] += hz * (double)(local - sl->pulse_read_us[i]) / 1e6;
+                double whole = floor(sl->pulse_phase[i]);
+                if (whole >= 1.0) {
+                    sl->pulse_count[i] += (uint32_t)whole;
+                    sl->pulse_phase[i] -= whole;
+                    sl->pulse_edge_us[i] = local - (uint64_t)(sl->pulse_phase[i] / hz * 1e6);
+                }
+            }
+            sl->pulse_read_us[i] = local;
+            float f = lbr_io_pulse_update(&sl->pulse[i], sl->pulse_count[i], sl->pulse_edge_us[i],
+                                          local, c->u.pulse.stall_ms);
+            *r      = (lbr_reading_t){.valid = true, .v.f32 = f * c->u.pulse.scale};
+            sim_trace(s, sl->node, "gpio.edges", "%s: %lu edges", lbr_signal_info(sig)->name,
+                      (unsigned long)sl->pulse_count[i]);
             break;
+        }
         default:
             *r = (lbr_reading_t){.valid = false, .reason = LBR_UNAVAIL_NOT_FITTED};
             break;

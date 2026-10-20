@@ -68,19 +68,16 @@ static void log_sample(lbr_node_core_t *c, const lbr_sample_t *s)
     /* Drops are counted by the logger (records_dropped / rejected_closed). */
 }
 
-void lbr_node_core_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault)
+static void emit_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault,
+                       uint64_t t_us, bool synced)
 {
-    const char *name = lbr_event_name(code);
-    say(c, fault ? LBR_LOG_LVL_ERROR : LBR_LOG_LVL_WARN, "%s %s (0x%04x) arg %u",
-        fault ? "FAULT" : "event", name != NULL ? name : "?", (unsigned)code, (unsigned)arg);
-
     lbr_sample_t s = {
         .signal    = fault ? LBR_SIG_FAULT : LBR_SIG_EVENT,
         .source    = c->cfg->node_id,
         .type      = LBR_VAL_STATUS,
         .valid     = true,
-        .synced    = c->hal.time_synced(c->hal.ctx),
-        .t_mono_us = c->hal.now_us(c->hal.ctx),
+        .synced    = synced,
+        .t_mono_us = t_us,
     };
     s.v.u32 = lbr_event_value(code, arg);
     lock(c);
@@ -92,6 +89,28 @@ void lbr_node_core_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg
     if (lbr_can_encode_event(&s, &f)) {
         send_frame(c, &f);
     }
+}
+
+void lbr_node_core_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault)
+{
+    const char *name = lbr_event_name(code);
+    say(c, fault ? LBR_LOG_LVL_ERROR : LBR_LOG_LVL_WARN, "%s %s (0x%04x) arg %u",
+        fault ? "FAULT" : "event", name != NULL ? name : "?", (unsigned)code, (unsigned)arg);
+    uint64_t t      = c->hal.now_us(c->hal.ctx);
+    bool     synced = c->hal.time_synced(c->hal.ctx);
+    lock(c);
+    if (!c->started) {
+        /* No log or CAN yet: hold it for lbr_node_core_start. */
+        if (c->n_early < LBR_EARLY_EVENTS) {
+            c->early[c->n_early++] = (lbr_early_event_t){(uint16_t)code, arg, fault, t};
+        } else {
+            c->early_dropped++;
+        }
+        unlock(c);
+        return;
+    }
+    unlock(c);
+    emit_event(c, code, arg, fault, t, synced);
 }
 
 void lbr_node_core_on_log_event(lbr_node_core_t *c, uint16_t code, bool fault)
@@ -153,7 +172,14 @@ void lbr_node_core_start(lbr_node_core_t *c, bool can_up, bool can_pins_unset, l
 {
     c->can_up = can_up;
     c->log    = log;
+    lock(c);
+    c->started = true;
+    unlock(c);
     lbr_node_core_event(c, LBR_EVT_BOOT, (uint16_t)c->boot.reset_reason, false);
+    for (size_t i = 0; i < c->n_early; i++) {
+        const lbr_early_event_t *e = &c->early[i];
+        emit_event(c, (lbr_event_code_t)e->code, e->arg, e->fault, e->t_us, false);
+    }
     if (can_pins_unset) {
         lbr_node_core_event(c, LBR_EVT_CAN_PINS_UNSET, 0, true);
     }
@@ -192,8 +218,19 @@ void lbr_node_core_slot_tick(lbr_node_core_t *c, size_t i)
     lbr_acq_tick_t         tick;
     bool                   synced;
 
-    uint32_t tl  = timeline(c, &synced);
-    uint64_t now = c->hal.now_us(c->hal.ctx);
+    /* Read the timeline on both sides of the clock: a sync applied in
+     * between (by the CAN RX task) would pair a new time with the old one. */
+    uint32_t tl = timeline(c, &synced);
+    uint64_t now;
+    for (int tries = 0;; tries++) {
+        now          = c->hal.now_us(c->hal.ctx);
+        uint32_t tl2 = timeline(c, &synced);
+        if (tl2 == tl || tries >= 2) {
+            tl = tl2;
+            break;
+        }
+        tl = tl2;
+    }
     if (!lbr_acq_slot_tick(&st->acq, now, c->hal.mono_us(c->hal.ctx), tl, readings, &tick,
                            acq_event, c)) {
         return;
@@ -337,7 +374,7 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h, uint8_t *er
         .log_hz           = rate_hz(atomic_load(&c->logged), &c->prev_logged, period),
         .queue_high_water = ls.queue_high_water,
         .overflow_count   = atomic_load(&c->overruns) + ls.records_dropped + ls.records_lost_write +
-                            (cfg->local_log ? ls.records_rejected_closed : 0u),
+                            (cfg->local_log ? ls.records_rejected_closed : 0u) + c->early_dropped,
         .rejected_count =
             cs.rx_foreign + atomic_load(&c->sync_unmatched) + atomic_load(&c->out_of_range),
         .write_error_count     = ls.write_errors + ls.sync_errors,

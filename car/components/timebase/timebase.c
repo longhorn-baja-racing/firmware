@@ -56,8 +56,11 @@ lbr_time_update_t lbr_time_servo_update(lbr_time_servo_t *s, uint64_t gateway_us
         lbr_time_update_t kind = s->synced ? LBR_TIME_UPD_EPOCH_CHANGE : LBR_TIME_UPD_FIRST;
         if (kind == LBR_TIME_UPD_EPOCH_CHANGE) {
             s->epoch_changes++;
-            s->last_output_us = 0; /* new timeline: the guard restarts */
         }
+        /* New timeline (first sync or new epoch): the guard restarts, or a
+         * node that ran unsynced longer than the Central has been up would
+         * hold its clock still until the Central's time caught up. */
+        s->last_output_us = 0;
         anchor(s, local_rx_us, gateway_us);
         s->synced               = true;
         s->epoch                = epoch;

@@ -505,7 +505,14 @@ static uint8_t s_disk[512 * 1024];
 static uint8_t s_q[64 * 1024];
 static uint8_t s_chunk[LBR_LOG_MAX_RECORD + 512];
 
-static void gw_rig_init(gw_rig_t *r)
+static void gw_rig_start(gw_rig_t *r)
+{
+    lbr_gw_links_t links = {.usb = &r->usb, .lora = &r->lora, .dash = &r->dash};
+    lbr_gw_core_start(&r->core, &r->log, &links, true, false);
+    lbr_gw_core_slot_start(&r->core, 0);
+}
+
+static void gw_rig_setup(gw_rig_t *r)
 {
     memset(r, 0, sizeof *r);
     fake_init(&r->fake);
@@ -563,9 +570,12 @@ static void gw_rig_init(gw_rig_t *r)
     lbr_gw_core_init(&r->core, &hal, &cfg, &boot);
     lbr_sensor_dash_link(&r->dash_status, "dash_status", k_dash_status, 2, &r->core.dash,
                          lbr_gw_core_lock_state, lbr_gw_core_unlock_state, &r->core);
-    lbr_gw_links_t links = {.usb = &r->usb, .lora = &r->lora, .dash = &r->dash};
-    lbr_gw_core_start(&r->core, &r->log, &links, true, false);
-    lbr_gw_core_slot_start(&r->core, 0);
+}
+
+static void gw_rig_init(gw_rig_t *r)
+{
+    gw_rig_setup(r);
+    gw_rig_start(r);
 }
 
 /* Count CAN_FRAME records in the log (pumped to the fake disk). */
@@ -771,6 +781,10 @@ static void test_gw_node_lost_and_lora(void)
     r.fake.mono += (uint64_t)r.core.cfg.node_timeout_ms * 1000u + 1000u;
     lbr_gw_core_heartbeat(&r.core, &h);
     CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_FAULT, LBR_EVT_NODE_LOST), 1);
+    CHECK_EQ_I(count_events(&r.fake, 0, LBR_SIG_EVENT, LBR_EVT_NODE_FOUND), 0); /* first seen */
+    /* Back on the bus: NODE_FOUND, so the log shows the outage ended. */
+    lbr_gw_core_on_rx(&r.core, &f, r.fake.mono);
+    CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_EVENT, LBR_EVT_NODE_FOUND), 1);
 
     char buf[1024];
     CHECK(lbr_gw_core_status(&r.core, "00000001.LBR", buf, sizeof buf) > 0);
@@ -784,6 +798,42 @@ static void test_gw_node_lost_and_lora(void)
     CHECK((h.flags & LBR_HF_SD_PRESENT) == 0);
 }
 
+/* Events raised before start (driver init, config checks) are held and go
+ * out right after BOOT, with the time they happened, never lost. */
+static void test_early_events(void)
+{
+    static node_rig_t r;
+    CHECK(rig_init(&r, 100));
+    r.fake.mono = 4000;
+    for (unsigned i = 0; i < LBR_EARLY_EVENTS + 3u; i++) {
+        lbr_node_core_event(&r.core, LBR_EVT_SENSOR_INIT_FAIL, (uint16_t)i, true);
+    }
+    CHECK_EQ_U(r.fake.n_tx, 0u);
+    r.fake.mono = 9000;
+    lbr_node_core_start(&r.core, true, false, NULL);
+    lbr_sample_t e;
+    CHECK(r.fake.n_tx >= 1u + LBR_EARLY_EVENTS);
+    CHECK(lbr_can_decode_event(&r.fake.tx[0], 9000, &e));
+    CHECK_EQ_U(e.v.u32 & 0xFFFFu, LBR_EVT_BOOT);
+    CHECK(lbr_can_decode_event(&r.fake.tx[1], 9000, &e));
+    CHECK_EQ_U(e.signal, LBR_SIG_FAULT);
+    CHECK_EQ_U(e.v.u32, lbr_event_value(LBR_EVT_SENSOR_INIT_FAIL, 0));
+    CHECK_EQ_U(e.t_mono_us, 4000u);
+    CHECK_EQ_I(count_events(&r.fake, 0, LBR_SIG_FAULT, LBR_EVT_SENSOR_INIT_FAIL),
+               (int)LBR_EARLY_EVENTS);
+    lbr_health_record_t h;
+    lbr_node_core_heartbeat(&r.core, &h);
+    CHECK_EQ_U(h.overflow_count, 3u); /* the ones that did not fit are counted */
+
+    static gw_rig_t g;
+    gw_rig_setup(&g);
+    lbr_gw_core_event(&g.core, LBR_EVT_CONFIG_INVALID, 0, true);
+    CHECK_EQ_U(g.fake.n_tx, 0u);
+    gw_rig_start(&g);
+    CHECK_EQ_I(count_events(&g.fake, 0, LBR_SIG_EVENT, LBR_EVT_BOOT), 1);
+    CHECK_EQ_I(count_events(&g.fake, 1, LBR_SIG_FAULT, LBR_EVT_CONFIG_INVALID), 1);
+}
+
 int main(void)
 {
     RUN(test_node_boot_and_acquire);
@@ -795,5 +845,6 @@ int main(void)
     RUN(test_gw_time_sync);
     RUN(test_gw_dashboard_link);
     RUN(test_gw_node_lost_and_lora);
+    RUN(test_early_events);
     TEST_MAIN_END();
 }

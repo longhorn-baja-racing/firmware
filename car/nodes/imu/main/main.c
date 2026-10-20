@@ -90,9 +90,10 @@ static void rx_unlock(void *ctx)
 /* ------------------------------------------------------------------------ */
 /* Tasks                                                                     */
 
-static void on_datagram(const uint8_t *buf, size_t len, uint32_t ip, uint16_t port,
+static void on_datagram(lbr_udp_t *self, const uint8_t *buf, size_t len, uint32_t ip, uint16_t port,
                         uint64_t rx_local_us, void *ctx)
 {
+    s_udp = self; /* the reply path may run before lbr_udp_open returned */
     (void)ctx;
     /* Remember where each corner is, for its clock replies. */
     if (len >= LBR_PKT_HEADER_SIZE) {

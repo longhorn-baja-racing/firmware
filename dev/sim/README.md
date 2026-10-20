@@ -97,7 +97,7 @@ names (`ENGINE_RPM`, `IMU_FL_ACCEL_Z`, ...).
 
 | Target | Metrics |
 | --- | --- |
-| a node, or a group: `all` (every node but the Central), `can` (the wired sensor controllers), `corners`, `wireless` (corners and dashboard); worst case reported | `state` (RUN, DEGRADED, FAULT, BADCONFIG, BOOT, OFF, LOST), `seen` (the Central, or the IMU Controller for corners, hears it), `synced` (1 for the dashboard, which keeps no shared clock), `sync_err_us`, `tx_dropped`, `bus_off`, `tec`, `overflow`, `steps`, `boot_count`, `transport_errors`, `event:<NAME>` (count seen on the bus, e.g. `event:SENSOR_INIT_FAIL`); wireless: `link`, `gaps` (lost datagrams), corners: `forwarded`, `lost` (samples that never reached CAN) |
+| a node, or a group: `all` (every node but the Central), `can` (the wired sensor controllers), `corners`, `wireless` (corners and dashboard); worst case reported | `state` (RUN, DEGRADED, FAULT, BADCONFIG, BOOT, OFF, LOST), `seen` (the Central, or the IMU Controller for corners, hears it), `synced` (1 for the dashboard, which keeps no shared clock), `sync_err_us` (0 for the dashboard; 2147483647 while a node is off or not yet synced), `tx_dropped`, `bus_off`, `tec`, `overflow`, `steps`, `boot_count`, `transport_errors`, `event:<NAME>` (count seen on the bus, e.g. `event:SENSOR_INIT_FAIL`); wireless: `link`, `gaps` (lost datagrams), corners: `forwarded`, `lost` (samples that never reached CAN) |
 | `bus` | `load` (percent, last second), `errors` |
 | `central` | node metrics, plus `frames_logged`, `log_dropped`, `usb_pkts`, `lora_pkts`, `dash_pkts`, `sync_fail` |
 | `log` | `intact` (1 if the Central's current session file reads back with no corruption), `frames` |

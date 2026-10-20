@@ -87,10 +87,15 @@ bool lbr_wifi_start_ap(const char *ssid, const char *password, int channel)
         ESP_LOGE(TAG, "WiFi init failed");
         return false;
     }
-    lbr_wifi_apply_band();
     if (esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK || esp_wifi_start() != ESP_OK) {
         ESP_LOGE(TAG, "access point start failed");
         return false;
+    }
+    /* The band can only be set once WiFi runs; then put the channel back in
+     * case the band change moved it. */
+    lbr_wifi_apply_band();
+    if (esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK) {
+        ESP_LOGE(TAG, "access point channel %d not valid for the band", channel);
     }
     s_wifi_up = true;
     ESP_LOGI(TAG, "access point \"%s\" up on channel %d", ssid, channel);
@@ -100,6 +105,9 @@ bool lbr_wifi_start_ap(const char *ssid, const char *password, int channel)
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        lbr_wifi_apply_band(); /* only possible once started; before the first scan */
+    }
     if (base == WIFI_EVENT && (id == WIFI_EVENT_STA_START || id == WIFI_EVENT_STA_DISCONNECTED)) {
         s_sta_gw = 0;
         esp_wifi_connect(); /* keep trying: the car is moving in and out of range */
@@ -134,7 +142,6 @@ bool lbr_wifi_start_sta(const char *ssid, const char *password)
         ESP_LOGE(TAG, "WiFi init failed");
         return false;
     }
-    lbr_wifi_apply_band();
     if (esp_wifi_set_config(WIFI_IF_STA, &sta) != ESP_OK || esp_wifi_start() != ESP_OK) {
         ESP_LOGE(TAG, "station start failed");
         return false;
@@ -160,7 +167,7 @@ static void rx_task(void *arg)
         int      n = recvfrom(u->sock, buf, sizeof buf, 0, (struct sockaddr *)&from, &flen);
         uint64_t t = (uint64_t)esp_timer_get_time();
         if (n > 0) {
-            u->cb(buf, (size_t)n, from.sin_addr.s_addr, ntohs(from.sin_port), t, u->ctx);
+            u->cb(u, buf, (size_t)n, from.sin_addr.s_addr, ntohs(from.sin_port), t, u->ctx);
         } else {
             vTaskDelay(pdMS_TO_TICKS(10));
         }

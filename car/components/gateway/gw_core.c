@@ -104,13 +104,19 @@ static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_
     lock(c, LBR_GW_LOCK_STATE);
     size_t                 n  = lbr_bus_decode(&c->decoder, f, t_us, samples, LBR_FRAME_MAX_FIELDS);
     lbr_node_table_event_t ev = own_tx ? LBR_NT_NONE : lbr_node_table_on_frame(&c->nodes, f, t_us);
+    bool                   back = false;
+    if (ev == LBR_NT_FOUND) {
+        const lbr_node_entry_t *e = lbr_node_table_find(&c->nodes, lbr_can_sender(f->id));
+        back                      = e != NULL && e->first_seen_us != t_us; /* after NODE_LOST */
+    }
     for (size_t i = 0; i < n; i++) {
         lbr_lora_policy_offer_sample(&c->lora_policy, &samples[i]);
         lbr_value_table_offer(&c->dash_values, &samples[i], t_us);
     }
     uint8_t source = lbr_can_sender(f->id);
-    if (!own_tx && f->id == LBR_CAN_ID_HEALTH_BASE + 16u * source) {
-        /* Offer health to LoRa when the state page (0) arrives. */
+    if (!own_tx && f->id == LBR_CAN_ID_HEALTH_BASE + 16u * source + LBR_HEALTH_PAGE_COUNT - 1u) {
+        /* Offer health to LoRa once the last page is in, so every field of
+         * this heartbeat (state in page 0, sensor status in page 7) is new. */
         const lbr_node_entry_t *e = lbr_node_table_find(&c->nodes, source);
         if (e != NULL) {
             lbr_lora_policy_offer_health(&c->lora_policy, &e->health);
@@ -120,6 +126,9 @@ static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_
 
     if (ev == LBR_NT_FOUND) {
         say(c, LBR_LOG_LVL_INFO, "node %s (0x%02x) on the bus", lbr_node_name(source), source);
+        if (back) {
+            lbr_gw_core_event(c, LBR_EVT_NODE_FOUND, source, false);
+        }
     }
 }
 
@@ -132,18 +141,16 @@ static void gw_tx(lbr_gw_core_t *c, const lbr_can_frame_t *f)
     handle_frame(c, f, c->hal.now_us(c->hal.ctx), true);
 }
 
-void lbr_gw_core_event(lbr_gw_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault)
+static void emit_event(lbr_gw_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault,
+                       uint64_t t_us)
 {
-    const char *name = lbr_event_name(code);
-    say(c, fault ? LBR_LOG_LVL_ERROR : LBR_LOG_LVL_WARN, "%s %s (0x%04x) arg %u",
-        fault ? "FAULT" : "event", name != NULL ? name : "?", (unsigned)code, (unsigned)arg);
     lbr_sample_t s = {
         .signal    = fault ? LBR_SIG_FAULT : LBR_SIG_EVENT,
         .source    = NODE_ID,
         .type      = LBR_VAL_STATUS,
         .valid     = true,
         .synced    = true,
-        .t_mono_us = c->hal.now_us(c->hal.ctx),
+        .t_mono_us = t_us,
     };
     s.v.u32 = lbr_event_value(code, arg);
     lock(c, LBR_GW_LOCK_EVENT);
@@ -153,6 +160,27 @@ void lbr_gw_core_event(lbr_gw_core_t *c, lbr_event_code_t code, uint16_t arg, bo
     if (lbr_can_encode_event(&s, &f)) {
         gw_tx(c, &f);
     }
+}
+
+void lbr_gw_core_event(lbr_gw_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault)
+{
+    const char *name = lbr_event_name(code);
+    say(c, fault ? LBR_LOG_LVL_ERROR : LBR_LOG_LVL_WARN, "%s %s (0x%04x) arg %u",
+        fault ? "FAULT" : "event", name != NULL ? name : "?", (unsigned)code, (unsigned)arg);
+    uint64_t t = c->hal.now_us(c->hal.ctx);
+    lock(c, LBR_GW_LOCK_EVENT);
+    if (!c->started) {
+        /* No log or CAN yet: hold it for lbr_gw_core_start. */
+        if (c->n_early < LBR_EARLY_EVENTS) {
+            c->early[c->n_early++] = (lbr_early_event_t){(uint16_t)code, arg, fault, t};
+        } else {
+            c->early_dropped++;
+        }
+        unlock(c, LBR_GW_LOCK_EVENT);
+        return;
+    }
+    unlock(c, LBR_GW_LOCK_EVENT);
+    emit_event(c, code, arg, fault, t);
 }
 
 void lbr_gw_core_command(lbr_gw_core_t *c, uint8_t code, const uint8_t args[7])
@@ -209,7 +237,14 @@ void lbr_gw_core_start(lbr_gw_core_t *c, lbr_logger_t *log, const lbr_gw_links_t
         LBR_FW_VERSION_MAJOR, LBR_FW_VERSION_MINOR, LBR_FW_VERSION_PATCH, LBR_PROTOCOL_VERSION,
         (unsigned long)c->boot.boot_count, (int)c->boot.reset_reason, (unsigned)c->boot.epoch,
         c->sim ? " SIMULATED SENSORS" : "");
+    lock(c, LBR_GW_LOCK_EVENT);
+    c->started = true;
+    unlock(c, LBR_GW_LOCK_EVENT);
     lbr_gw_core_event(c, LBR_EVT_BOOT, (uint16_t)c->boot.reset_reason, false);
+    for (size_t i = 0; i < c->n_early; i++) {
+        const lbr_early_event_t *e = &c->early[i];
+        emit_event(c, (lbr_event_code_t)e->code, e->arg, e->fault, e->t_us);
+    }
     if (!c->boot.config_valid) {
         lbr_gw_core_event(c, LBR_EVT_CONFIG_INVALID, 0, true);
     }
@@ -441,7 +476,7 @@ static void build_health(lbr_gw_core_t *c, lbr_health_record_t *h, uint8_t *err_
         .log_hz           = (uint16_t)((logged - c->prev_logged) * 1000u / LBR_GW_HEALTH_PERIOD_MS),
         .queue_high_water = ls.queue_high_water,
         .overflow_count = ls.records_dropped + ls.records_rejected_closed + ls.records_lost_write +
-                          atomic_load(&c->overruns),
+                          atomic_load(&c->overruns) + c->early_dropped,
         .rejected_count = cs.rx_foreign + atomic_load(&c->out_of_range),
         .write_error_count     = ls.write_errors + ls.sync_errors,
         .transport_error_count = link_dropped + link_errors + atomic_load(&c->sync_tx_fail),

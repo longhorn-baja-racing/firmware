@@ -201,7 +201,7 @@ uint64_t lbr_can_grid_index(uint16_t counter, uint64_t rx_shared_us, uint32_t pe
 size_t lbr_can_decode_data(const lbr_can_frame_t *f, uint64_t rx_shared_us, bool synced,
                            lbr_sample_t *out, size_t cap)
 {
-    const lbr_frame_def_t *d = lbr_frame_def((uint16_t)f->id);
+    const lbr_frame_def_t *d = f->id <= LBR_CAN_ID_MAX ? lbr_frame_def((uint16_t)f->id) : NULL;
     if (d == NULL || f->dlc != d->dlc) {
         return 0;
     }
@@ -234,8 +234,12 @@ uint64_t lbr_can_unwrap_time(uint32_t t_lo24, uint64_t ref_us)
     if (d >= T_LO_RANGE / 2) {
         d -= T_LO_RANGE;
     }
-    int64_t t = (int64_t)ref_us - d;
-    return t < 0 ? 0u : (uint64_t)t;
+    /* Saturate instead of wrapping at either end of the 64-bit range. */
+    if (d >= 0) {
+        return (uint64_t)d > ref_us ? 0u : ref_us - (uint64_t)d;
+    }
+    uint64_t up = (uint64_t)(-(int64_t)d);
+    return ref_us > UINT64_MAX - up ? UINT64_MAX : ref_us + up;
 }
 
 bool lbr_can_encode_event(const lbr_sample_t *s, lbr_can_frame_t *out)
@@ -413,6 +417,26 @@ bool lbr_bus_decoder_synced(const lbr_bus_decoder_t *d, uint8_t origin)
     return can_node_synced(d, origin);
 }
 
+/* A node that booted, or was lost or found again, is not synced until it
+ * says so again: its next heartbeat (CAN nodes) or CORNER_STATUS (corners).
+ * Otherwise frames from a rebooted node, stamped on its fresh local clock,
+ * would be labelled synced by the heartbeat it sent before the reboot. */
+static void forget_sync(lbr_bus_decoder_t *d, const lbr_sample_t *ev)
+{
+    uint16_t code = (uint16_t)(ev->v.u32 & 0xFFFFu);
+    uint8_t  node = code == LBR_EVT_BOOT ? ev->source : (uint8_t)(ev->v.u32 >> 16);
+    if (code != LBR_EVT_BOOT && code != LBR_EVT_NODE_LOST && code != LBR_EVT_NODE_FOUND) {
+        return;
+    }
+    int corner = lbr_node_corner_index(node);
+    if (corner >= 0) {
+        d->corner_synced &= (uint8_t)~(1u << corner);
+    } else if (lbr_node_is_can(node)) {
+        d->hb_seen[node]  = true;
+        d->hb_flags[node] = LBR_HB_ERR_NOT_SYNCED;
+    }
+}
+
 size_t lbr_bus_decode(lbr_bus_decoder_t *d, const lbr_can_frame_t *f, uint64_t rx_shared_us,
                       lbr_sample_t *out, size_t cap)
 {
@@ -424,9 +448,10 @@ size_t lbr_bus_decode(lbr_bus_decoder_t *d, const lbr_can_frame_t *f, uint64_t r
         return 0;
     }
     if (cap > 0 && lbr_can_decode_event(f, rx_shared_us, out)) {
+        forget_sync(d, out);
         return 1;
     }
-    const lbr_frame_def_t *def = lbr_frame_def((uint16_t)f->id);
+    const lbr_frame_def_t *def = f->id <= LBR_CAN_ID_MAX ? lbr_frame_def((uint16_t)f->id) : NULL;
     if (def == NULL) {
         return 0;
     }

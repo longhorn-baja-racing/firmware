@@ -247,6 +247,8 @@ static void test_unwrap(void)
     CHECK_EQ_U(lbr_can_unwrap_time((uint32_t)(far & 0xFFFFFF), far + T / 2 - 1), far);
     CHECK_EQ_U(lbr_can_unwrap_time((uint32_t)(far & 0xFFFFFF), far - T / 2 + 1), far);
     CHECK_EQ_U(lbr_can_unwrap_time(0xFFFFF0, 5), 0u);
+    /* Saturates at the top of the range too, instead of wrapping to 0. */
+    CHECK_EQ_U(lbr_can_unwrap_time(0x000010, UINT64_MAX - 5), UINT64_MAX);
 }
 
 static void test_time_sync_frames(void)
@@ -367,6 +369,65 @@ static void test_bus_decoder(void)
     CHECK_EQ_U(lbr_bus_decode(&d, &f, 10, out, 8), 1u);
     f.id = 0x7F0;
     CHECK_EQ_U(lbr_bus_decode(&d, &f, 10, out, 8), 0u);
+
+    /* An id above 11 bits is not the frame its low bits name. */
+    lbr_can_encode_data(lbr_frame_def(0x200), v, 10, &f);
+    f.id |= 0x10000u;
+    CHECK_EQ_U(lbr_bus_decode(&d, &f, 10, out, 8), 0u);
+    CHECK_EQ_U(lbr_can_decode_data(&f, 10, true, out, 8), 0u);
+}
+
+static void test_bus_decoder_forgets_sync(void)
+{
+    lbr_bus_decoder_t d;
+    lbr_bus_decoder_init(&d);
+    lbr_sample_t    out[8];
+    lbr_can_frame_t f;
+    lbr_sample_t    e = {.signal    = LBR_SIG_EVENT,
+                         .source    = LBR_NODE_POWERTRAIN,
+                         .type      = LBR_VAL_STATUS,
+                         .valid     = true,
+                         .t_mono_us = 7};
+
+    /* A reboot: synced again only once its next heartbeat says so. */
+    lbr_can_encode_heartbeat(LBR_NODE_POWERTRAIN, LBR_NODE_RUN, 0, &f);
+    lbr_bus_decode(&d, &f, 10, out, 8);
+    CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_POWERTRAIN));
+    e.v.u32 = lbr_event_value(LBR_EVT_BOOT, 0);
+    lbr_can_encode_event(&e, &f);
+    CHECK_EQ_U(lbr_bus_decode(&d, &f, 10, out, 8), 1u);
+    CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_POWERTRAIN));
+    lbr_can_encode_heartbeat(LBR_NODE_POWERTRAIN, LBR_NODE_RUN, 0, &f);
+    lbr_bus_decode(&d, &f, 10, out, 8);
+    CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_POWERTRAIN));
+
+    /* Lost (and found) nodes, CAN or corner, named by the event's arg. */
+    e.source = LBR_NODE_CENTRAL;
+    e.v.u32  = lbr_event_value(LBR_EVT_NODE_FOUND, LBR_NODE_POWERTRAIN);
+    lbr_can_encode_event(&e, &f);
+    lbr_bus_decode(&d, &f, 10, out, 8);
+    CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_POWERTRAIN));
+
+    lbr_sample_t st[6];
+    for (int i = 0; i < 4; i++) {
+        st[i] = f32_sample((lbr_signal_id_t)(LBR_SIG_CORNER_FL_BATTERY + i), 80.0f);
+    }
+    st[4] = (lbr_sample_t){.signal = LBR_SIG_CORNER_LINK, .type = LBR_VAL_U32, .valid = true};
+    st[5] = (lbr_sample_t){.signal = LBR_SIG_CORNER_SYNCED, .type = LBR_VAL_U32, .valid = true};
+    st[4].v.u32 = 0x0F;
+    st[5].v.u32 = 0x0F;
+    lbr_can_encode_data(lbr_frame_def(0x30A), st, 1, &f);
+    lbr_bus_decode(&d, &f, 10, out, 8);
+    lbr_can_encode_heartbeat(LBR_NODE_IMU, LBR_NODE_RUN, 0, &f);
+    lbr_bus_decode(&d, &f, 10, out, 8);
+    CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_BL));
+    e.source = LBR_NODE_IMU;
+    e.v.u32  = lbr_event_value(LBR_EVT_NODE_LOST, LBR_NODE_CORNER_BL);
+    lbr_can_encode_event(&e, &f);
+    lbr_bus_decode(&d, &f, 10, out, 8);
+    CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_BL));
+    CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_FL)); /* the others keep theirs */
+    CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_IMU));
 }
 
 static void test_frame_record(void)
@@ -402,6 +463,7 @@ int main(void)
     RUN(test_command_frame);
     RUN(test_heartbeat_and_health);
     RUN(test_bus_decoder);
+    RUN(test_bus_decoder_forgets_sync);
     RUN(test_frame_record);
     TEST_MAIN_END();
 }

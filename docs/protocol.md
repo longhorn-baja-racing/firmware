@@ -191,7 +191,11 @@ sensor_status u32`), the wireless records `IMU_BATCH` (0x09), `TIME_REQ` (0x0A),
 - **BLE** is read-only GATT (status and version text), no stream.
 
 A gap in the per-link `seq` at the receiver means packets lost in transit; packets the Central
-could not enqueue are counted in its heartbeat (`transport_error_count`).
+could not enqueue are counted in its heartbeat (`transport_error_count`). Over WiFi (UDP) packets
+can also arrive reordered, so the wireless receivers keep a 32-packet window (`lbr_seq_window_t`):
+a packet counts as lost only when it leaves the window unseen, a late one fills its hole, a repeat
+is dropped, and a packet older than the window means the sender restarted its count. Only packets
+newer than any so far update displayed values, so an older one never overwrites a newer one.
 
 ## Wireless links
 
@@ -199,15 +203,24 @@ Over 5 GHz WiFi UDP (DAQ-WIRING.md section 8; `car/components/wlink/include/lbr/
 transport packet per datagram, no COBS:
 
 - **Corner -> IMU Controller** (link 4, port 47801): `IMU_BATCH` records, `k0 u32, n u8, battery
-  u8, flags u8 (bit 0 synced, bit 1 IMU healthy, bit 2 simulated), sample size u8`, then n samples,
-  each the corner's IMU frame payloads without their counters, already in the frame-table
-  encoding. Each datagram repeats the previous batch ahead of the new one; the IMU Controller
-  forwards each grid index once and counts the ones that never arrive (64-sample window). A batch
-  holds contiguous samples taken in one sync state only.
+  u8, flags u8 (bit 0 synced, bit 1 IMU healthy, bit 2 simulated, bits 3..7 timeline), sample size
+  u8`, then n samples, each the corner's IMU frame payloads without their counters, already in the
+  frame-table encoding. Each datagram repeats the previous batch ahead of the new one; the IMU
+  Controller forwards each grid index once and counts the ones that never arrive (64-sample
+  window). A batch holds contiguous samples taken in one sync state only. The timeline (5 bits,
+  wrapping) counts the corner's clock jumps (first sync, step, new epoch) and restarts at 0 on
+  boot; when it changes, k jumps with it, so the IMU Controller counts the old window's holes as
+  lost and starts a new window. A batch of the previous timeline arriving within 200 ms of the
+  change was reordered in transit: dropped and counted (`stale`), not a new timeline. After a link
+  timeout, a first batch far behind the window (a corner that rebooted meanwhile) also starts a
+  new window.
 - **Corner clock**: `TIME_REQ` (`t1 u64`, corner local time) and `TIME_RESP` (`t1, t2, t3 u64`
   shared times at the IMU Controller's reception and reply, `epoch u16`, `flags u8` bit 0 server
   synced). The corner takes shared time at reception as t3 + rtt / 2 with
-  rtt = (t4 - t1) - (t3 - t2), ignores replies with rtt above 20 ms, and feeds the time servo.
+  rtt = (t4 - t1) - (t3 - t2), ignores replies with rtt above 20 ms or more than 1.5 ms above the
+  best recent rtt (which ages by 200 us per request, so it follows a slower link), and feeds the
+  time servo. The offset error is up to rtt / 2 when the two directions are uneven, so a slow
+  exchange is not allowed to step the clock.
 - **Central -> dashboard** (link 5, port 47802, broadcast on the Central's access point, every
   `dash_period_ms`): a `SAMPLE` record per display signal (latest value; stale ones as `NO_DATA`)
   and a `HEALTH_LITE` per CAN node.

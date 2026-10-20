@@ -326,18 +326,20 @@ static void test_counter_rollover_in_records(void)
     open_logger(&lg, &m, sizeof s_queue);
     lbr_sample_t a = make_sample(0xFFFFFFFFu);
     lbr_sample_t b = make_sample(0);
-    lbr_log_append_sample(&lg, &a);
-    lbr_log_append_sample(&lg, &b);
-    lbr_log_close(&lg, 0);
+    CHECK_EQ_I(lbr_log_append_sample(&lg, &a), 0);
+    CHECK_EQ_I(lbr_log_append_sample(&lg, &b), 0);
+    CHECK_EQ_I(lbr_log_close(&lg, 0), 0);
     lbr_log_reader_t r;
     lbr_log_record_t rec;
     lbr_log_reader_init(&r, m.buf, m.len);
-    lbr_log_reader_next(&r, &rec);
+    CHECK(lbr_log_reader_next(&r, &rec)); /* session header */
     lbr_sample_t sa, sb;
-    lbr_log_reader_next(&r, &rec);
-    lbr_sample_decode(rec.payload, rec.len, &sa);
-    lbr_log_reader_next(&r, &rec);
-    lbr_sample_decode(rec.payload, rec.len, &sb);
+    CHECK(lbr_log_reader_next(&r, &rec));
+    CHECK_EQ_U(lbr_sample_decode(rec.payload, rec.len, &sa), LBR_SAMPLE_WIRE_SIZE);
+    CHECK(lbr_log_reader_next(&r, &rec));
+    CHECK_EQ_U(lbr_sample_decode(rec.payload, rec.len, &sb), LBR_SAMPLE_WIRE_SIZE);
+    CHECK_EQ_U(sa.seq, 0xFFFFFFFFu);
+    CHECK_EQ_U(sb.seq, 0u);
     CHECK_EQ_I(lbr_seq_delta(sa.seq, sb.seq), 1);
 }
 

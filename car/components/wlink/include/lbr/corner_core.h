@@ -67,8 +67,13 @@ typedef struct {
     uint8_t  prev_n;
     uint8_t  prev_flags;
 
-    uint32_t     pkt_seq;
+    atomic_uint  pkt_seq; /* both the IMU slot and the clock task send */
     lbr_wclock_t clock;
+
+    /* IMU slot only: the batch timeline (LBR_WLINK_F_TL_*). */
+    bool     have_timeline;
+    uint32_t last_timeline;
+    uint8_t  tl_seq;
 
     atomic_uint acquired;
     atomic_uint overruns;

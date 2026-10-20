@@ -8,6 +8,7 @@
 #include "lbr/protocol.h"
 #include "lbr/sensor.h"
 #include "lbr/value_table.h"
+#include "lbr/wlink.h"
 
 /*
  * Central side of the cockpit dashboard link (pure; host-tested).
@@ -39,12 +40,11 @@ typedef struct {
     bool         have_battery;
     lbr_sample_t battery;
 
-    bool     have_seq;
-    uint32_t last_seq;
-    uint32_t packets;
-    uint32_t packet_gaps; /* datagrams from the dashboard that never arrived */
-    uint32_t rejected;
-    uint32_t tx_seq;
+    lbr_seq_window_t seq;
+    uint32_t         packets;
+    uint32_t         packet_gaps; /* datagrams from the dashboard that never arrived */
+    uint32_t         rejected;
+    uint32_t         tx_seq;
 
     /* Set by lbr_sensor_dash_link: how its driver locks this state. */
     void (*lock)(void *);

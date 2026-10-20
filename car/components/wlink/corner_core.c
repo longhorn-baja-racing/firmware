@@ -133,6 +133,7 @@ uint8_t lbr_corner_core_flags(lbr_corner_core_t *c)
         f |= LBR_WLINK_F_SENSOR_OK;
     }
     f |= c->sim ? LBR_WLINK_F_SIM : 0u;
+    f |= (uint8_t)((c->tl_seq & LBR_WLINK_F_TL_MASK) << LBR_WLINK_F_TL_SHIFT);
     return f;
 }
 
@@ -162,8 +163,8 @@ static void flush(lbr_corner_core_t *c)
     }
     uint8_t           pkt[LBR_PKT_MAX_SIZE];
     lbr_pkt_builder_t b;
-    lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_CORNER, c->cfg->node_id, c->pkt_seq++,
-                  c->hal.now_us(c->hal.ctx));
+    lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_CORNER, c->cfg->node_id,
+                  atomic_fetch_add(&c->pkt_seq, 1), c->hal.now_us(c->hal.ctx));
     if (c->prev_n > 0) {
         add_batch(c, &b, c->prev_k0, c->prev_n, c->prev, c->prev_flags);
     }
@@ -219,6 +220,14 @@ void lbr_corner_core_slot_tick(lbr_corner_core_t *c, size_t i)
         return;
     }
 
+    /* Every jump of this clock is a new timeline the IMU Controller must
+     * see, even when the synced flag does not change (step, new epoch). */
+    if (c->have_timeline && tl != c->last_timeline) {
+        c->tl_seq++;
+    }
+    c->have_timeline = true;
+    c->last_timeline = tl;
+
     /* A batch holds contiguous grid points taken in one state only. */
     uint8_t flags = lbr_corner_core_flags(c);
     if (c->cur_n > 0 && ((uint32_t)tick.k != c->cur_k0 + c->cur_n || flags != c->cur_flags)) {
@@ -255,8 +264,8 @@ uint32_t lbr_corner_core_clock_tick(lbr_corner_core_t *c)
     lbr_time_servo_t  ts;
 
     lbr_wclock_request(&c->clock, c->hal.mono_us(c->hal.ctx), req);
-    lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_CORNER, c->cfg->node_id, c->pkt_seq++,
-                  c->hal.now_us(c->hal.ctx));
+    lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_CORNER, c->cfg->node_id,
+                  atomic_fetch_add(&c->pkt_seq, 1), c->hal.now_us(c->hal.ctx));
     lbr_pkt_add(&b, LBR_REC_TIME_REQ, req, sizeof req);
     size_t n = lbr_pkt_finish(&b);
     if (n > 0 && c->hal.send(c->hal.ctx, pkt, n)) {
@@ -280,11 +289,14 @@ static void on_record(uint8_t type, const uint8_t *payload, size_t len, void *ct
     lbr_corner_core_t *c = r->c;
     uint64_t           shared;
     uint16_t           epoch;
-    if (type != LBR_REC_TIME_RESP ||
-        !lbr_wclock_on_response(&c->clock, payload, len, r->rx_local, &shared, &epoch)) {
+    bool               server_synced;
+    if (type != LBR_REC_TIME_RESP || !lbr_wclock_on_response(&c->clock, payload, len, r->rx_local,
+                                                             &shared, &epoch, &server_synced)) {
         return;
     }
     lbr_time_update_t u = c->hal.time_apply(c->hal.ctx, shared, r->rx_local, epoch);
+    /* Only now: a sample flagged synced must already be on the new timeline. */
+    c->clock.server_synced = server_synced;
     if (u == LBR_TIME_UPD_FIRST || u == LBR_TIME_UPD_EPOCH_CHANGE) {
         say(c, LBR_LOG_LVL_INFO, "clock synced to the IMU Controller (epoch %u, rtt %lu us)",
             (unsigned)epoch, (unsigned long)c->clock.last_rtt_us);

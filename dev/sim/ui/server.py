@@ -15,6 +15,7 @@ one command per line on stdin; this script only relays and paces them.
 import argparse
 import glob
 import json
+import math
 import os
 import queue
 import subprocess
@@ -28,6 +29,13 @@ REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 SCENARIOS = os.path.join(HERE, "..", "scenarios")
 TICK_S = 0.05  # wall-clock pacing period
 MAX_TRACE_PER_BATCH = 80
+
+
+def finite(text):
+    v = float(text)
+    if not math.isfinite(v):
+        raise ValueError("not a finite number: %s" % text)
+    return v
 
 
 def find_sim(explicit):
@@ -133,7 +141,14 @@ class Sim:
 
     # -- control -----------------------------------------------------------
     def ui_command(self, text):
-        parts = text.split()
+        # A bad command is reported, never allowed to stop the clock thread.
+        try:
+            self.ui_apply(text.split())
+        except (ValueError, OSError) as e:
+            self.broadcast([{"ev": "ui", "msg": "ui %s: %s" % (text.strip(), e)}])
+        self.broadcast([self.state()])
+
+    def ui_apply(self, parts):
         if not parts:
             return
         if parts[0] == "pause":
@@ -141,16 +156,15 @@ class Sim:
         elif parts[0] == "resume":
             self.paused = False
         elif parts[0] == "speed" and len(parts) > 1:
-            self.speed = max(0.01, min(50.0, float(parts[1])))
+            self.speed = max(0.01, min(50.0, finite(parts[1])))
         elif parts[0] == "step":
-            self.step_ms = float(parts[1]) if len(parts) > 1 else 100.0
+            self.step_ms = max(0.0, min(60000.0, finite(parts[1]))) if len(parts) > 1 else 100.0
         elif parts[0] == "restart":
             if len(parts) > 1:
                 self.seed = int(parts[1])
             self.start()
         elif parts[0] == "scenario" and len(parts) > 1:
             self.load_script(parts[1])
-        self.broadcast([self.state()])
 
     def load_script(self, name):
         path = os.path.join(SCENARIOS, os.path.basename(name) + ".sim")
@@ -161,10 +175,12 @@ class Sim:
                 if not line or line.startswith("#"):
                     continue
                 if line.startswith("end "):
-                    end = float(line.split()[1])
+                    end = finite(line.split()[1])
                     continue
-                _, t, cmd = line.split(None, 2)
-                steps.append((float(t), cmd))
+                fields = line.split(None, 2)
+                if len(fields) != 3 or fields[0] != "at":
+                    raise ValueError("bad scenario line: %s" % line)
+                steps.append((finite(fields[1]), fields[2]))
         # Scenarios are written from t=0: restart so their times line up.
         self.start()
         self.script = steps + ([(end, "status")] if end is not None else [])

@@ -93,6 +93,15 @@ static void take(lbr_corner_rx_t *rx, lbr_corner_peer_t *p, uint64_t k, const ui
     }
 }
 
+/* Close the current window: samples it never got are lost. */
+static void new_timeline(lbr_corner_peer_t *p)
+{
+    if (p->have_k) {
+        p->lost += zeros(p->window, WINDOW);
+    }
+    p->have_k = false;
+}
+
 typedef struct {
     lbr_corner_rx_t   *rx;
     lbr_corner_peer_t *p;
@@ -130,11 +139,26 @@ static void on_record(uint8_t type, const uint8_t *payload, size_t len, void *ct
         rx->rejected++;
         return;
     }
-    if (p->have_k && ((p->flags ^ b.flags) & LBR_WLINK_F_SYNCED)) {
-        /* The corner's clock joined (or left) the shared timeline: its grid
-         * indexes jumped. A new timeline, not lost samples. */
-        p->have_k = false;
+    uint8_t tl = (uint8_t)((b.flags >> LBR_WLINK_F_TL_SHIFT) & LBR_WLINK_F_TL_MASK);
+    if (p->have_tl && tl != p->tl) {
+        if (p->tl_change_us != 0 && tl == p->prev_tl &&
+            r->rx_us - p->tl_change_us < LBR_WLINK_REORDER_US) {
+            p->stale += b.n; /* reordered: sent before the change we already took */
+            return;
+        }
+        new_timeline(p); /* the corner's clock jumped (or it rebooted): so did k */
+        p->prev_tl      = p->tl;
+        p->tl_change_us = r->rx_us;
+    } else if (!p->have_tl && p->have_k && b.n > 0) {
+        /* First batch after the link was down: a corner that rebooted
+         * meanwhile restarts on its own clock, far behind the window. */
+        int64_t k0 = (int64_t)p->next_k + (int32_t)(b.k0 - (uint32_t)p->next_k);
+        if (k0 + (int64_t)WINDOW < (int64_t)p->next_k) {
+            new_timeline(p);
+        }
     }
+    p->have_tl     = true;
+    p->tl          = tl;
     p->battery_raw = b.battery_raw;
     p->flags       = b.flags;
     for (uint8_t i = 0; i < b.n; i++) {
@@ -163,18 +187,16 @@ void lbr_corner_rx_on_packet(lbr_corner_rx_t *rx, const uint8_t *buf, size_t len
         unlock(rx);
         return;
     }
-    lbr_corner_peer_t *p = &rx->peer[corner];
-    if (p->have_seq) {
-        int32_t d = lbr_seq_delta(p->last_seq, hdr.seq);
-        if (d > 1) {
-            p->packet_gaps += (uint32_t)(d - 1);
-        }
-        if (d > 0) {
-            p->last_seq = hdr.seq;
-        }
-    } else {
-        p->have_seq = true;
-        p->last_seq = hdr.seq;
+    lbr_corner_peer_t *p  = &rx->peer[corner];
+    lbr_seq_result_t   sr = lbr_seq_window_take(&p->seq, hdr.seq, &p->packet_gaps);
+    if (sr == LBR_SEQ_OLD) {
+        /* Far behind: the corner restarted its count (a quick reboot). */
+        p->seq.have = false;
+        lbr_seq_window_take(&p->seq, hdr.seq, &p->packet_gaps);
+    } else if (sr == LBR_SEQ_DUPLICATE) {
+        rx->rejected++;
+        unlock(rx);
+        return;
     }
     p->packets++;
     p->last_rx_us = rx_shared_us;
@@ -184,10 +206,11 @@ void lbr_corner_rx_on_packet(lbr_corner_rx_t *rx, const uint8_t *buf, size_t len
 
     rx_ctx_t r = {rx, p, hdr.source, rx_shared_us};
     lbr_pkt_parse(buf, len, &hdr, on_record, &r);
-    unlock(rx);
+    /* Under the lock, so NODE_FOUND and NODE_LOST of one corner stay in order. */
     if (found && rx->hal.event != NULL) {
         rx->hal.event(rx->hal.ctx, LBR_EVT_NODE_FOUND, hdr.source, false);
     }
+    unlock(rx);
 }
 
 uint8_t lbr_corner_rx_tick(lbr_corner_rx_t *rx, uint32_t *new_loss)
@@ -203,6 +226,8 @@ uint8_t lbr_corner_rx_tick(lbr_corner_rx_t *rx, uint32_t *new_loss)
         lbr_corner_peer_t *p = &rx->peer[i];
         if (p->up && now > p->last_rx_us && now - p->last_rx_us > LBR_WLINK_LINK_TIMEOUT_US) {
             p->up                = false;
+            p->seq.have          = false; /* it may come back rebooted: seq and timeline restart */
+            p->have_tl           = false;
             lost_nodes[n_lost++] = (uint8_t)(LBR_NODE_CORNER_FL + i);
         }
         if (!p->up) {
@@ -216,13 +241,12 @@ uint8_t lbr_corner_rx_tick(lbr_corner_rx_t *rx, uint32_t *new_loss)
         *new_loss += loss - rx->reported_loss;
     }
     rx->reported_loss = loss;
-    unlock(rx);
-
     for (size_t i = 0; i < n_lost; i++) {
         if (rx->hal.event != NULL) {
             rx->hal.event(rx->hal.ctx, LBR_EVT_NODE_LOST, lost_nodes[i], true);
         }
     }
+    unlock(rx);
     return flags;
 }
 

@@ -319,9 +319,10 @@ static void dash_stats(lbr_transport_t *self, lbr_transport_stats_t *out)
     *out = s_dash_st;
 }
 
-static void on_dash_datagram(const uint8_t *buf, size_t len, uint32_t ip, uint16_t port,
-                             uint64_t rx_local_us, void *ctx)
+static void on_dash_datagram(lbr_udp_t *self, const uint8_t *buf, size_t len, uint32_t ip,
+                             uint16_t port, uint64_t rx_local_us, void *ctx)
 {
+    (void)self;
     (void)ip;
     (void)port;
     (void)ctx;

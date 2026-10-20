@@ -120,7 +120,11 @@ typedef struct {
     bool              stream_open;
 
     /* LBR_GW_LOCK_EVENT */
-    uint32_t evt_seq;
+    uint32_t          evt_seq;
+    bool              started; /* events raised before start are held, then sent */
+    lbr_early_event_t early[LBR_EARLY_EVENTS];
+    size_t            n_early;
+    uint32_t          early_dropped;
 
     /* Time-sync caller only. */
     uint8_t sync_seq;

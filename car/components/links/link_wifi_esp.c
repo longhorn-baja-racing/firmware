@@ -17,6 +17,7 @@
 #include "lbr/log_sd.h"
 #include "lbr/packet.h"
 #include "lbr/transport_links.h"
+#include "lbr/wlink_esp.h"
 #include "lwip/sockets.h"
 #include "sdkconfig.h"
 
@@ -120,6 +121,12 @@ static void stream_task(void *arg)
         if (client < 0) {
             continue;
         }
+        /* A laptop that leaves range without closing would block send() for
+         * minutes and keep the next one out: time out and drop it instead. */
+        struct timeval tmo = {.tv_sec = 2, .tv_usec = 0};
+        int            on  = 1;
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &tmo, sizeof tmo);
+        setsockopt(client, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof on);
         xStreamBufferReset(s_stream);
         atomic_store(&s_client, true);
         ESP_LOGI(TAG, "stream client connected");
@@ -334,21 +341,16 @@ lbr_transport_t *lbr_link_wifi_start(const lbr_link_hooks_t *hooks)
                 .pmf_cfg        = {.required = false},
             },
     };
-    if (esp_wifi_init(&init) != ESP_OK || esp_wifi_set_mode(WIFI_MODE_AP) != ESP_OK) {
+    if (esp_wifi_init(&init) != ESP_OK || esp_wifi_set_mode(WIFI_MODE_AP) != ESP_OK ||
+        esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK || esp_wifi_start() != ESP_OK) {
         ESP_LOGE(TAG, "WiFi start failed");
         return NULL;
     }
-#if CONFIG_SOC_WIFI_SUPPORT_5G
-    /* DAQ-WIRING.md section 8: 5 GHz by default, 2.4 GHz fallback. */
-#if CONFIG_LBR_WIFI_5GHZ
-    esp_wifi_set_band_mode(WIFI_BAND_MODE_5G_ONLY);
-#else
-    esp_wifi_set_band_mode(WIFI_BAND_MODE_2G_ONLY);
-#endif
-#endif
-    if (esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK || esp_wifi_start() != ESP_OK) {
-        ESP_LOGE(TAG, "WiFi start failed");
-        return NULL;
+    /* DAQ-WIRING.md section 8: 5 GHz by default, 2.4 GHz fallback. The band
+     * can only be set once WiFi runs; then put the channel back. */
+    lbr_wifi_apply_band();
+    if (esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK) {
+        ESP_LOGE(TAG, "channel %d not valid for the band", CONFIG_LBR_WIFI_CHANNEL);
     }
     if (!start_http() || xTaskCreate(stream_task, "lbr_wifi_tx", 4096, NULL, 4, NULL) != pdPASS) {
         ESP_LOGE(TAG, "WiFi services failed to start");

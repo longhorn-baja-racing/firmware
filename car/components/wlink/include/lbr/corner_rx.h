@@ -15,8 +15,14 @@
  * every IMU sample onto CAN exactly once in its frame-table frames (counter
  * = grid index), whatever order or how many times it arrives. A sample that
  * never arrives is counted as lost once it falls out of the 64-sample
- * window. A corner silent for LBR_WLINK_LINK_TIMEOUT_US is down
- * (NODE_LOST); its next datagram brings it back (NODE_FOUND).
+ * window. Each batch names the corner's timeline; a change (first sync,
+ * clock step, new epoch, or a reboot that starts the count again) restarts
+ * the window after counting its holes. Batches of the previous timeline
+ * arriving within LBR_WLINK_REORDER_US of the change are reordered
+ * stragglers: dropped and counted, not a new timeline. A
+ * corner silent for LBR_WLINK_LINK_TIMEOUT_US is down (NODE_LOST); its next
+ * datagram brings it back (NODE_FOUND), starting a new window if the corner
+ * rebooted meanwhile.
  *
  * The CORNER_STATUS frame (0x30A) is built by an ordinary 1 Hz slot whose
  * driver reads this state (lbr_sensor_corner_status).
@@ -52,8 +58,11 @@ typedef struct {
     uint64_t next_k; /* one past the newest sample forwarded */
     uint64_t window; /* bit i: sample next_k - 1 - i was forwarded */
 
-    bool     have_seq;
-    uint32_t last_seq;
+    lbr_seq_window_t seq;
+    bool             have_tl; /* timeline of the corner's batches (LBR_WLINK_F_TL_*) */
+    uint8_t          tl;
+    uint8_t          prev_tl;      /* the timeline before the last change ... */
+    uint64_t         tl_change_us; /* ... and when it changed (0 = never) */
 
     uint32_t packets;
     uint32_t packet_gaps; /* datagrams that never arrived (seq gaps) */
@@ -61,6 +70,7 @@ typedef struct {
     uint32_t duplicates;  /* samples received again (the redundant copy) */
     uint32_t lost;        /* samples that never arrived */
     uint32_t late;        /* arrived after leaving the window: not forwarded, already lost */
+    uint32_t stale;       /* samples of an older timeline arriving after a newer one */
     uint32_t tx_failed;   /* forwards the CAN controller did not take */
 
     const lbr_frame_def_t *frames[4];

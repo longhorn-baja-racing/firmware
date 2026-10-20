@@ -98,6 +98,17 @@ static void test_epoch_change(void)
     CHECK_EQ_U(lbr_time_servo_now(&s, 4000), 4000u); /* guard reset for new timeline */
 }
 
+static void test_first_sync_after_long_unsynced(void)
+{
+    /* A node up 100 s before the Central: its unsynced output must not hold
+     * the new shared clock still until the Central's time catches up. */
+    lbr_time_servo_t s;
+    lbr_time_servo_init(&s);
+    CHECK_EQ_U(lbr_time_servo_now(&s, 100000000), 100000000u);
+    CHECK_EQ_I(lbr_time_servo_update(&s, 1000000, 100000000, 1), LBR_TIME_UPD_FIRST);
+    CHECK_EQ_U(lbr_time_servo_now(&s, 100500000), 1500000u);
+}
+
 static void test_ignores_stale_and_master(void)
 {
     lbr_time_servo_t s;
@@ -146,6 +157,7 @@ int main(void)
     RUN(test_converges_with_drift_and_jitter);
     RUN(test_step_and_monotonic);
     RUN(test_epoch_change);
+    RUN(test_first_sync_after_long_unsynced);
     RUN(test_ignores_stale_and_master);
     RUN(test_sync_pairing);
     RUN(test_global_wrapper);

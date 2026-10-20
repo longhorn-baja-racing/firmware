@@ -233,7 +233,17 @@ static lbr_sd_err_t lbr_sd_open_session_locked(lbr_log_storage_t *out, char name
     return LBR_SD_OK;
 }
 
-static int lbr_sd_list_locked(lbr_sd_list_cb cb, void *ctx)
+#define LIST_BATCH 16
+
+typedef struct {
+    char     name[LBR_SD_NAME_MAX];
+    uint32_t size;
+} list_entry_t;
+
+static int32_t lbr_sd_file_size_locked(const char *name);
+
+/* Up to LIST_BATCH session files after the first `skip`. */
+static int lbr_sd_list_locked(int skip, list_entry_t *out)
 {
     if (s_card == NULL) {
         return LBR_SD_ERR_NOT_MOUNTED;
@@ -242,17 +252,21 @@ static int lbr_sd_list_locked(lbr_sd_list_cb cb, void *ctx)
     if (d == NULL) {
         return LBR_SD_ERR_FILE;
     }
-    int            count = 0;
+    int            seen = 0, got = 0;
     struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        if (lbr_sd_valid_name(e->d_name)) {
-            int32_t size = lbr_sd_file_size(e->d_name);
-            cb(e->d_name, size < 0 ? 0u : (uint32_t)size, ctx);
-            count++;
+    while (got < LIST_BATCH && (e = readdir(d)) != NULL) {
+        if (lbr_sd_valid_name(e->d_name) && seen++ >= skip) {
+            /* A valid name always fits; bounded anyway. */
+            size_t len = strnlen(e->d_name, sizeof out[got].name - 1u);
+            memcpy(out[got].name, e->d_name, len);
+            out[got].name[len] = '\0';
+            int32_t size       = lbr_sd_file_size_locked(out[got].name);
+            out[got].size      = size < 0 ? 0u : (uint32_t)size;
+            got++;
         }
     }
     closedir(d);
-    return count;
+    return got;
 }
 
 static int32_t lbr_sd_file_size_locked(const char *name)
@@ -313,10 +327,25 @@ lbr_sd_err_t lbr_sd_open_session(lbr_log_storage_t *out, char name[LBR_SD_NAME_M
 
 int lbr_sd_list(lbr_sd_list_cb cb, void *ctx)
 {
-    mount_lock();
-    int r = lbr_sd_list_locked(cb, ctx);
-    mount_unlock();
-    return r;
+    /* The callbacks send over USB or HTTP and may block: never call them
+     * under the mount lock, or a slow client stalls the log writer. */
+    list_entry_t batch[LIST_BATCH];
+    int          count = 0;
+    for (;;) {
+        mount_lock();
+        int got = lbr_sd_list_locked(count, batch);
+        mount_unlock();
+        if (got < 0) {
+            return count > 0 ? count : got;
+        }
+        for (int i = 0; i < got; i++) {
+            cb(batch[i].name, batch[i].size, ctx);
+        }
+        count += got;
+        if (got < LIST_BATCH) {
+            return count;
+        }
+    }
 }
 
 int32_t lbr_sd_file_size(const char *name)

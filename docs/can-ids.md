@@ -109,7 +109,13 @@ A frame alone does not say whether its origin's clock was on the shared base. Re
 - a corner is synced while the IMU Controller is, and the latest `CORNER_STATUS` sets the corner's
   `CORNER_SYNCED` bit (updated once a second);
 - the Central is always synced (it is the time master);
-- nothing heard yet means not synced.
+- nothing heard yet means not synced;
+- a node's `BOOT` event, or a `NODE_LOST` / `NODE_FOUND` event naming it (arg), clears its synced
+  state until its next heartbeat (CAN nodes) or `CORNER_STATUS` (corners) says so again, so frames
+  from a rebooted node, stamped on its fresh local clock, are not labelled synced by a heartbeat
+  sent before the reboot.
+
+Ids above 0x7FF (11 bits) are never LBR frames, whatever their low bits.
 
 ## System frames
 

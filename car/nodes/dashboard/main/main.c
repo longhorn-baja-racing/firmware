@@ -68,9 +68,10 @@ static void hal_log(void *ctx, lbr_log_level_t level, const char *text)
     }
 }
 
-static void on_datagram(const uint8_t *buf, size_t len, uint32_t ip, uint16_t port,
+static void on_datagram(lbr_udp_t *self, const uint8_t *buf, size_t len, uint32_t ip, uint16_t port,
                         uint64_t rx_local_us, void *ctx)
 {
+    (void)self;
     (void)ip;
     (void)port;
     (void)ctx;

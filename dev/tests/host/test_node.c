@@ -7,7 +7,6 @@
 
 static const lbr_signal_id_t k_speeds[]  = {LBR_SIG_ENGINE_RPM, LBR_SIG_CVT_RPM};
 static const lbr_signal_id_t k_fuel[]    = {LBR_SIG_FUEL_LEVEL};
-static const lbr_signal_id_t k_dup[]     = {LBR_SIG_CVT_RPM};
 static const lbr_signal_id_t k_half[]    = {LBR_SIG_ENGINE_RPM}; /* 0x200 also needs CVT_RPM */
 static const lbr_signal_id_t k_foreign[] = {LBR_SIG_TEMP_CVT};   /* sent by temperature */
 
@@ -80,11 +79,13 @@ static void test_rejects(void)
     CHECK(strstr(err, "temperature") != NULL);
     cfg = base_config(acq);
 
-    /* Same signal from two drivers. */
-    lbr_sensor_unconfigured(&s_other, "dup", k_dup, 1);
+    /* Same signal from two drivers (each slot complete on its own, so only
+     * the duplicate can be the reason). */
+    lbr_sensor_unconfigured(&s_other, "dup", k_speeds, 2);
     acq[1]    = (lbr_acq_t){&s_other, 100};
     cfg.n_acq = 2;
     CHECK(lbr_node_config_validate(&cfg, err, sizeof err) < 0);
+    CHECK(strstr(err, "twice") != NULL);
     cfg = base_config(acq);
 
     cfg.listen_all = true;
@@ -147,9 +148,11 @@ static void test_reading_to_sample(void)
 static int s_fail_init;
 static int s_fail_read;
 static int s_reads;
+static int s_inits;
 static int flaky_init(lbr_sensor_t *self)
 {
     (void)self;
+    s_inits++;
     return s_fail_init ? -1 : 0;
 }
 static int flaky_read(lbr_sensor_t *self, uint64_t t_us, lbr_reading_t *out)
@@ -202,23 +205,34 @@ static void test_acq_grid(void)
     CHECK(lbr_acq_slot_tick(&a, 5000000000ull, 0, 2, r, &tick, on_event, NULL));
     CHECK_EQ_U(tick.missed, 0u);
     CHECK_EQ_U(lbr_acq_next_due(5000000000ull + 1, 10000), 5000010000ull);
+    /* A backward step that the monotonic clock holds at the point just
+     * sampled: a new timeline, but the same k must not be sampled twice. */
+    CHECK(!lbr_acq_slot_tick(&a, 5000000000ull, 0, 3, r, &tick, on_event, NULL));
 
     /* A read failure: SENSOR_FAULT channels, an event, retry after 2 s. */
     s_fail_read = 1;
     s_fail_init = 1;
-    CHECK(lbr_acq_slot_tick(&a, 5000010000ull, 100, 2, r, &tick, on_event, NULL));
+    CHECK(lbr_acq_slot_tick(&a, 5000010000ull, 100, 3, r, &tick, on_event, NULL));
+    CHECK_EQ_U(tick.k, 500001u); /* the next point, nothing missed */
+    CHECK_EQ_U(tick.missed, 0u);
     CHECK(!r[0].valid && r[0].reason == LBR_UNAVAIL_SENSOR_FAULT);
     CHECK_EQ_I(s_events[LBR_EVT_SENSOR_INIT_FAIL & 0x1F], 1);
     s_fail_read = 0;
+    int inits   = s_inits;
+    CHECK(lbr_acq_slot_tick(&a, 5000020000ull, 100 + LBR_ACQ_RETRY_US - 1, 3, r, &tick, on_event,
+                            NULL));
+    CHECK(!r[0].valid);
+    CHECK_EQ_I(s_inits, inits); /* not retried before the wait is over */
     CHECK(
-        lbr_acq_slot_tick(&a, 5000020000ull, 100 + LBR_ACQ_RETRY_US, 2, r, &tick, on_event, NULL));
+        lbr_acq_slot_tick(&a, 5000030000ull, 100 + LBR_ACQ_RETRY_US, 3, r, &tick, on_event, NULL));
     CHECK(!r[0].valid); /* init still failing */
+    CHECK_EQ_I(s_inits, inits + 1);
     s_fail_init = 0;
-    CHECK(lbr_acq_slot_tick(&a, 5000030000ull, 100 + 2 * LBR_ACQ_RETRY_US, 2, r, &tick, on_event,
+    CHECK(lbr_acq_slot_tick(&a, 5000040000ull, 100 + 2 * LBR_ACQ_RETRY_US, 3, r, &tick, on_event,
                             NULL));
     CHECK(!r[0].valid); /* recovered this tick; reads resume at the next */
     CHECK_EQ_I(s_events[LBR_EVT_SENSOR_RECOVERED & 0x1F], 1);
-    CHECK(lbr_acq_slot_tick(&a, 5000040000ull, 0, 2, r, &tick, on_event, NULL));
+    CHECK(lbr_acq_slot_tick(&a, 5000050000ull, 0, 3, r, &tick, on_event, NULL));
     CHECK(r[0].valid);
 }
 

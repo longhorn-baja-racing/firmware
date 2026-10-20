@@ -257,6 +257,16 @@ lbr_transport_t *lbr_link_lora_start(uint32_t duty_permille)
         ESP_LOGE(TAG, "LoRa pins not configured (CONFIG_LBR_LORA_* are TBD)");
         return NULL;
     }
+#if !(SOC_SPI_PERIPH_NUM > 2) && !CONFIG_LBR_SD_BUS_SDMMC
+    /* One SPI host, shared with the SD card: the radio must be wired to the
+     * same SCLK/MOSI/MISO, or it would silently be driven on the card's. */
+    if (CONFIG_LBR_LORA_SCLK_GPIO != CONFIG_LBR_SD_SPI_SCLK_GPIO ||
+        CONFIG_LBR_LORA_MOSI_GPIO != CONFIG_LBR_SD_SPI_MOSI_GPIO ||
+        CONFIG_LBR_LORA_MISO_GPIO != CONFIG_LBR_SD_SPI_MISO_GPIO) {
+        ESP_LOGE(TAG, "LoRa SCLK/MOSI/MISO must equal the SD card's (shared SPI bus)");
+        return NULL;
+    }
+#endif
     s_duty_permille      = duty_permille;
     spi_bus_config_t bus = {
         .mosi_io_num     = CONFIG_LBR_LORA_MOSI_GPIO,
@@ -264,7 +274,7 @@ lbr_transport_t *lbr_link_lora_start(uint32_t duty_permille)
         .sclk_io_num     = CONFIG_LBR_LORA_SCLK_GPIO,
         .quadwp_io_num   = -1,
         .quadhd_io_num   = -1,
-        .max_transfer_sz = LBR_PKT_LORA_MAX + 1,
+        .max_transfer_sz = 16 * 1024, /* as the SD card's, whichever brings the bus up */
     };
     spi_device_interface_config_t dev = {
         .clock_speed_hz = 8 * 1000 * 1000,

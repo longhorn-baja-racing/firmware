@@ -92,17 +92,65 @@ void lbr_wlink_build_frame(const lbr_frame_def_t *d, const uint8_t *bytes, uint6
 }
 
 /* ------------------------------------------------------------------------ */
+/* Datagram sequence                                                         */
+
+#define SEQ_WINDOW 32u
+
+static uint32_t missing(uint32_t bits, unsigned n)
+{
+    uint32_t m = 0;
+    for (unsigned i = 0; i < n; i++) {
+        m += ((bits >> i) & 1u) ? 0u : 1u;
+    }
+    return m;
+}
+
+lbr_seq_result_t lbr_seq_window_take(lbr_seq_window_t *w, uint32_t seq, uint32_t *gaps)
+{
+    if (!w->have) {
+        /* Nothing before the first datagram can be missing. */
+        *w = (lbr_seq_window_t){.have = true, .last = seq, .bits = 0xFFFFFFFFu};
+        return LBR_SEQ_NEW;
+    }
+    int32_t d = lbr_seq_delta(w->last, seq);
+    if (d > 0) {
+        if ((uint32_t)d >= SEQ_WINDOW) {
+            *gaps += missing(w->bits, SEQ_WINDOW) + (uint32_t)d - SEQ_WINDOW;
+            w->bits = 0;
+        } else {
+            *gaps += missing(w->bits >> (SEQ_WINDOW - (uint32_t)d), (unsigned)d);
+            w->bits <<= d;
+        }
+        w->bits |= 1u;
+        w->last = seq;
+        return LBR_SEQ_NEW;
+    }
+    uint32_t back = (uint32_t)(-d);
+    if (back >= SEQ_WINDOW) {
+        return LBR_SEQ_OLD;
+    }
+    if (w->bits & (1u << back)) {
+        return LBR_SEQ_DUPLICATE;
+    }
+    w->bits |= 1u << back;
+    return LBR_SEQ_LATE;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Clock                                                                     */
 
 void lbr_wclock_request(lbr_wclock_t *c, uint64_t local_now, uint8_t out[LBR_WLINK_TIME_REQ])
 {
     c->pending = true;
     c->t1      = local_now;
+    if (c->min_rtt_us > 0) {
+        c->min_rtt_us += LBR_WLINK_RTT_AGE_US; /* let a changed path raise the floor */
+    }
     lbr_put_u64(out, local_now);
 }
 
 bool lbr_wclock_on_response(lbr_wclock_t *c, const uint8_t *payload, size_t len, uint64_t local_rx,
-                            uint64_t *shared_at_rx, uint16_t *epoch)
+                            uint64_t *shared_at_rx, uint16_t *epoch, bool *server_synced)
 {
     if (len != LBR_WLINK_TIME_RESP) {
         c->rejected++;
@@ -124,10 +172,17 @@ bool lbr_wclock_on_response(lbr_wclock_t *c, const uint8_t *payload, size_t len,
         c->rejected++; /* a slow round trip says little about the offset */
         return false;
     }
+    if (c->min_rtt_us == 0 || rtt < c->min_rtt_us) {
+        c->min_rtt_us = (uint32_t)rtt;
+    }
+    if (rtt > (uint64_t)c->min_rtt_us + LBR_WLINK_RTT_SLACK_US) {
+        c->rejected++; /* slower than the path allows: likely uneven, not used */
+        return false;
+    }
     c->accepted++;
-    c->server_synced = (payload[26] & 0x01u) != 0;
-    *shared_at_rx    = t3 + rtt / 2u;
-    *epoch           = lbr_get_u16(payload + 24);
+    *server_synced = (payload[26] & 0x01u) != 0;
+    *shared_at_rx  = t3 + rtt / 2u;
+    *epoch         = lbr_get_u16(payload + 24);
     return true;
 }
 

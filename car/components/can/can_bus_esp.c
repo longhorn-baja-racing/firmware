@@ -10,9 +10,11 @@
 #include "esp_twai_onchip.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lbr/nodes.h"
 #include "sdkconfig.h"
+#include "soc/soc_caps.h"
 
 static const char *TAG = "lbr_can";
 
@@ -38,7 +40,18 @@ static TaskHandle_t       s_sync_waiter;
 static uint64_t           s_sync_tx_us; /* guarded by s_sync_mux */
 static uint8_t            s_sync_tx_seq;
 static portMUX_TYPE       s_sync_mux = portMUX_INITIALIZER_UNLOCKED;
-static uint32_t           s_sync_id;
+
+/* Slots handed to the driver, oldest first (the order it transmits them).
+ * On the classic ESP32 a bus-off silently drops the frame in the controller:
+ * the driver never reports it done, so recovery reclaims the oldest slot
+ * here instead of leaking it (one per bus-off, until no slot is left). */
+static uint8_t           s_inflight[MAX_TX_SLOTS];
+static size_t            s_inflight_head, s_inflight_len;
+static portMUX_TYPE      s_inflight_mux = portMUX_INITIALIZER_UNLOCKED;
+static SemaphoreHandle_t s_tx_lock; /* keeps s_inflight in the driver's queue order */
+
+static void     inflight_remove(uint8_t idx);
+static uint32_t s_sync_id;
 
 static atomic_uint s_tx_frames;
 static atomic_uint s_rx_frames;
@@ -116,11 +129,32 @@ static bool IRAM_ATTR on_tx_done(twai_node_handle_t handle, const twai_tx_done_e
     for (size_t i = 0; i < s_slot_count; i++) {
         if (done == &s_slots[i].frame) {
             uint8_t idx = (uint8_t)i;
+            inflight_remove(idx);
             xQueueSendFromISR(s_free_slots, &idx, &woken);
             break;
         }
     }
     return woken == pdTRUE;
+}
+
+/* Forget a finished slot (normally the oldest). ISR or task context. */
+static void IRAM_ATTR inflight_remove(uint8_t idx)
+{
+    portENTER_CRITICAL_SAFE(&s_inflight_mux);
+    for (size_t k = 0; k < s_inflight_len; k++) {
+        size_t at = (s_inflight_head + k) % MAX_TX_SLOTS;
+        if (s_inflight[at] != idx) {
+            continue;
+        }
+        for (size_t m = k; m > 0; m--) { /* close the gap, keeping the order */
+            s_inflight[(s_inflight_head + m) % MAX_TX_SLOTS] =
+                s_inflight[(s_inflight_head + m - 1u) % MAX_TX_SLOTS];
+        }
+        s_inflight_head = (s_inflight_head + 1u) % MAX_TX_SLOTS;
+        s_inflight_len--;
+        break;
+    }
+    portEXIT_CRITICAL_SAFE(&s_inflight_mux);
 }
 
 static bool IRAM_ATTR on_state_change(twai_node_handle_t                    handle,
@@ -134,6 +168,23 @@ static bool IRAM_ATTR on_state_change(twai_node_handle_t                    hand
         atomic_store(&s_running, false);
         vTaskNotifyGiveFromISR(s_recover_task, &woken);
     } else if (ed->old_sta == TWAI_ERROR_BUS_OFF && ed->new_sta == TWAI_ERROR_ACTIVE) {
+#if !SOC_HAS(TWAI_FD)
+        /* The frame that was in the controller at bus-off is gone without a
+         * TX-done (twai_hal_v1); the driver restarts with the next queued
+         * one. Reclaim its slot and count it as failed. */
+        portENTER_CRITICAL_ISR(&s_inflight_mux);
+        bool    lost = s_inflight_len > 0;
+        uint8_t idx  = lost ? s_inflight[s_inflight_head] : 0u;
+        if (lost) {
+            s_inflight_head = (s_inflight_head + 1u) % MAX_TX_SLOTS;
+            s_inflight_len--;
+        }
+        portEXIT_CRITICAL_ISR(&s_inflight_mux);
+        if (lost) {
+            atomic_fetch_add(&s_tx_failed, 1);
+            xQueueSendFromISR(s_free_slots, &idx, &woken);
+        }
+#endif
         atomic_store(&s_running, true);
     }
     return woken == pdTRUE;
@@ -174,9 +225,10 @@ lbr_can_err_t lbr_can_bus_start(const lbr_can_bus_config_t *cfg)
     if (s_slot_count > MAX_TX_SLOTS) {
         s_slot_count = MAX_TX_SLOTS;
     }
+    s_tx_lock    = xSemaphoreCreateMutex();
     s_rx_q       = xQueueCreate(cfg->rx_queue_len, sizeof(lbr_can_rx_t));
     s_free_slots = xQueueCreate(s_slot_count, sizeof(uint8_t));
-    if (s_rx_q == NULL || s_free_slots == NULL) {
+    if (s_rx_q == NULL || s_free_slots == NULL || s_tx_lock == NULL) {
         return LBR_CAN_ERR_NO_MEM;
     }
     for (size_t i = 0; i < s_slot_count; i++) {
@@ -240,8 +292,13 @@ lbr_can_err_t lbr_can_bus_start(const lbr_can_bus_config_t *cfg)
 bool lbr_can_bus_send(const lbr_can_frame_t *f)
 {
     uint8_t idx;
-    if (s_node == NULL || !atomic_load(&s_running) || f->dlc > 8 ||
-        xQueueReceive(s_free_slots, &idx, 0) != pdTRUE) {
+    if (s_node == NULL || !atomic_load(&s_running) || f->dlc > 8) {
+        atomic_fetch_add(&s_tx_dropped, 1);
+        return false;
+    }
+    xSemaphoreTake(s_tx_lock, portMAX_DELAY);
+    if (xQueueReceive(s_free_slots, &idx, 0) != pdTRUE) {
+        xSemaphoreGive(s_tx_lock);
         atomic_fetch_add(&s_tx_dropped, 1);
         return false;
     }
@@ -252,11 +309,18 @@ bool lbr_can_bus_send(const lbr_can_frame_t *f)
         .buffer     = slot->data,
         .buffer_len = f->dlc,
     };
+    portENTER_CRITICAL(&s_inflight_mux);
+    s_inflight[(s_inflight_head + s_inflight_len) % MAX_TX_SLOTS] = idx;
+    s_inflight_len++;
+    portEXIT_CRITICAL(&s_inflight_mux);
     if (twai_node_transmit(s_node, &slot->frame, 0) != ESP_OK) {
+        inflight_remove(idx);
         xQueueSend(s_free_slots, &idx, 0);
+        xSemaphoreGive(s_tx_lock);
         atomic_fetch_add(&s_tx_dropped, 1);
         return false;
     }
+    xSemaphoreGive(s_tx_lock);
     return true;
 }
 
