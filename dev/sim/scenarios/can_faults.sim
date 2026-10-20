@@ -1,24 +1,33 @@
 # CAN wiring and bus faults: a node unplugged from the bus is reported lost
 # and found again; bus-off recovers on its own; a noisy bus costs
 # retransmissions but no data.
-at 3.0  disconnect imu_gps
-at 7.0  expect imu_gps seen == 0
-at 7.0  expect gateway event:NODE_LOST >= 1
-at 7.0  expect suspension seen == 1
-at 8.0  connect imu_gps
-at 9.0  expect imu_gps seen == 1
+at 3.0  disconnect powertrain
+at 7.0  expect powertrain seen == 0
+at 7.0  expect central event:NODE_LOST >= 1
+at 7.0  expect stress seen == 1
+at 8.0  connect powertrain
+at 9.0  expect powertrain seen == 1
 
-at 10.0 busoff suspension
-at 12.0 expect suspension event:CAN_BUS_OFF >= 1
-at 12.0 expect suspension bus_off == 1
-at 13.0 expect suspension state == RUN
+at 10.0 busoff stress
+at 12.0 expect stress event:CAN_BUS_OFF >= 1
+at 12.0 expect stress bus_off == 1
+at 13.0 expect stress state == RUN
 
-at 14.0 noise 20
-at 18.0 expect bus errors > 50
-at 18.0 expect all seen == 1
-at 18.0 expect all synced == 1
-at 18.0 expect all sync_err_us < 100
-at 18.0 noise 0
-at 18.0 expect gateway log_dropped == 0
-at 18.0 expect log intact == 1
-end 18.0
+# The IMU Controller unplugged: the corners keep sampling and stay linked
+# over WiFi, but their data cannot reach CAN until it is back.
+at 13.0 disconnect imu
+at 17.0 expect imu seen == 0
+at 17.0 expect corners link == 1
+at 17.0 connect imu
+at 18.0 expect imu seen == 1
+at 18.0 expect IMU_FL_ACCEL_X age_ms < 100
+
+at 18.0 noise 20
+at 22.0 expect bus errors > 50
+at 22.0 expect can seen == 1
+at 22.0 expect can synced == 1
+at 22.0 expect can sync_err_us < 100
+at 22.0 noise 0
+at 22.0 expect central log_dropped == 0
+at 22.0 expect log intact == 1
+end 22.0

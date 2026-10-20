@@ -21,7 +21,7 @@ typedef struct {
     int      rx_gpio;      /* -1 = not configured (pins TBD) */
     size_t   rx_queue_len; /* frames */
     size_t   tx_queue_len; /* frames */
-    bool     accept_all;   /* false: hardware filter passes only gateway system frames */
+    bool     accept_all;   /* false: hardware filter passes only the Central's ids 0x000..0x01F */
 } lbr_can_bus_config_t;
 
 typedef struct {
@@ -47,7 +47,7 @@ bool lbr_can_bus_send(const lbr_can_frame_t *f);
 /* Wait up to `timeout_ms` for a received frame. */
 bool lbr_can_bus_receive(lbr_can_rx_t *out, uint32_t timeout_ms);
 
-/* Gateway time sync: call arm from the sync task before sending TIME_SYNC,
+/* Central time sync: call arm from the sync task before sending TIME_SYNC,
  * then wait returns the local monotonic time at which the TIME_SYNC with
  * `sync_seq` finished transmitting (captured in the TX-done ISR), for the
  * FOLLOW_UP. Completions of other (older, retried) sync frames are ignored. */

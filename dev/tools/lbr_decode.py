@@ -4,13 +4,14 @@
 This is an independent implementation of the formats in docs/protocol.md,
 written from the spec rather than from the firmware source. It serves as
   - a bench tool: read a session log, decode a captured USB/WiFi stream, or
-    talk to the gateway over USB serial (needs pyserial);
+    talk to the Central Controller over USB serial (needs pyserial);
   - a cross-check: --selftest decodes every golden fixture in dev/tests/fixtures
     and compares the result with the expected JSON the firmware produced.
     lbr-dashboard should pass the same fixtures with its own decoder.
 
-The decoder is schema-driven: names, value types, units, events, and
-reasons come from catalog.json, never from tables in this file.
+The decoder is schema-driven: names, value types, units, events, reasons,
+and every CAN data frame layout (the frame table) come from catalog.json,
+never from tables in this file.
 
 Usage:
   lbr_decode.py log FILE.lbr [--json]
@@ -39,12 +40,12 @@ PKT_HEADER = 16
 PKT_CRC = 4
 PKT_VERSION = 1
 
-CAN_KIND_SAMPLE = 0
-CAN_KIND_SYSTEM = 1
-SYS_TIME_SYNC = 0x0001
-SYS_TIME_FOLLOW_UP = 0x0002
-SYS_HEALTH_BASE = 0x0100
 HEALTH_PAGES = 12
+REC_FLAG_EXT = 0x01
+ENC_SIZE = {"i16": 2, "u16": 2, "u8": 1, "i32": 4, "u32": 4}
+# Raw value of reason 0 per encoding: 8 reserved values from here up.
+ENC_UNAVAIL = {"i16": -32768, "u16": 0xFFF8, "u8": 0xF8, "i32": -2147483648, "u32": 0xFFFFFFF8}
+ENC_FMT = {"i16": "<h", "u16": "<H", "u8": "<B", "i32": "<i", "u32": "<I"}
 
 REC_NAMES = {1: "SESSION", 2: "SAMPLE", 3: "HEALTH", 4: "CAN_FRAME", 5: "LOSS", 6: "TEXT",
              7: "END"}
@@ -56,8 +57,17 @@ def crc32(data, crc=0):
     return zlib.crc32(data, crc) & 0xFFFFFFFF
 
 
+def f32(x):
+    """Round a Python float to IEEE single precision."""
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def f32_bits(x):
+    return struct.unpack("<I", struct.pack("<f", x))[0]
+
+
 class Catalog:
-    """Signal metadata loaded from catalog.json (the shared schema)."""
+    """Signal and frame metadata loaded from catalog.json (the shared schema)."""
 
     def __init__(self, path):
         with open(path) as f:
@@ -67,20 +77,36 @@ class Catalog:
         self.reasons = self.raw["unavailable_reasons"]
         self.events = {e["code"]: e["name"] for e in self.raw["events"]}
         self.event_ids = {s["id"] for s in self.raw["signals"] if s["name"] in ("EVENT", "FAULT")}
+        self.by_name = {s["name"]: s["id"] for s in self.raw["signals"]}
+        self.frames = {f["id"]: f for f in self.raw["frames"]}
+        for f in self.raw["frames"]:
+            for fd in f["fields"]:
+                fd["scale32"] = f32(fd["scale"])
+        self.ids = self.raw["can_ids"]
+        self.nodes = {n["id"]: n["name"] for n in self.raw["nodes"]}
 
     def computed_hash(self):
         crc = 0
         for s in self.raw["signals"]:
-            rec = struct.pack("<HBBB", s["id"], self.types.index(s["type"]),
-                              self.raw["units"].index(s["unit"]), s["can_prio"])
+            rec = struct.pack("<HBB", s["id"], self.types.index(s["type"]),
+                              self.raw["units"].index(s["unit"]))
             crc = crc32(rec, crc)
             crc = crc32(s["name"].encode("ascii") + b"\0", crc)
+        for f in self.raw["frames"]:
+            cnt = 0xFF if f["counter_offset"] is None else f["counter_offset"]
+            crc = crc32(struct.pack("<HBBHBBB", f["id"], f["sender"], f["origin"], f["rate_hz"],
+                                    f["dlc"], cnt, len(f["fields"])), crc)
+            for fd in f["fields"]:
+                crc = crc32(struct.pack("<HBBI", fd["signal"], fd["offset"],
+                                        self.raw["encodings"].index(fd["enc"]),
+                                        f32_bits(fd["scale"])), crc)
+            crc = crc32(f["name"].encode("ascii") + b"\0", crc)
         return crc
 
-    def sample_dict(self, signal, source, type_name, valid, synced, seq_short, seq, t_us, bits):
+    def sample_dict(self, signal, source, type_name, valid, synced, seq_inferred, seq, t_us, bits):
         info = self.signals.get(signal)
         d = {"signal": signal, "name": info["name"] if info else "?", "source": source,
-             "type": type_name, "valid": valid, "synced": synced, "seq_short": seq_short,
+             "type": type_name, "valid": valid, "synced": synced, "seq_inferred": seq_inferred,
              "seq": seq, "t_us": t_us, "value_bits": "%08x" % bits}
         if not valid:
             d["reason"] = self.reasons[bits] if bits < len(self.reasons) else "?"
@@ -110,7 +136,7 @@ class Catalog:
 # Records
 
 
-def decode_sample(cat, b):
+def decode_sample(cat, b):  # 20-byte SAMPLE record
     signal, source, tf, seq, t_us, bits = struct.unpack_from("<HBBIQI", b)
     if tf & 0x80 or (tf & 0x0F) >= len(cat.types):
         raise ValueError("bad sample flags")
@@ -159,36 +185,144 @@ def unwrap24(t_lo, ref):
     return max(ref - d, 0)
 
 
-def decode_can_frame(cat, t_us, flags, can_id, dlc, data):
-    prio, kind, source, sub = (can_id >> 26) & 7, (can_id >> 24) & 3, (can_id >> 16) & 0xFF, can_id & 0xFFFF
-    d = {"t_us": t_us, "flags": flags, "id": can_id, "prio": prio, "kind": kind, "source": source,
-         "sub": sub, "dlc": dlc, "data": data[:dlc].hex()}
-    if kind == CAN_KIND_SAMPLE and dlc == 8 and source != 0:
-        b7 = data[7]
-        info = cat.signals.get(sub)
-        bits = struct.unpack_from("<I", data)[0]
-        t_lo = data[4] | data[5] << 8 | data[6] << 16
-        d["sample"] = cat.sample_dict(sub, source, info["type"] if info else "raw",
-                                      bool(b7 & 0x80), bool(b7 & 0x40), True, b7 & 0x3F,
-                                      unwrap24(t_lo, t_us), bits)
-    elif kind == CAN_KIND_SYSTEM and sub == SYS_TIME_SYNC and dlc >= 3:
-        d["time_sync"] = {"seq": data[0], "epoch": data[1] | data[2] << 8}
-    elif kind == CAN_KIND_SYSTEM and sub == SYS_TIME_FOLLOW_UP and dlc == 8:
+def grid_index(counter, rx_us, period):
+    """The grid index nearest the receive time whose low 16 bits are `counter`."""
+    k_rx = rx_us // period
+    d = (k_rx - counter) & 0xFFFF
+    if d >= 0x8000:
+        d -= 0x10000
+    k = k_rx - d
+    return counter if k < 0 else k
+
+
+class BusDecoder:
+    """Which nodes' clocks are on the shared time base, from the heartbeats
+    and CORNER_STATUS seen so far (docs/can-ids.md)."""
+
+    NOT_SYNCED = 0x01
+
+    def __init__(self, cat):
+        self.cat = cat
+        self.hb = {}
+        self.corner_synced = None
+        self.central = central_id(cat)
+        self.imu = next(i for i, n in cat.nodes.items() if n == "imu")
+        self.corners = [next(i for i, n in cat.nodes.items() if n == "corner_" + c)
+                        for c in ("fl", "fr", "bl", "br")]
+
+    def node_synced(self, node):
+        if node == self.central:
+            return True
+        return node in self.hb and not (self.hb[node] & self.NOT_SYNCED)
+
+    def synced(self, origin):
+        if origin in self.corners:
+            bit = 1 << self.corners.index(origin)
+            return (self.corner_synced is not None and bool(self.corner_synced & bit)
+                    and self.node_synced(self.imu))
+        return self.node_synced(origin)
+
+
+def is_can_node(cat, node):
+    return 1 <= node <= 6
+
+
+def decode_field(cat, fd, data):
+    enc = fd["enc"]
+    raw = struct.unpack_from(ENC_FMT[enc], data, fd["offset"])[0]
+    info = cat.signals.get(fd["signal"])
+    type_name = info["type"] if info else "raw"
+    base = ENC_UNAVAIL[enc]
+    if base <= raw < base + 8:
+        return type_name, False, raw - base
+    if type_name == "f32":
+        return type_name, True, f32_bits(raw * fd["scale32"])
+    if type_name == "bool":
+        return type_name, True, 1 if raw else 0
+    return type_name, True, raw & 0xFFFFFFFF
+
+
+def decode_data_frame(cat, dec, f, t_us, data):
+    period = 1000000 // f["rate_hz"]
+    infer = f["counter_offset"] is None
+    if infer:
+        k = t_us // period
+    else:
+        k = grid_index(struct.unpack_from("<H", data, f["counter_offset"])[0], t_us, period)
+    synced = dec.synced(f["origin"])
+    out = []
+    for fd in f["fields"]:
+        type_name, valid, bits = decode_field(cat, fd, data)
+        out.append(cat.sample_dict(fd["signal"], f["origin"], type_name, valid, synced, infer,
+                                   k & 0xFFFFFFFF, k * period, bits))
+    return out
+
+
+def can_sender(cat, can_id):
+    ids = cat.ids
+    if can_id > 0x7FF:
+        return 0
+    if can_id in (ids["time_sync"], ids["time_follow_up"], ids["command"]):
+        return central_id(cat)
+    for base in (ids["event_base"], ids["heartbeat_base"]):
+        if base < can_id <= base + 6:
+            return can_id - base
+    if can_id >= ids["health_base"]:
+        node, page = (can_id - ids["health_base"]) >> 4, can_id & 0xF
+        return node if is_can_node(cat, node) and page < HEALTH_PAGES else 0
+    f = cat.frames.get(can_id)
+    return f["sender"] if f else 0
+
+
+def central_id(cat):
+    return next(i for i, n in cat.nodes.items() if n == "central")
+
+
+def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
+    ext = bool(flags & REC_FLAG_EXT)
+    d = {"t_us": t_us, "flags": flags, "id": can_id,
+         "sender": 0 if ext else can_sender(cat, can_id), "dlc": dlc, "data": data[:dlc].hex()}
+    if ext:
+        return d  # not LBR traffic
+    ids = cat.ids
+    if ids["heartbeat_base"] < can_id <= ids["heartbeat_base"] + 6 and dlc == 2:
+        dec.hb[can_id - ids["heartbeat_base"]] = data[1]
+        d["heartbeat"] = {"state": data[0], "err_flags": data[1]}
+    elif ids["event_base"] < can_id <= ids["event_base"] + 6 and dlc == 8:
+        fl = data[4]
+        sig = cat.by_name["FAULT" if fl & 1 else "EVENT"]
+        t_lo = data[5] | data[6] << 8 | data[7] << 16
+        d["samples"] = [cat.sample_dict(sig, can_id - ids["event_base"], "status", True,
+                                        bool(fl & 2), False, (fl >> 2) & 0x3F,
+                                        unwrap24(t_lo, t_us), struct.unpack_from("<I", data)[0])]
+    elif can_id in cat.frames and dlc == cat.frames[can_id]["dlc"]:
+        d["samples"] = decode_data_frame(cat, dec, cat.frames[can_id], t_us, data)
+        for smp in d["samples"]:
+            if smp["name"] == "CORNER_SYNCED":
+                dec.corner_synced = int(smp["value_bits"], 16) if smp["valid"] else 0
+    elif can_id == ids["time_sync"] and dlc == 8:
+        d["time_sync"] = {"seq": data[4], "epoch": data[5] | data[6] << 8,
+                          "ms": struct.unpack_from("<I", data)[0]}
+    elif can_id == ids["time_follow_up"] and dlc == 8:
         d["time_follow_up"] = {"seq": data[0], "tx_us": struct.unpack_from("<Q", data)[0] >> 8}
-    elif kind == CAN_KIND_SYSTEM and SYS_HEALTH_BASE <= sub < SYS_HEALTH_BASE + HEALTH_PAGES and dlc == 8:
-        try:
-            decode_health_page(sub - SYS_HEALTH_BASE, data, {})
-            d["health_page"] = sub - SYS_HEALTH_BASE
-        except ValueError:
-            pass
+    elif can_id == ids["command"] and dlc == 8:
+        d["command"] = {"code": data[0], "args": data[1:8].hex()}
+    elif can_id >= ids["health_base"] and dlc == 8:
+        node, page = (can_id - ids["health_base"]) >> 4, can_id & 0xF
+        if is_can_node(cat, node) and page < HEALTH_PAGES:
+            try:
+                decode_health_page(page, data, {})
+                d["health_page"] = page
+            except ValueError:
+                pass
     return d
 
 
-def decode_can_record(cat, b):
+def decode_can_record(cat, dec, b):
     t_us, can_id, flags, dlc = struct.unpack_from("<QIBB", b)
     if dlc > 8:
         raise ValueError("bad dlc")
-    return decode_can_frame(cat, t_us, flags, can_id, dlc, b[14:22])
+    return decode_can_frame(cat, dec, t_us, flags, can_id, dlc, b[14:22])
 
 
 # --------------------------------------------------------------------------
@@ -250,7 +384,7 @@ class LogReader:
                 return
 
 
-def decode_log_record(cat, offset, rtype, p):
+def decode_log_record(cat, dec, offset, rtype, p):
     d = {"offset": offset, "type": REC_NAMES.get(rtype, "?")}
     if rtype == 1:
         (fmt, proto, fw, chash, ccrc, node, reset, _, boots, start) = struct.unpack_from("<HHIIIBBHIQ", p)
@@ -263,7 +397,7 @@ def decode_log_record(cat, offset, rtype, p):
     elif rtype == REC_HEALTH:
         d["health"] = decode_health(p)
     elif rtype == REC_CAN_FRAME:
-        d["frame"] = decode_can_record(cat, p)
+        d["frame"] = decode_can_record(cat, dec, p)
     elif rtype == 5:
         recs, nbytes, t = struct.unpack_from("<IIQ", p)
         d.update({"dropped_records": recs, "dropped_bytes": nbytes, "t_us": t})
@@ -277,7 +411,8 @@ def decode_log_record(cat, offset, rtype, p):
 
 def decode_log(cat, data):
     r = LogReader(data)
-    records = [decode_log_record(cat, off, t, p) for off, t, p in r]
+    dec = BusDecoder(cat)
+    records = [decode_log_record(cat, dec, off, t, p) for off, t, p in r]
     return {"records": records, "truncated_tail": r.truncated_tail,
             "corrupt_regions": r.corrupt_regions, "skipped_bytes": r.skipped_bytes}
 
@@ -329,12 +464,12 @@ def iter_frames(data):
             start = i + 1
 
 
-def decode_packet_records(cat, records):
+def decode_packet_records(cat, dec, records):
     out = []
     for rtype, p in records:
         d = {"type": rtype, "len": len(p)}
         if rtype == REC_CAN_FRAME:
-            d["frame"] = decode_can_record(cat, p)
+            d["frame"] = decode_can_record(cat, dec, p)
         elif rtype == REC_TEXT:
             d["text"] = p.decode("latin-1")
         out.append(d)
@@ -343,13 +478,14 @@ def decode_packet_records(cat, records):
 
 def decode_stream(cat, data):
     packets, bad = [], 0
+    dec = BusDecoder(cat)
     for frame in iter_frames(data):
         try:
             hdr, records = parse_packet(cobs_decode(frame))
         except ValueError:
             bad += 1
             continue
-        hdr["records"] = decode_packet_records(cat, records)
+        hdr["records"] = decode_packet_records(cat, dec, records)
         packets.append(hdr)
     return {"packets": packets, "bad_frames": bad}
 
@@ -381,7 +517,8 @@ def selftest(fixtures):
     checks.append(("health", got == expect("health.json")))
 
     data = read("can_capture.bin")
-    got = {"record_size": 22, "frames": [decode_can_record(cat, data[i:i + 22])
+    dec = BusDecoder(cat)
+    got = {"record_size": 22, "frames": [decode_can_record(cat, dec, data[i:i + 22])
                                          for i in range(0, len(data), 22)]}
     checks.append(("can capture", got == expect("can_capture.json")))
 
@@ -399,8 +536,8 @@ def selftest(fixtures):
 
 def print_sample(cat, d, prefix=""):
     print("%s%12d us  %-14s %-18s = %s%s" % (
-        prefix, d["t_us"], "node %d" % d["source"], d["name"], cat.value(d),
-        "" if d["synced"] else "  [unsynced time]"))
+        prefix, d["t_us"], cat.nodes.get(d["source"], "node %d" % d["source"]), d["name"],
+        cat.value(d), "" if d["synced"] else "  [unsynced time]"))
 
 
 def cmd_log(cat, path, as_json):
@@ -412,8 +549,9 @@ def cmd_log(cat, path, as_json):
     for r in out["records"]:
         if r["type"] == "SAMPLE":
             print_sample(cat, r["sample"])
-        elif r["type"] == "CAN_FRAME" and "sample" in r["frame"]:
-            print_sample(cat, r["frame"]["sample"], "can ")
+        elif r["type"] == "CAN_FRAME" and "samples" in r["frame"]:
+            for smp in r["frame"]["samples"]:
+                print_sample(cat, smp, "can ")
         elif r["type"] == "TEXT":
             print("text  %s" % r["text"])
         elif r["type"] != "CAN_FRAME":
@@ -439,6 +577,7 @@ def cmd_serial(cat, port, baud, cmd, out_path):
         link.write((cmd + "\n").encode("ascii"))
     out = open(out_path, "wb") if out_path else None
     buf, last_seq = bytearray(), None
+    dec = BusDecoder(cat)
     try:
         while True:
             buf += link.read(4096)
@@ -458,9 +597,9 @@ def cmd_serial(cat, port, baud, cmd, out_path):
                     if rtype == REC_TEXT:
                         print(p.decode("latin-1"))
                     elif rtype == REC_CAN_FRAME:
-                        d = decode_can_record(cat, p)
-                        if "sample" in d:
-                            print_sample(cat, d["sample"])
+                        d = decode_can_record(cat, dec, p)
+                        for smp in d.get("samples", []):
+                            print_sample(cat, smp)
                     elif rtype == REC_FILE_INFO:
                         print("%-14s %10d bytes" % (p[4:].decode("ascii"), struct.unpack_from("<I", p)[0]))
                     elif rtype == REC_FILE_CHUNK and out:

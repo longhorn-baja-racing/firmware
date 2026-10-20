@@ -143,7 +143,7 @@ static void test_lora_priorities(void)
     CHECK(lbr_lora_policy_build(&p, 3000001, 1, 4, buf, sizeof buf) > 0);
 
     /* Signals outside the subset never go out. */
-    lbr_sample_t acc = sample(LBR_SIG_ACCEL_X, 1);
+    lbr_sample_t acc = sample(LBR_SIG_IMU_CH_ACCEL_X, 1);
     lbr_lora_policy_offer_sample(&p, &acc);
     CHECK_EQ_U(lbr_lora_policy_build(&p, 9000000, 1, 5, buf, sizeof buf), 0u);
 }
@@ -188,10 +188,10 @@ static void test_lora_event_queue_bounds(void)
 static void test_lora_round_robin_fills_packet(void)
 {
     static const lbr_lora_item_t items[] = {
-        {LBR_SIG_STRAIN_1, 0},   {LBR_SIG_STRAIN_2, 0},   {LBR_SIG_STRAIN_3, 0},
-        {LBR_SIG_STRAIN_4, 0},   {LBR_SIG_STRAIN_5, 0},   {LBR_SIG_STRAIN_6, 0},
-        {LBR_SIG_STRAIN_7, 0},   {LBR_SIG_STRAIN_8, 0},   {LBR_SIG_TEMP_AUX_1, 0},
-        {LBR_SIG_TEMP_AUX_2, 0}, {LBR_SIG_TEMP_AUX_3, 0}, {LBR_SIG_TEMP_AUX_4, 0},
+        {LBR_SIG_STRESS_1, 0},      {LBR_SIG_STRESS_2, 0},      {LBR_SIG_STRESS_3, 0},
+        {LBR_SIG_STRESS_4, 0},      {LBR_SIG_STRESS_5, 0},      {LBR_SIG_STRESS_6, 0},
+        {LBR_SIG_STRESS_7, 0},      {LBR_SIG_STRESS_8, 0},      {LBR_SIG_TEMP_BRAKE_FL, 0},
+        {LBR_SIG_TEMP_BRAKE_FR, 0}, {LBR_SIG_TEMP_BRAKE_BL, 0}, {LBR_SIG_TEMP_BRAKE_BR, 0},
     };
     lbr_lora_policy_t p;
     lbr_lora_policy_init(&p, items, 12, 1000);

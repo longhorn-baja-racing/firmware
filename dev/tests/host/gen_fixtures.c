@@ -19,6 +19,7 @@
 #include "lbr/bytes.h"
 #include "lbr/can.h"
 #include "lbr/cobs.h"
+#include "lbr/frames.h"
 #include "lbr/health.h"
 #include "lbr/logging.h"
 #include "lbr/nodes.h"
@@ -100,8 +101,8 @@ static void json_sample(buf_t *b, const lbr_sample_t *s)
     json_str(b, info ? info->name : "?", strlen(info ? info->name : "?"));
     jf(b, ", \"source\": %u, \"type\": \"%s\", \"valid\": %s, \"synced\": %s, ", s->source,
        lbr_value_type_name(s->type), s->valid ? "true" : "false", s->synced ? "true" : "false");
-    jf(b, "\"seq_short\": %s, \"seq\": %lu, \"t_us\": %llu, \"value_bits\": \"%08lx\"",
-       s->seq_short ? "true" : "false", (unsigned long)s->seq, (unsigned long long)s->t_mono_us,
+    jf(b, "\"seq_inferred\": %s, \"seq\": %lu, \"t_us\": %llu, \"value_bits\": \"%08lx\"",
+       s->seq_inferred ? "true" : "false", (unsigned long)s->seq, (unsigned long long)s->t_mono_us,
        (unsigned long)lbr_sample_value_bits(s));
     if (!s->valid) {
         jf(b, ", \"reason\": \"%s\"", lbr_unavail_reason_name((lbr_unavail_reason_t)s->v.u32));
@@ -140,25 +141,44 @@ static void json_health(buf_t *b, const lbr_health_record_t *h)
        (unsigned long)h->time_step_count, (long)h->last_sync_error_us);
 }
 
-static void json_can_frame(buf_t *b, uint64_t t_us, uint8_t flags, const lbr_can_frame_t *f)
+/* Decode a frame as the Central's live views do. `dec` carries the sync
+ * state across a capture (heartbeats, CORNER_STATUS), as a reader must. */
+static void json_can_frame(buf_t *b, lbr_bus_decoder_t *dec, uint64_t t_us, uint8_t flags,
+                           const lbr_can_frame_t *f)
 {
-    lbr_can_id_t id = lbr_can_id_parse(f->id);
-    jf(b, "{\"t_us\": %llu, \"flags\": %u, \"id\": %lu, \"prio\": %u, \"kind\": %u, ",
-       (unsigned long long)t_us, flags, (unsigned long)f->id, id.prio, id.kind);
-    jf(b, "\"source\": %u, \"sub\": %u, \"dlc\": %u, \"data\": ", id.source, id.sub, f->dlc);
+    jf(b, "{\"t_us\": %llu, \"flags\": %u, \"id\": %lu, \"sender\": %u, \"dlc\": %u, \"data\": ",
+       (unsigned long long)t_us, flags, (unsigned long)f->id,
+       (flags & LBR_CAN_REC_FLAG_EXT) ? 0u : lbr_can_sender(f->id), f->dlc);
     json_hex(b, f->data, f->dlc);
-    lbr_sample_t        s;
+    if (flags & LBR_CAN_REC_FLAG_EXT) {
+        jf(b, "}"); /* not LBR traffic */
+        return;
+    }
     lbr_health_record_t h = {0};
-    uint8_t             seq;
+    uint8_t             seq, code, state, hbf;
+    uint8_t             args[7];
     uint16_t            epoch;
     uint64_t            tx;
-    if (lbr_can_decode_sample(f, t_us, &s)) {
-        jf(b, ", \"sample\": ");
-        json_sample(b, &s);
+    lbr_sample_t        s[LBR_FRAME_MAX_FIELDS];
+    size_t              n = lbr_bus_decode(dec, f, t_us, s, LBR_FRAME_MAX_FIELDS);
+    if (n > 0) {
+        jf(b, ", \"samples\": [");
+        for (size_t i = 0; i < n; i++) {
+            jf(b, "%s", i ? ", " : "");
+            json_sample(b, &s[i]);
+        }
+        jf(b, "]");
+    } else if (lbr_can_decode_heartbeat(f, &state, &hbf) != 0) {
+        jf(b, ", \"heartbeat\": {\"state\": %u, \"err_flags\": %u}", state, hbf);
     } else if (lbr_can_decode_time_sync(f, &seq, &epoch)) {
-        jf(b, ", \"time_sync\": {\"seq\": %u, \"epoch\": %u}", seq, epoch);
+        jf(b, ", \"time_sync\": {\"seq\": %u, \"epoch\": %u, \"ms\": %lu}", seq, epoch,
+           (unsigned long)lbr_get_u32(f->data));
     } else if (lbr_can_decode_time_follow_up(f, &seq, &tx)) {
         jf(b, ", \"time_follow_up\": {\"seq\": %u, \"tx_us\": %llu}", seq, (unsigned long long)tx);
+    } else if (lbr_can_decode_command(f, &code, args)) {
+        jf(b, ", \"command\": {\"code\": %u, \"args\": ", code);
+        json_hex(b, args, 7);
+        jf(b, "}");
     } else {
         int page = lbr_can_decode_health_page(f, &h);
         if (page >= 0) {
@@ -191,21 +211,21 @@ static lbr_sample_t mk(lbr_signal_id_t sig, uint8_t src, uint32_t seq, uint64_t 
 static size_t sample_set(lbr_sample_t *out)
 {
     size_t n       = 0;
-    out[n]         = mk(LBR_SIG_ACCEL_Z, LBR_NODE_IMU_GPS, 0, 1000000);
+    out[n]         = mk(LBR_SIG_IMU_CH_ACCEL_Z, LBR_NODE_IMU, 0, 1000000);
     out[n++].v.f32 = -9.80665f;
-    out[n]         = mk(LBR_SIG_GPS_LATITUDE, LBR_NODE_IMU_GPS, 1, 1000100);
+    out[n]         = mk(LBR_SIG_GPS_LATITUDE, LBR_NODE_CENTRAL, 1, 1000100);
     out[n++].v.i32 = 302849870; /* 30.2849870 N */
-    out[n]         = mk(LBR_SIG_GPS_SATELLITES, LBR_NODE_IMU_GPS, 2, 1000200);
+    out[n]         = mk(LBR_SIG_GPS_SATELLITES, LBR_NODE_CENTRAL, 2, 1000200);
     out[n++].v.u32 = 11;
-    out[n]         = mk(LBR_SIG_BRAKE_SWITCH, LBR_NODE_DRIVER_INPUTS, 0xFFFFFFFFu, 2000000);
+    out[n]         = mk(LBR_SIG_DASH_LINK, LBR_NODE_CENTRAL, 0xFFFFFFFFu, 2000000);
     out[n++].v.b   = true;
-    out[n]         = mk(LBR_SIG_GPS_FIX, LBR_NODE_IMU_GPS, 3, 2000300);
+    out[n]         = mk(LBR_SIG_GPS_FIX, LBR_NODE_CENTRAL, 3, 2000300);
     out[n++].v.u32 = 3;
     out[n]         = mk(LBR_SIG_TEMP_CVT, LBR_NODE_TEMPERATURE, 7, 3000000);
     lbr_sample_set_unavailable(&out[n++], LBR_UNAVAIL_NOT_FITTED);
-    out[n]         = mk(LBR_SIG_FAULT, LBR_NODE_GATEWAY, 0, 4000000);
+    out[n]         = mk(LBR_SIG_FAULT, LBR_NODE_CENTRAL, 0, 4000000);
     out[n++].v.u32 = lbr_event_value(LBR_EVT_NODE_LOST, LBR_NODE_STRESS);
-    out[n]         = mk(LBR_SIG_STRAIN_3, LBR_NODE_STRESS, 123456, 0x0000123456789ABCull);
+    out[n]         = mk(LBR_SIG_STRESS_3, LBR_NODE_STRESS, 123456, 0x0000123456789ABCull);
     out[n].synced  = false;
     out[n++].v.f32 = 412.5f;
     return n;
@@ -220,11 +240,48 @@ static void gen_catalog(buf_t *j)
         const lbr_signal_info_t *s = lbr_signal_at(i);
         jf(j, "    {\"id\": %u, \"name\": \"%s\", \"type\": \"%s\", \"unit\": \"%s\", ",
            (unsigned)s->id, s->name, lbr_value_type_name(s->type), lbr_unit_name(s->unit));
-        jf(j, "\"can_prio\": %u, \"desc\": ", s->can_prio);
+        jf(j, "\"desc\": ");
         json_str(j, s->desc, strlen(s->desc));
         jf(j, "}%s\n", i + 1 < lbr_signal_count() ? "," : "");
     }
-    jf(j, "  ],\n  \"nodes\": [\n");
+    jf(j, "  ],\n  \"frames\": [\n");
+    for (size_t i = 0; i < lbr_frame_count(); i++) {
+        const lbr_frame_def_t *d = lbr_frame_at(i);
+        jf(j, "    {\"id\": %u, \"name\": \"%s\", \"sender\": %u, \"origin\": %u, ", d->can_id,
+           d->name, d->sender, d->origin);
+        jf(j, "\"rate_hz\": %u, \"dlc\": %u, \"counter_offset\": ", d->rate_hz, d->dlc);
+        if (d->counter_offset == LBR_FRAME_NO_COUNTER) {
+            jf(j, "null");
+        } else {
+            jf(j, "%u", d->counter_offset);
+        }
+        jf(j, ", \"fields\": [");
+        for (size_t f = 0; f < d->n_fields; f++) {
+            const lbr_field_def_t *fd = &d->fields[f];
+            jf(j, "%s{\"signal\": %u, \"name\": \"%s\", \"offset\": %u, \"enc\": \"%s\", ",
+               f ? ", " : "", (unsigned)fd->signal, lbr_signal_info(fd->signal)->name, fd->offset,
+               lbr_field_enc_name((lbr_field_enc_t)fd->enc));
+            jf(j, "\"scale\": %.9g}", (double)fd->scale);
+        }
+        jf(j, "]}%s\n", i + 1 < lbr_frame_count() ? "," : "");
+    }
+    jf(j, "  ],\n  \"can_ids\": {\"time_sync\": %u, \"time_follow_up\": %u, \"command\": %u, ",
+       LBR_CAN_ID_TIME_SYNC, LBR_CAN_ID_TIME_FOLLOW_UP, LBR_CAN_ID_COMMAND);
+    jf(j, "\"event_base\": %u, \"heartbeat_base\": %u, \"health_base\": %u, ",
+       LBR_CAN_ID_EVENT_BASE, LBR_CAN_ID_HEARTBEAT_BASE, LBR_CAN_ID_HEALTH_BASE);
+    jf(j, "\"time_sync_hz\": %u, \"bitrate\": 500000},\n", LBR_TIME_SYNC_HZ);
+    jf(j, "  \"encodings\": [");
+    for (unsigned e = 0; e < LBR_ENC_COUNT_; e++) {
+        jf(j, "%s\"%s\"", e ? ", " : "", lbr_field_enc_name((lbr_field_enc_t)e));
+    }
+    jf(j, "],\n  \"heartbeat_err_flags\": {\"NOT_SYNCED\": %u, \"SENSOR\": %u, \"CAN\": %u, ",
+       LBR_HB_ERR_NOT_SYNCED, LBR_HB_ERR_SENSOR, LBR_HB_ERR_CAN);
+    jf(j, "\"CONFIG\": %u, \"STORAGE\": %u, \"SIM\": %u, \"LOSS\": %u, \"LINK\": %u},\n",
+       LBR_HB_ERR_CONFIG, LBR_HB_ERR_STORAGE, LBR_HB_ERR_SIM, LBR_HB_ERR_LOSS, LBR_HB_ERR_LINK);
+    jf(j, "  \"commands\": [{\"code\": %u, \"name\": \"SESSION_START\"}, ", LBR_CMD_SESSION_START);
+    jf(j, "{\"code\": %u, \"name\": \"SESSION_STOP\"}, {\"code\": %u, \"name\": \"MARK\"}],\n",
+       LBR_CMD_SESSION_STOP, LBR_CMD_MARK);
+    jf(j, "  \"nodes\": [\n");
     for (unsigned id = 1; id < 0xFF; id++) {
         const char *name = lbr_node_name((uint8_t)id);
         if (name[0] != '?') {
@@ -274,7 +331,7 @@ static void gen_samples(buf_t *bin, buf_t *j)
 static void gen_health(buf_t *bin, buf_t *j)
 {
     lbr_health_record_t h = {
-        .node_id               = LBR_NODE_SUSPENSION,
+        .node_id               = LBR_NODE_POWERTRAIN,
         .state                 = LBR_NODE_DEGRADED,
         .flags                 = LBR_HF_TIME_SYNCED | LBR_HF_CAN_UP | LBR_HF_CONFIG_VALID,
         .fw_version            = LBR_FW_VERSION,
@@ -313,48 +370,167 @@ static void gen_health(buf_t *bin, buf_t *j)
     jf(j, "}\n");
 }
 
-/* A short bus capture as the gateway records it: one 22-byte record per
- * frame. Receive times straddle a 24-bit timestamp wrap. */
+static lbr_sample_t fv(lbr_signal_id_t sig, float v)
+{
+    lbr_sample_t s = {.signal = sig, .type = LBR_VAL_F32, .valid = true};
+    s.v.f32        = v;
+    return s;
+}
+
+static lbr_sample_t uv(lbr_signal_id_t sig, uint32_t v)
+{
+    const lbr_signal_info_t *info = lbr_signal_info(sig);
+    lbr_sample_t             s    = {.signal = sig, .type = info->type, .valid = true};
+    s.v.u32                       = v;
+    return s;
+}
+
+/* The bus traffic every capture-based fixture uses: one frame of each kind,
+ * as the Central would log it. `t` is the receive time of each. Returns the
+ * count. */
+static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
+{
+    /* Just before a 24-bit wrap of the event time stamp. (Counter wraps are
+     * covered by the unit tests.) */
+    const uint64_t base = (1ull << 24) * 3 - 500;
+    size_t         n    = 0;
+    lbr_sample_t   v[8];
+
+    /* Heartbeats first: they say which clocks are synced. */
+    lbr_can_encode_heartbeat(LBR_NODE_DRIVER_INPUT, LBR_NODE_RUN, 0, &f[n]);
+    t[n] = base, flags[n++] = 0;
+    lbr_can_encode_heartbeat(LBR_NODE_IMU, LBR_NODE_DEGRADED, LBR_HB_ERR_LINK, &f[n]);
+    t[n] = base + 100, flags[n++] = 0;
+    lbr_can_encode_heartbeat(LBR_NODE_STRESS, LBR_NODE_DEGRADED,
+                             LBR_HB_ERR_NOT_SYNCED | LBR_HB_ERR_SENSOR, &f[n]);
+    t[n] = base + 200, flags[n++] = 0;
+
+    uint64_t k = (base + 600) / 10000u; /* 100 Hz grid point */
+    v[0]       = fv(LBR_SIG_BRAKE_PEDAL, 12.5f);
+    v[1]       = fv(LBR_SIG_GAS_PEDAL, 87.25f);
+    v[2]       = fv(LBR_SIG_STEERING_ANGLE, -31.4f);
+    lbr_can_encode_data(lbr_frame_def(0x100), v, k, &f[n]);
+    t[n] = k * 10000u + 450, flags[n++] = 0;
+
+    v[0] = fv(LBR_SIG_ENGINE_RPM, 3620.0f);
+    v[1] = fv(LBR_SIG_CVT_RPM, 0.0f);
+    lbr_can_encode_data(lbr_frame_def(0x200), v, k - 1, &f[n]);
+    t[n] = k * 10000u + 600, flags[n++] = 0;
+
+    v[0] = fv(LBR_SIG_FUEL_LEVEL, 63.4f);
+    lbr_can_encode_data(lbr_frame_def(0x201), v, k / 100u, &f[n]);
+    t[n] = k * 10000u + 800, flags[n++] = 0;
+
+    /* A forwarded corner sample whose BR gyro Z did not fit its field. */
+    v[0] = fv(LBR_SIG_IMU_FL_ACCEL_X, 1.25f);
+    v[1] = fv(LBR_SIG_IMU_FL_ACCEL_Y, -0.5f);
+    v[2] = fv(LBR_SIG_IMU_FL_ACCEL_Z, 9.81f);
+    lbr_can_encode_data(lbr_frame_def(0x300), v, k - 3, &f[n]);
+    t[n] = k * 10000u + 900, flags[n++] = 0;
+    v[0] = fv(LBR_SIG_IMU_BR_GYRO_X, 0.125f);
+    v[1] = fv(LBR_SIG_IMU_BR_GYRO_Y, -1.0f);
+    v[2] = fv(LBR_SIG_IMU_BR_GYRO_Z, 50.0f);
+    lbr_can_encode_data(lbr_frame_def(0x307), v, k - 3, &f[n]);
+    t[n] = k * 10000u + 1000, flags[n++] = 0;
+
+    /* Corner status: FL synced, BL down. */
+    v[0] = fv(LBR_SIG_CORNER_FL_BATTERY, 81.0f);
+    v[1] = fv(LBR_SIG_CORNER_FR_BATTERY, 77.0f);
+    lbr_sample_set_unavailable(&v[2], LBR_UNAVAIL_NO_DATA);
+    v[2].signal = LBR_SIG_CORNER_BL_BATTERY;
+    v[2].type   = LBR_VAL_F32;
+    v[3]        = fv(LBR_SIG_CORNER_BR_BATTERY, 79.0f);
+    v[4]        = uv(LBR_SIG_CORNER_LINK, 0x0B);
+    v[5]        = uv(LBR_SIG_CORNER_SYNCED, 0x01);
+    lbr_can_encode_data(lbr_frame_def(0x30A), v, k / 100u, &f[n]);
+    t[n] = k * 10000u + 1200, flags[n++] = 0;
+    v[0] = fv(LBR_SIG_IMU_FL_ACCEL_X, 1.5f);
+    v[1] = fv(LBR_SIG_IMU_FL_ACCEL_Y, -0.25f);
+    v[2] = fv(LBR_SIG_IMU_FL_ACCEL_Z, 9.5f);
+    lbr_can_encode_data(lbr_frame_def(0x300), v, k - 2, &f[n]);
+    t[n] = k * 10000u + 1300, flags[n++] = 0;
+
+    /* Stress (no counter, unsynced node) and temperatures. */
+    v[0] = fv(LBR_SIG_STRESS_1, 412.0f);
+    v[1] = fv(LBR_SIG_STRESS_2, -37.0f);
+    lbr_sample_set_unavailable(&v[2], LBR_UNAVAIL_SENSOR_FAULT);
+    v[2].signal = LBR_SIG_STRESS_3;
+    v[2].type   = LBR_VAL_F32;
+    v[3]        = fv(LBR_SIG_STRESS_4, 32767.0f);
+    lbr_can_encode_data(lbr_frame_def(0x400), v, k, &f[n]);
+    t[n] = k * 10000u + 1500, flags[n++] = 0;
+    v[0] = fv(LBR_SIG_TEMP_BRAKE_FL, 212.3f);
+    v[1] = fv(LBR_SIG_TEMP_BRAKE_FR, 208.7f);
+    v[2] = fv(LBR_SIG_TEMP_BRAKE_BL, 151.0f);
+    v[3] = fv(LBR_SIG_TEMP_BRAKE_BR, -12.5f);
+    lbr_can_encode_data(lbr_frame_def(0x500), v, k / 10u, &f[n]);
+    t[n] = k * 10000u + 1700, flags[n++] = 0;
+
+    /* Central: GPS (always synced) and the dashboard link. */
+    v[0]       = uv(LBR_SIG_GPS_LATITUDE, 0);
+    v[0].v.i32 = 302849870;
+    v[1]       = uv(LBR_SIG_GPS_LONGITUDE, 0);
+    v[1].v.i32 = -977366810;
+    lbr_can_encode_data(lbr_frame_def(0x600), v, k / 10u, &f[n]);
+    t[n] = k * 10000u + 2000, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
+    v[0] = fv(LBR_SIG_GPS_SPEED, 12.34f);
+    v[1] = fv(LBR_SIG_GPS_COURSE, 271.5f);
+    v[2] = fv(LBR_SIG_GPS_ALTITUDE, 149.2f);
+    lbr_can_encode_data(lbr_frame_def(0x601), v, k / 10u, &f[n]);
+    t[n] = k * 10000u + 2100, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
+    v[0] = uv(LBR_SIG_GPS_UTC, 1790000000u);
+    v[1] = uv(LBR_SIG_GPS_FIX, 3);
+    v[2] = uv(LBR_SIG_GPS_SATELLITES, 11);
+    v[3] = fv(LBR_SIG_GPS_HDOP, 0.9f);
+    lbr_can_encode_data(lbr_frame_def(0x602), v, k / 10u, &f[n]);
+    t[n] = k * 10000u + 2200, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
+    v[0] = fv(LBR_SIG_DASH_BATTERY, 66.0f);
+    v[1] = uv(LBR_SIG_DASH_LINK, 1);
+    lbr_can_encode_data(lbr_frame_def(0x60A), v, k / 100u, &f[n]);
+    t[n] = k * 10000u + 2300, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
+
+    /* An event straddling the 24-bit wrap, time sync, a command, a health page. */
+    lbr_sample_t e = mk(LBR_SIG_FAULT, LBR_NODE_TEMPERATURE, 70, base + 400);
+    e.v.u32        = lbr_event_value(LBR_EVT_SENSOR_INIT_FAIL, 1);
+    lbr_can_encode_event(&e, &f[n]);
+    t[n] = base + 900, flags[n++] = 0;
+    lbr_can_encode_time_sync(9, 0xBEEF, base + 5000, &f[n]);
+    t[n] = base + 5000, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
+    lbr_can_encode_time_follow_up(9, base + 5000 - 130, &f[n]);
+    t[n] = base + 5200, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
+    uint8_t args[7] = {42, 0, 0, 0, 0, 0, 0};
+    lbr_can_encode_command(LBR_CMD_SESSION_START, args, &f[n]);
+    t[n] = base + 5300, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
+    lbr_health_record_t h = {.uptime_ms = 61000, .state = LBR_NODE_RUN, .flags = LBR_HF_CAN_UP};
+    lbr_can_encode_health_page(LBR_NODE_POWERTRAIN, &h, 0, &f[n]);
+    t[n] = base + 6000, flags[n++] = 0;
+
+    /* Not LBR traffic: an extended-id frame from some other device. */
+    f[n] = (lbr_can_frame_t){.id = 0x18FEF100, .dlc = 3, .data = {1, 2, 3}};
+    t[n] = base + 7000, flags[n++] = LBR_CAN_REC_FLAG_EXT;
+    return n;
+}
+
+#define BUS_SET_MAX 32
+
+/* A short bus capture as the Central records it: one 22-byte record per
+ * frame. */
 static void gen_can(buf_t *bin, buf_t *j)
 {
-    lbr_sample_t s[16];
-    size_t       n    = sample_set(s);
-    uint64_t     base = (1ull << 24) * 3 - 500; /* just before a wrap */
+    lbr_can_frame_t   f[BUS_SET_MAX];
+    uint64_t          t[BUS_SET_MAX];
+    uint8_t           fl[BUS_SET_MAX];
+    size_t            n = bus_set(f, t, fl);
+    lbr_bus_decoder_t dec;
+    lbr_bus_decoder_init(&dec);
     jf(j, "{\"record_size\": %u, \"frames\": [\n", LBR_CAN_FRAME_REC_SIZE);
-    size_t count = 0;
     for (size_t i = 0; i < n; i++) {
-        lbr_can_frame_t f;
-        s[i].t_mono_us = base + i * 150;
-        if (!lbr_can_encode_sample(&s[i], &f)) {
-            continue;
-        }
-        uint64_t rx = s[i].t_mono_us + 320; /* bus + ISR latency */
-        uint8_t  rec[LBR_CAN_FRAME_REC_SIZE];
-        lbr_can_frame_rec_encode(rx, LBR_CAN_REC_FLAG_EXT, &f, rec, sizeof rec);
+        uint8_t rec[LBR_CAN_FRAME_REC_SIZE];
+        lbr_can_frame_rec_encode(t[i], fl[i], &f[i], rec, sizeof rec);
         buf_put(bin, rec, sizeof rec);
-        jf(j, "%s  ", count++ ? ",\n" : "");
-        json_can_frame(j, rx, LBR_CAN_REC_FLAG_EXT, &f);
+        jf(j, "%s  ", i ? ",\n" : "");
+        json_can_frame(j, &dec, t[i], fl[i], &f[i]);
     }
-    lbr_can_frame_t f;
-    uint8_t         rec[LBR_CAN_FRAME_REC_SIZE];
-    lbr_can_encode_time_sync(LBR_NODE_GATEWAY, 9, 0xBEEF, &f);
-    lbr_can_frame_rec_encode(base + 5000, LBR_CAN_REC_FLAG_EXT | LBR_CAN_REC_FLAG_OWN_TX, &f, rec,
-                             sizeof rec);
-    buf_put(bin, rec, sizeof rec);
-    jf(j, ",\n  ");
-    json_can_frame(j, base + 5000, LBR_CAN_REC_FLAG_EXT | LBR_CAN_REC_FLAG_OWN_TX, &f);
-    lbr_can_encode_time_follow_up(LBR_NODE_GATEWAY, 9, base + 5000 - 130, &f);
-    lbr_can_frame_rec_encode(base + 5200, LBR_CAN_REC_FLAG_EXT | LBR_CAN_REC_FLAG_OWN_TX, &f, rec,
-                             sizeof rec);
-    buf_put(bin, rec, sizeof rec);
-    jf(j, ",\n  ");
-    json_can_frame(j, base + 5200, LBR_CAN_REC_FLAG_EXT | LBR_CAN_REC_FLAG_OWN_TX, &f);
-    lbr_health_record_t h = {.uptime_ms = 61000, .state = LBR_NODE_RUN, .flags = LBR_HF_CAN_UP};
-    lbr_can_encode_health_page(LBR_NODE_FUEL_GAUGE, &h, 0, &f);
-    lbr_can_frame_rec_encode(base + 6000, LBR_CAN_REC_FLAG_EXT, &f, rec, sizeof rec);
-    buf_put(bin, rec, sizeof rec);
-    jf(j, ",\n  ");
-    json_can_frame(j, base + 6000, LBR_CAN_REC_FLAG_EXT, &f);
     jf(j, "\n]}\n");
 }
 
@@ -371,7 +547,7 @@ static int mem_ok(void *ctx)
     return 0;
 }
 
-static void json_log_record(buf_t *j, const lbr_log_record_t *r)
+static void json_log_record(buf_t *j, lbr_bus_decoder_t *dec, const lbr_log_record_t *r)
 {
     static const char *const names[] = {
         [LBR_REC_SESSION] = "SESSION", [LBR_REC_SAMPLE] = "SAMPLE",
@@ -413,7 +589,7 @@ static void json_log_record(buf_t *j, const lbr_log_record_t *r)
             lbr_can_frame_t f;
             lbr_can_frame_rec_decode(p, r->len, &t, &flags, &f);
             jf(j, ", \"frame\": ");
-            json_can_frame(j, t, flags, &f);
+            json_can_frame(j, dec, t, flags, &f);
             break;
         }
         case LBR_REC_LOSS:
@@ -445,11 +621,11 @@ static void gen_session_log(buf_t *bin, buf_t *j)
     lbr_log_storage_t st      = {mem_write, mem_ok, mem_ok, bin};
     lbr_log_session_t session = {
         .fw_version    = LBR_FW_VERSION,
-        .node_id       = LBR_NODE_GATEWAY,
+        .node_id       = LBR_NODE_CENTRAL,
         .reset_reason  = LBR_RESET_BROWNOUT,
         .boot_count    = 42,
         .start_time_us = 1500000,
-        .config_text   = "node=gateway\nnode_id=1\ncan_bitrate=1000000\n",
+        .config_text   = "node=central\nnode_id=6\ncan_bitrate=500000\n",
     };
     lbr_log_open(&lg, &st, &session);
 
@@ -458,10 +634,14 @@ static void gen_session_log(buf_t *bin, buf_t *j)
     for (size_t i = 0; i < 3; i++) {
         lbr_log_append_sample(&lg, &s[i]);
     }
-    lbr_can_frame_t f;
-    lbr_can_encode_sample(&s[5], &f);
-    lbr_log_append_can_frame(&lg, s[5].t_mono_us + 300, LBR_CAN_REC_FLAG_EXT, &f);
-    lbr_health_record_t h = {.node_id   = LBR_NODE_GATEWAY,
+    lbr_can_frame_t bf[BUS_SET_MAX];
+    uint64_t        bt[BUS_SET_MAX];
+    uint8_t         bfl[BUS_SET_MAX];
+    size_t          bn = bus_set(bf, bt, bfl);
+    for (size_t i = 0; i < bn && i < 5; i++) {
+        lbr_log_append_can_frame(&lg, bt[i], bfl[i], &bf[i]);
+    }
+    lbr_health_record_t h = {.node_id   = LBR_NODE_CENTRAL,
                              .state     = LBR_NODE_RUN,
                              .flags     = LBR_HF_TIME_MASTER | LBR_HF_SD_LOGGING,
                              .uptime_ms = 2000};
@@ -471,7 +651,7 @@ static void gen_session_log(buf_t *bin, buf_t *j)
     lbr_put_u32(loss + 4, 150);
     lbr_put_u64(loss + 8, 2500000);
     lbr_log_append_raw(&lg, LBR_REC_LOSS, loss, sizeof loss);
-    lbr_log_append_text(&lg, "I (2500) gateway: fixture \"text\" record");
+    lbr_log_append_text(&lg, "I (2500) central: fixture \"text\" record");
     for (size_t i = 3; i < n; i++) {
         lbr_log_append_sample(&lg, &s[i]);
     }
@@ -483,14 +663,16 @@ static void gen_session_log(buf_t *bin, buf_t *j)
     (void)tn;
     buf_put(bin, tail, 9);
 
-    lbr_log_reader_t r;
-    lbr_log_record_t rec;
+    lbr_log_reader_t  r;
+    lbr_log_record_t  rec;
+    lbr_bus_decoder_t dec;
+    lbr_bus_decoder_init(&dec);
     lbr_log_reader_init(&r, bin->data, bin->len);
     jf(j, "{\"records\": [\n");
     size_t count = 0;
     while (lbr_log_reader_next(&r, &rec)) {
         jf(j, "%s  ", count++ ? ",\n" : "");
-        json_log_record(j, &rec);
+        json_log_record(j, &dec, &rec);
     }
     jf(j, "\n], \"truncated_tail\": %lu, \"corrupt_regions\": %lu, \"skipped_bytes\": %lu}\n",
        (unsigned long)r.truncated_tail, (unsigned long)r.corrupt_regions,
@@ -498,8 +680,9 @@ static void gen_session_log(buf_t *bin, buf_t *j)
 }
 
 typedef struct {
-    buf_t *j;
-    int    n;
+    buf_t             *j;
+    int                n;
+    lbr_bus_decoder_t *dec;
 } pkt_ctx_t;
 
 static void pkt_rec(uint8_t type, const uint8_t *p, size_t len, void *vctx)
@@ -512,7 +695,7 @@ static void pkt_rec(uint8_t type, const uint8_t *p, size_t len, void *vctx)
         lbr_can_frame_t f;
         lbr_can_frame_rec_decode(p, len, &t, &flags, &f);
         jf(c->j, ", \"frame\": ");
-        json_can_frame(c->j, t, flags, &f);
+        json_can_frame(c->j, c->dec, t, flags, &f);
     } else if (type == LBR_REC_TEXT) {
         jf(c->j, ", \"text\": ");
         json_str(c->j, (const char *)p, len);
@@ -527,24 +710,25 @@ static void gen_stream(buf_t *bin, buf_t *j)
     buf_put(bin, noise, sizeof noise - 1);
     buf_put(bin, "\0", 1);
 
-    lbr_sample_t s[16];
-    size_t       n = sample_set(s);
+    lbr_can_frame_t   bf[BUS_SET_MAX];
+    uint64_t          bt[BUS_SET_MAX];
+    uint8_t           bfl[BUS_SET_MAX];
+    size_t            bn = bus_set(bf, bt, bfl);
+    lbr_bus_decoder_t dec;
+    lbr_bus_decoder_init(&dec);
     jf(j, "{\"packets\": [\n");
     for (uint32_t k = 0; k < 2; k++) {
         uint8_t           pkt[LBR_PKT_MAX_SIZE];
         lbr_pkt_builder_t b;
-        lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_USB, LBR_NODE_GATEWAY, 0, 7000000 + k);
+        lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_USB, LBR_NODE_CENTRAL, 0, 7000000 + k);
         if (k == 0) {
-            for (size_t i = 0; i < 4 && i < n; i++) {
-                lbr_can_frame_t f;
-                uint8_t         rec[LBR_CAN_FRAME_REC_SIZE];
-                lbr_can_encode_sample(&s[i], &f);
-                lbr_can_frame_rec_encode(s[i].t_mono_us + 250, LBR_CAN_REC_FLAG_EXT, &f, rec,
-                                         sizeof rec);
+            for (size_t i = 0; i < 6 && i < bn; i++) {
+                uint8_t rec[LBR_CAN_FRAME_REC_SIZE];
+                lbr_can_frame_rec_encode(bt[i], bfl[i], &bf[i], rec, sizeof rec);
                 lbr_pkt_add(&b, LBR_REC_CAN_FRAME, rec, sizeof rec);
             }
         } else {
-            const char *t = "I (7000) gateway: stream fixture";
+            const char *t = "I (7000) central: stream fixture";
             lbr_pkt_add(&b, LBR_REC_TEXT, (const uint8_t *)t, strlen(t));
         }
         size_t len = lbr_pkt_finish(&b);
@@ -555,9 +739,9 @@ static void gen_stream(buf_t *bin, buf_t *j)
         buf_put(bin, "\0", 1);
 
         lbr_pkt_header_t h;
-        pkt_ctx_t        ctx = {j, 0};
+        pkt_ctx_t        ctx = {j, 0, &dec};
         jf(j, "%s  {\"link\": %u, \"source\": %u, \"seq\": %lu, \"t_us\": %llu, \"records\": [\n",
-           k ? ",\n" : "", LBR_LINK_USB, LBR_NODE_GATEWAY, (unsigned long)(0xFFFFFFFFu + k),
+           k ? ",\n" : "", LBR_LINK_USB, LBR_NODE_CENTRAL, (unsigned long)(0xFFFFFFFFu + k),
            (unsigned long long)(7000000 + k));
         lbr_pkt_parse(pkt, len, &h, pkt_rec, &ctx);
         jf(j, "\n  ]}");

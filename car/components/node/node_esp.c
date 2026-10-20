@@ -16,8 +16,9 @@
 
 /*
  * ESP32 platform for the sensor-node runtime: FreeRTOS tasks, esp_timer
- * periods, TWAI, the SD log service, and the watchdog. All decisions are in
- * node_core.c, which the simulator runs unchanged.
+ * wake-ups on the shared time grid, TWAI, the SD log service, and the
+ * watchdog. All decisions are in node_core.c, which the simulator runs
+ * unchanged.
  */
 
 static const char *TAG = "lbr_node";
@@ -134,6 +135,11 @@ static const lbr_node_hal_t k_hal = {
     .log             = hal_log,
 };
 
+struct lbr_node_core *lbr_node_running_core(void)
+{
+    return s_started ? &s_core : NULL;
+}
+
 void lbr_node_emit_event(lbr_event_code_t code, uint16_t arg, bool fault)
 {
     if (!s_started) {
@@ -153,17 +159,24 @@ static void acq_timer_cb(void *arg)
     xTaskNotifyGive(t->task);
 }
 
+/* Sample k is due at shared time k * period: wake with a one-shot timer at
+ * the next grid point, recomputed every time, so the slot stays locked to
+ * the shared clock through slews and steps. */
 static void acq_task(void *arg)
 {
     acq_task_t *t = arg;
     esp_task_wdt_add(NULL);
     lbr_node_core_slot_start(&s_core, t->index);
-    esp_timer_start_periodic(t->timer, 1000000u / s_core.cfg->acq[t->index].rate_hz);
     for (;;) {
-        uint32_t ticks = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000));
+        uint64_t due = lbr_node_core_slot_next_due(&s_core, t->index);
+        uint64_t now = lbr_time_now_us();
+        esp_timer_start_once(t->timer, due > now ? due - now : 1u);
+        uint32_t woke = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000));
         esp_task_wdt_reset();
-        if (ticks > 0) {
-            lbr_node_core_slot_tick(&s_core, t->index, ticks - 1);
+        if (woke > 0) {
+            lbr_node_core_slot_tick(&s_core, t->index);
+        } else {
+            esp_timer_stop(t->timer);
         }
     }
 }
@@ -216,10 +229,9 @@ void lbr_node_run(const lbr_node_config_t *cfg)
     s_evt_lock                   = xSemaphoreCreateMutex();
     lbr_can_bus_config_t can_cfg = lbr_can_bus_default_config();
     lbr_node_boot_t      boot    = {
-        .reset_reason        = lbr_health_reset_reason(),
-        .boot_count          = lbr_health_boot_count(),
-        .can_bitrate         = can_cfg.bitrate,
-        .can_budget_permille = CONFIG_LBR_CAN_NODE_BUDGET_PERMILLE,
+        .reset_reason = lbr_health_reset_reason(),
+        .boot_count   = lbr_health_boot_count(),
+        .can_bitrate  = can_cfg.bitrate,
     };
     bool valid = lbr_node_core_init(&s_core, cfg, &k_hal, &boot);
 
@@ -247,6 +259,9 @@ void lbr_node_run(const lbr_node_config_t *cfg)
 
     lbr_node_core_start(&s_core, can == LBR_CAN_OK, can == LBR_CAN_ERR_PINS_UNSET, log);
     s_started = true;
+    if (cfg->on_started != NULL) {
+        cfg->on_started(cfg->on_started_ctx);
+    }
 
     if (valid) {
         for (size_t i = 0; i < cfg->n_acq && i < LBR_NODE_MAX_SENSORS; i++) {
@@ -259,7 +274,7 @@ void lbr_node_run(const lbr_node_config_t *cfg)
             };
             char name[16];
             snprintf(name, sizeof name, "acq_%u", (unsigned)i);
-            /* Timer first: the task starts it as soon as it runs. */
+            /* Timer first: the task arms it as soon as it runs. */
             if (esp_timer_create(&targs, &t->timer) != ESP_OK ||
                 xTaskCreate(acq_task, name, 4096, t, ACQ_TASK_PRIO, &t->task) != pdPASS) {
                 ESP_LOGE(TAG, "cannot start acquisition for %s", cfg->acq[i].sensor->name);

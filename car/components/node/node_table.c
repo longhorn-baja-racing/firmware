@@ -29,11 +29,11 @@ static lbr_node_entry_t *slot_for(lbr_node_table_t *t, uint8_t node_id)
 lbr_node_table_event_t lbr_node_table_on_frame(lbr_node_table_t *t, const lbr_can_frame_t *f,
                                                uint64_t rx_us)
 {
-    lbr_can_id_t id = lbr_can_id_parse(f->id);
-    if (id.source == 0) {
+    uint8_t source = lbr_can_sender(f->id);
+    if (source == 0) {
         return LBR_NT_NONE;
     }
-    lbr_node_entry_t *e = slot_for(t, id.source);
+    lbr_node_entry_t *e = slot_for(t, source);
     if (e == NULL) {
         t->table_full++;
         return LBR_NT_NONE;
@@ -49,6 +49,12 @@ lbr_node_table_event_t lbr_node_table_on_frame(lbr_node_table_t *t, const lbr_ca
     e->last_seen_us = rx_us;
     e->frames++;
 
+    uint8_t state, flags;
+    if (lbr_can_decode_heartbeat(f, &state, &flags) != 0) {
+        e->hb_seen  = true;
+        e->hb_state = state;
+        e->hb_flags = flags;
+    }
     int page = lbr_can_decode_health_page(f, &e->health);
     if (page >= 0) {
         e->pages_seen |= (uint16_t)(1u << page);

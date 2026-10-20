@@ -8,10 +8,11 @@
 #include "lbr/health.h"
 
 /*
- * Live bus topology, built from received frames: which nodes are present,
- * when each was last heard, and its latest heartbeat. Used by the gateway
- * (NODE_FOUND / NODE_LOST events, telemetry health) and the cockpit dashboard
- * (node status display). Pure; host-tested.
+ * Live bus topology, built from received frames: which CAN nodes are
+ * present, when each was last heard, its latest heartbeat (state and error
+ * flags) and health record. Used by the Central (NODE_FOUND / NODE_LOST
+ * events, telemetry health, the cockpit dashboard's node display). Pure;
+ * host-tested.
  */
 
 #define LBR_NODE_TABLE_SIZE 16u
@@ -22,7 +23,10 @@ typedef struct {
     uint64_t            first_seen_us;
     uint64_t            last_seen_us;
     uint64_t            last_health_us;
-    uint16_t            pages_seen; /* bitmask of heartbeat pages received */
+    uint16_t            pages_seen; /* bitmask of health pages received */
+    bool                hb_seen;
+    uint8_t             hb_state; /* latest heartbeat: lbr_node_state_t */
+    uint8_t             hb_flags; /* latest heartbeat: LBR_HB_ERR_* */
     uint32_t            frames;
     lbr_health_record_t health;
 } lbr_node_entry_t;

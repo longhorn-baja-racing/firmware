@@ -12,7 +12,7 @@ static void test_catalog_integrity(void)
         CHECK(s->id != LBR_SIG_UNKNOWN);
         CHECK(s->type > LBR_VAL_NONE && s->type < LBR_VAL_RAW);
         CHECK((unsigned)s->unit < LBR_UNIT_COUNT_);
-        CHECK(s->can_prio <= 7);
+        CHECK(lbr_unit_name(s->unit)[0] != '?');
         CHECK(s->name != NULL && s->name[0] != '\0');
         CHECK(s->desc != NULL && s->desc[0] != '\0');
         CHECK(lbr_signal_info(s->id) == s);
@@ -34,17 +34,32 @@ static void test_catalog_integrity(void)
 static void test_ids_stable(void)
 {
     /* Ids are wire protocol: these must never change. */
-    CHECK_EQ_U(LBR_SIG_ACCEL_X, 0x0100);
-    CHECK_EQ_U(LBR_SIG_IMU_CALIB_STATE, 0x010B);
+    CHECK_EQ_U(LBR_SIG_BRAKE_PEDAL, 0x0100);
     CHECK_EQ_U(LBR_SIG_ENGINE_RPM, 0x0200);
-    CHECK_EQ_U(LBR_SIG_FUEL_LEVEL, 0x0206);
-    CHECK_EQ_U(LBR_SIG_TEMP_AMBIENT, 0x0304);
-    CHECK_EQ_U(LBR_SIG_BATT_CURRENT, 0x0401);
+    CHECK_EQ_U(LBR_SIG_FUEL_LEVEL, 0x0202);
+    CHECK_EQ_U(LBR_SIG_IMU_FL_ACCEL_X, 0x0300);
+    CHECK_EQ_U(LBR_SIG_IMU_CH_GYRO_Z, 0x031D);
+    CHECK_EQ_U(LBR_SIG_CORNER_SYNCED, 0x0325);
+    CHECK_EQ_U(LBR_SIG_STRESS_8, 0x0407);
+    CHECK_EQ_U(LBR_SIG_TEMP_CVT, 0x0504);
+    CHECK_EQ_U(LBR_SIG_GPS_UTC, 0x0608);
+    CHECK_EQ_U(LBR_SIG_DASH_LINK, 0x0611);
     CHECK_EQ_U(LBR_SIG_EVENT, 0x0700);
     CHECK_EQ_U(LBR_SIG_FAULT, 0x0701);
-    CHECK_EQ_U(LBR_NODE_GATEWAY, 0x01);
-    CHECK_EQ_U(LBR_NODE_DASHBOARD, 0x08);
-    CHECK(strcmp(lbr_node_name(LBR_NODE_IMU_GPS), "imu_gps") == 0);
+    /* Node ids 1..6 are the DAQ-WIRING "CAN node N" numbers. */
+    CHECK_EQ_U(LBR_NODE_IMU, 0x01);
+    CHECK_EQ_U(LBR_NODE_POWERTRAIN, 0x02);
+    CHECK_EQ_U(LBR_NODE_DRIVER_INPUT, 0x03);
+    CHECK_EQ_U(LBR_NODE_TEMPERATURE, 0x04);
+    CHECK_EQ_U(LBR_NODE_STRESS, 0x05);
+    CHECK_EQ_U(LBR_NODE_CENTRAL, 0x06);
+    CHECK_EQ_U(LBR_NODE_DASHBOARD, 0x07);
+    CHECK_EQ_U(LBR_NODE_CORNER_BR, 0x0B);
+    CHECK(strcmp(lbr_node_name(LBR_NODE_CENTRAL), "central") == 0);
+    CHECK(strcmp(lbr_node_name(LBR_NODE_CORNER_BL), "corner_bl") == 0);
+    CHECK(lbr_node_is_can(LBR_NODE_CENTRAL) && !lbr_node_is_can(LBR_NODE_DASHBOARD));
+    CHECK_EQ_I(lbr_node_corner_index(LBR_NODE_CORNER_FR), 1);
+    CHECK_EQ_I(lbr_node_corner_index(LBR_NODE_IMU), -1);
     CHECK(strcmp(lbr_node_name(0x77), "?") == 0);
 }
 
@@ -60,7 +75,7 @@ static lbr_sample_t roundtrip(const lbr_sample_t *s)
     CHECK_EQ_U(out.type, s->type);
     CHECK(out.valid == s->valid);
     CHECK(out.synced == s->synced);
-    CHECK(out.seq_short == s->seq_short);
+    CHECK(out.seq_inferred == s->seq_inferred);
     CHECK_EQ_U(out.seq, s->seq);
     CHECK_EQ_U(out.t_mono_us, s->t_mono_us);
     CHECK_EQ_U(lbr_sample_value_bits(&out), lbr_sample_value_bits(s));
@@ -92,10 +107,10 @@ static void test_sample_roundtrip(void)
     o      = roundtrip(&s);
     CHECK(o.v.b);
 
-    s.type      = LBR_VAL_STATUS;
-    s.v.status  = 0xDEADBEEF;
-    s.seq_short = true;
-    o           = roundtrip(&s);
+    s.type         = LBR_VAL_STATUS;
+    s.v.status     = 0xDEADBEEF;
+    s.seq_inferred = true;
+    o              = roundtrip(&s);
     CHECK_EQ_U(o.v.status, 0xDEADBEEFu);
 
     /* Unavailable: reason travels in the value slot, never a fake zero. */
@@ -129,7 +144,8 @@ static void test_sample_layout(void)
 
 static void test_sample_reject(void)
 {
-    lbr_sample_t s = {.signal = LBR_SIG_ACCEL_X, .source = 2, .type = LBR_VAL_F32, .valid = true};
+    lbr_sample_t s = {
+        .signal = LBR_SIG_IMU_CH_ACCEL_X, .source = 2, .type = LBR_VAL_F32, .valid = true};
     uint8_t      buf[LBR_SAMPLE_WIRE_SIZE];
     lbr_sample_t out;
     CHECK_EQ_U(lbr_sample_encode(&s, buf, sizeof buf - 1), 0u);

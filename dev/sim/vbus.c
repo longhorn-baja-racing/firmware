@@ -29,20 +29,15 @@ uint32_t vbus_frame_bits(const lbr_can_frame_t *f)
 {
     uint8_t  bits[160];
     unsigned n   = 0;
-    uint32_t id  = f->id & 0x1FFFFFFFu;
+    uint32_t id  = f->id & 0x7FFu; /* LBR uses standard 11-bit ids only */
     uint8_t  dlc = f->dlc > 8 ? 8 : f->dlc;
 
     bits[n++] = 0; /* SOF */
-    for (int i = 28; i >= 18; i--) {
-        bits[n++] = (uint8_t)((id >> i) & 1u);
-    }
-    bits[n++] = 1; /* SRR */
-    bits[n++] = 1; /* IDE */
-    for (int i = 17; i >= 0; i--) {
+    for (int i = 10; i >= 0; i--) {
         bits[n++] = (uint8_t)((id >> i) & 1u);
     }
     bits[n++] = 0; /* RTR */
-    bits[n++] = 0; /* r1 */
+    bits[n++] = 0; /* IDE: standard frame */
     bits[n++] = 0; /* r0 */
     for (int i = 3; i >= 0; i--) {
         bits[n++] = (uint8_t)((dlc >> i) & 1u);
@@ -98,19 +93,18 @@ static bool can_active(const sim_t *s, int n)
     return s->nodes[n].powered && c->started && c->st.running;
 }
 
+/* The filter sensor nodes program (can_bus_esp.c): id 0x000..0x01F only,
+ * which passes the Central's TIME_SYNC, FOLLOW_UP, and COMMAND. */
 static bool accepts(const sim_can_t *c, const lbr_can_frame_t *f)
 {
-    if (c->accept_all) {
-        return true;
-    }
-    lbr_can_id_t id = lbr_can_id_parse(f->id);
-    return id.kind == LBR_CAN_KIND_SYSTEM && id.source == LBR_NODE_GATEWAY;
+    return c->accept_all || (f->id & 0x7E0u) == 0;
 }
 
 bool vbus_send(sim_t *s, int node, const lbr_can_frame_t *f)
 {
-    sim_can_t *c = &s->nodes[node].can;
-    if (!c->started || !c->st.running || c->tx_len == SIM_TXQ_LEN) {
+    sim_can_t *c   = &s->nodes[node].can;
+    size_t     cap = c->tx_cap > 0 && c->tx_cap <= SIM_TXQ_LEN ? c->tx_cap : SIM_TXQ_LEN;
+    if (!c->started || !c->st.running || c->tx_len >= cap) {
         c->st.tx_dropped++;
         return false;
     }
@@ -212,7 +206,7 @@ static void complete(sim_t *s)
                 r->st.rec = (uint8_t)(r->st.rec < 127 ? r->st.rec + 1 : 127);
             }
         }
-        sim_trace(s, tx, "twai", "error frame on id 0x%08lx, retransmitting", (unsigned long)f.id);
+        sim_trace(s, tx, "twai", "error frame on id 0x%03lx, retransmitting", (unsigned long)f.id);
         bump_tec(s, tx, 8); /* the frame stays queued and is retried */
         return;
     }

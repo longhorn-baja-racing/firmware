@@ -1,14 +1,15 @@
-menu "LBR dashboard (cockpit display) inputs"
+menu "LBR dashboard (cockpit display)"
 
-    config LBR_IO_BUTTONS
-        string "Slot 'buttons' input spec"
+    config LBR_IO_BATTERY
+        string "Slot 'battery' input spec"
         default ""
         help
-            Channels, in order: DASH_BUTTONS.
-            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
-            ';'-separated entry per channel using the on-chip inputs: '-',
-            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
-            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
-            The spec is the calibration and is recorded in every session.
+            Channels, in order: DASH_BATTERY (percent). Typically an
+            'adc ...' entry on an ADC1 pin of the ESP32-C5 (GPIO 1..6) behind
+            a divider. Empty = not fitted (or simulated with LBR_SENSOR_SIM).
+            Syntax: car/components/sensors/include/lbr/sensor_io.h and
+            docs/sensors.md. Battery capacity and charging are TBD. The
+            dashboard joins the Central's access point
+            (CONFIG_LBR_WIFI_SSID / CONFIG_LBR_WIFI_PASSWORD).
 
 endmenu

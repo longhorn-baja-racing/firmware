@@ -27,11 +27,15 @@ signal order, separated by `;`. Empty means not fitted.
 | Entry | Input | Typical sensors |
 | --- | --- | --- |
 | `-` | not fitted | |
-| `adc gpio=34 mv0=310 v0=0 mv1=2980 v1=100` | ADC1 pin (32..39), two-point linear calibration | potentiometers (suspension travel, throttle, steering), 0.5-4.5 V pressure transducers behind a divider, fuel sender |
-| `adc gpio=36 curve=ntc r25=10000 beta=3950 rpull=10000 vsup=3300` | NTC thermistor to ground with a pull-up | engine, CVT, gearbox, ambient temperatures |
-| `pulse gpio=27 scale=60 stall_ms=1000` | edge-to-edge frequency x `scale` | engine RPM (`scale` = 60 / pulses per rev), wheel speed (`scale` = circumference / teeth, m/s) |
-| `din gpio=4 active=low pull=up` | debounced switch | brake light switch |
-| `din gpio=4,5,18,19` | several pins as a bitmask (bit i = i-th pin) | dashboard buttons |
+| `adc gpio=34 mv0=310 v0=0 mv1=2980 v1=100` | ADC1 pin, two-point linear calibration | potentiometers (pedals, steering), fuel sender, a battery divider |
+| `adc gpio=36 curve=ntc r25=10000 beta=3950 rpull=10000 vsup=3300` | NTC thermistor to ground with a pull-up | CVT temperature |
+| `pulse gpio=27 scale=60 stall_ms=1000` | edge-to-edge frequency x `scale` | engine or CVT speed (`scale` = 60 / pulses per rev) |
+| `din gpio=4 active=low pull=up` | debounced switch | a bool signal |
+| `din gpio=4,5,18,19` | several pins as a bitmask (bit i = i-th pin) | a bitmask signal |
+
+Pins are checked against the node's chip: on the classic ESP32 (powertrain, driver_input,
+temperature, stress) ADC1 is GPIO 32..39 and 34..39 have no internal pulls; on the ESP32-C5
+(imu, central, dashboard, corners) ADC1 is GPIO 1..6 and GPIO 15..22 belong to flash.
 
 ADC options: `avg=` samples per reading (default 4), `lo=`/`hi=` electrical window in mV (outside
 it the channel reads `SENSOR_FAULT`: open or shorted sensor), `min=`/`max=` physical range
@@ -46,10 +50,11 @@ signal, ...) fails that slot's init, so it reports `SENSOR_INIT_FAIL` and `SENSO
 looking not fitted; the reason is in the node's log output.
 
 Limits of the on-chip ADC: about 150..2450 mV is its accurate range at 12 dB attenuation, so
-divide 5 V sensors down; and it is too slow and noisy for strain gauges at 1 kHz (the `stress` node
-needs a bridge amplifier/ADC part).
+divide 5 V sensors down; and it is too noisy for strain gauges (the `stress` node needs a bridge
+amplifier/ADC part). Brake temperatures (likely thermocouples or IR) and the IMUs need part
+drivers too.
 
-**GPS** (`imu_gps`) works with any module that outputs NMEA 0183: set `CONFIG_LBR_GPS_RX_GPIO`
+**GPS** (on the `central` node) works with any module that outputs NMEA 0183: set `CONFIG_LBR_GPS_RX_GPIO`
 (and baud). GGA, RMC, and GSA from any talker are used; bad checksums are counted and ignored, a
 quiet receiver reads `NO_DATA` after 2 s, position needs a 2D fix, altitude a 3D fix, and UTC an
 active RMC.
@@ -74,8 +79,8 @@ active RMC.
 4. Add the file to `car/components/sensors/CMakeLists.txt`, and bind it in the node's `main.c`:
 
    ```c
-   lbr_sensor_<part>(&s_sensors[SUSPENSION_SLOT_TRAVEL], lbr_plan_suspension.slots[0].signals,
-                     lbr_plan_suspension.slots[0].n_signals, &cfg);
+   lbr_sensor_<part>(&s_sensors[IMU_SLOT_CHASSIS], lbr_plan_imu.slots[IMU_SLOT_CHASSIS].signals,
+                     lbr_plan_imu.slots[IMU_SLOT_CHASSIS].n_signals, &cfg);
    ```
 
 ## Rules every driver follows
@@ -93,8 +98,11 @@ active RMC.
 
 ## Changing rates or channels
 
-Edit the node's plan and run the host tests: `test_plans` checks the node's own CAN budget,
-signal ownership across nodes, and the whole bus. A channel decimated on CAN
-(`publish_div > 1`) requires the node to keep a local log, so no sample is discarded unrecorded.
-A new signal goes at the end of its group in `signals.def` (append only), followed by
-`cmake --build build-dev --target fixtures` and a matching update in `lbr-dashboard`.
+A slot's rate must equal the rate of the CAN frame its signals travel in, and every field of
+that frame must come from the same slot (each sample is published exactly once, nothing is
+decimated). So a rate or channel change is two edits: the node's plan and the frame table
+(`car/components/protocol/frames.c`, with DAQ-WIRING.md section 7). Then run the host tests:
+`test_plans` checks every plan against the table, that every frame has a producer, and the whole
+bus against its 50 % ceiling. A new signal goes in its group in `signals.def` and in one frame,
+followed by `cmake --build build-dev --target fixtures` and a matching update in
+`lbr-dashboard`.

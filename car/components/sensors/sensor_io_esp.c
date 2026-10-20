@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "lbr/sensor_io.h"
+#include "sdkconfig.h"
 
 /*
  * Hardware side of the part-independent inputs (see lbr/sensor_io.h).
@@ -20,6 +21,12 @@
  * any acquisition task runs). Pulse inputs count edges in an IRAM GPIO ISR,
  * so counting continues while flash is busy.
  */
+
+#if CONFIG_IDF_TARGET_ESP32C5
+#define LBR_IO_CHIP lbr_io_chip_esp32c5
+#else
+#define LBR_IO_CHIP lbr_io_chip_esp32
+#endif
 
 static const char *TAG = "lbr_io";
 
@@ -67,13 +74,23 @@ static int adc_unit_up(void)
         s_adc = NULL;
         return -1;
     }
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+    adc_cali_curve_fitting_config_t ccfg = {
+        .unit_id  = ADC_UNIT_1,
+        .atten    = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    esp_err_t cal = adc_cali_create_scheme_curve_fitting(&ccfg, &s_cali);
+#else
     adc_cali_line_fitting_config_t ccfg = {
         .unit_id      = ADC_UNIT_1,
         .atten        = ADC_ATTEN_DB_12,
         .bitwidth     = ADC_BITWIDTH_DEFAULT,
         .default_vref = 1100,
     };
-    if (adc_cali_create_scheme_line_fitting(&ccfg, &s_cali) != ESP_OK) {
+    esp_err_t cal = adc_cali_create_scheme_line_fitting(&ccfg, &s_cali);
+#endif
+    if (cal != ESP_OK) {
         /* Without calibration the pin voltage is not trustworthy. */
         s_cali = NULL;
         return -1;
@@ -269,7 +286,8 @@ void lbr_sensor_io(lbr_sensor_t *out, const char *name, const lbr_signal_id_t *s
     io_ctx_t *ctx = calloc(1, sizeof *ctx);
     if (ctx != NULL && n_signals <= LBR_SENSOR_MAX_SIGNALS && s_adc_lock != NULL) {
         char err[96];
-        ctx->parsed = lbr_io_parse(spec, signals, n_signals, ctx->chan, err, sizeof err) == 0;
+        ctx->parsed =
+            lbr_io_parse(spec, signals, n_signals, ctx->chan, &LBR_IO_CHIP, err, sizeof err) == 0;
         if (!ctx->parsed) {
             ESP_LOGE(TAG, "%s: bad input spec: %s", name, err);
         }

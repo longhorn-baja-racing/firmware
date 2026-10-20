@@ -3,8 +3,8 @@
 #include "sdkconfig.h"
 
 /*
- * temperature node app. Everything except driver binding lives in the shared node
- * runtime (car/components/node).
+ * Temperature Controller (ESP32, CAN node 4) app. Everything except driver binding lives in the
+ * shared node runtime (car/components/node).
  */
 
 static lbr_sensor_t      s_sensors[TEMPERATURE_SLOT_COUNT];
@@ -27,13 +27,9 @@ void app_main(void)
      *
      * A bound driver must produce exactly the slot's signals, in order.
      */
-    lbr_node_bind_io(&lbr_plan_temperature, TEMPERATURE_SLOT_DRIVETRAIN, s_sensors,
-                     CONFIG_LBR_IO_DRIVETRAIN);
     lbr_node_bind_io(&lbr_plan_temperature, TEMPERATURE_SLOT_BRAKES, s_sensors,
                      CONFIG_LBR_IO_BRAKES);
-    lbr_node_bind_io(&lbr_plan_temperature, TEMPERATURE_SLOT_AMBIENT, s_sensors,
-                     CONFIG_LBR_IO_AMBIENT);
-    lbr_node_bind_io(&lbr_plan_temperature, TEMPERATURE_SLOT_AUX, s_sensors, CONFIG_LBR_IO_AUX);
+    lbr_node_bind_io(&lbr_plan_temperature, TEMPERATURE_SLOT_CVT, s_sensors, CONFIG_LBR_IO_CVT);
 
     lbr_node_run(&s_cfg);
 }

@@ -4,7 +4,9 @@
  */
 #include <stdlib.h>
 
+#include "lbr/dash_link.h"
 #include "lbr/gw_core.h"
+#include "lbr/wlink.h"
 #include "lbr/node_core.h"
 #include "lbr/nodes.h"
 #include "lbr/version.h"
@@ -152,12 +154,23 @@ static int count_events(const fake_t *f, size_t from, lbr_signal_id_t sig, lbr_e
     int n = 0;
     for (size_t i = from; i < f->n_tx; i++) {
         lbr_sample_t s;
-        if (lbr_can_decode_sample(&f->tx[i], 0, &s) && s.signal == sig &&
+        if (lbr_can_decode_event(&f->tx[i], 0, &s) && s.signal == sig &&
             (s.v.u32 & 0xFFFFu) == code) {
             n++;
         }
     }
     return n;
+}
+
+/* Index of the first frame with `id` since `from`, or -1. */
+static int find_frame(const fake_t *f, size_t from, uint32_t id)
+{
+    for (size_t i = from; i < f->n_tx; i++) {
+        if (f->tx[i].id == id) {
+            return (int)i;
+        }
+    }
+    return -1;
 }
 
 /* A controllable sensor driver. */
@@ -193,7 +206,7 @@ static int fs_read(lbr_sensor_t *self, uint64_t t_us, lbr_reading_t *out)
     return 0;
 }
 
-static const lbr_signal_id_t k_sigs[] = {LBR_SIG_SUSP_TRAVEL_FL, LBR_SIG_SUSP_TRAVEL_FR};
+static const lbr_signal_id_t k_sigs[] = {LBR_SIG_ENGINE_RPM, LBR_SIG_CVT_RPM};
 
 typedef struct {
     fake_t            fake;
@@ -209,38 +222,46 @@ static bool rig_init(node_rig_t *r, uint16_t rate_hz)
     memset(r, 0, sizeof *r);
     fake_init(&r->fake);
     r->sensor = (lbr_sensor_t){
-        .name      = "travel",
+        .name      = "speeds",
         .signals   = k_sigs,
         .n_signals = 2,
         .init      = fs_init,
         .read      = fs_read,
         .ctx       = &r->fs,
     };
-    r->acq = (lbr_acq_t){.sensor = &r->sensor, .rate_hz = rate_hz, .publish_div = 1};
+    r->acq = (lbr_acq_t){.sensor = &r->sensor, .rate_hz = rate_hz};
     r->cfg = (lbr_node_config_t){
-        .node_id          = LBR_NODE_SUSPENSION,
+        .node_id          = LBR_NODE_POWERTRAIN,
         .acq              = &r->acq,
         .n_acq            = 1,
         .health_period_ms = 1000,
     };
     lbr_node_hal_t  hal  = node_hal(&r->fake);
     lbr_node_boot_t boot = {
-        .reset_reason        = LBR_RESET_POWER_ON,
-        .boot_count          = 7,
-        .can_bitrate         = 1000000,
-        .can_budget_permille = 150,
+        .reset_reason = LBR_RESET_POWER_ON,
+        .boot_count   = 7,
+        .can_bitrate  = 500000,
     };
     return lbr_node_core_init(&r->core, &r->cfg, &hal, &boot);
 }
 
-/* Feed the node a gateway TIME_SYNC + FOLLOW_UP pair. */
+/* Feed the node a Central TIME_SYNC + FOLLOW_UP pair. */
 static void feed_sync(node_rig_t *r, uint8_t seq, uint16_t epoch, uint64_t gw_us)
 {
     lbr_can_frame_t f;
-    lbr_can_encode_time_sync(LBR_NODE_GATEWAY, seq, epoch, &f);
+    lbr_can_encode_time_sync(seq, epoch, gw_us, &f);
     lbr_node_core_on_frame(&r->core, &f, r->fake.mono);
-    lbr_can_encode_time_follow_up(LBR_NODE_GATEWAY, seq, gw_us, &f);
+    lbr_can_encode_time_follow_up(seq, gw_us, &f);
     lbr_node_core_on_frame(&r->core, &f, r->fake.mono + 50);
+}
+
+/* Advance the clock to slot 0's next grid point and tick it. */
+static void tick(node_rig_t *r)
+{
+    uint64_t due = lbr_node_core_slot_next_due(&r->core, 0);
+    uint64_t now = lbr_time_servo_now(&r->fake.servo, r->fake.mono);
+    r->fake.mono += due - now;
+    lbr_node_core_slot_tick(&r->core, 0);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -250,35 +271,43 @@ static void test_node_boot_and_acquire(void)
 {
     static node_rig_t r;
     CHECK(rig_init(&r, 100));
-    CHECK(strstr(r.fake.last_log, "suspension") != NULL);
+    CHECK(strstr(r.fake.last_log, "powertrain") != NULL);
     lbr_node_core_start(&r.core, true, false, NULL);
     CHECK_EQ_I(count_events(&r.fake, 0, LBR_SIG_EVENT, LBR_EVT_BOOT), 1);
 
     lbr_node_core_slot_start(&r.core, 0);
-    r.fs.value  = 12.5f;
+    r.fs.value  = 3000.0f;
     size_t from = r.fake.n_tx;
-    lbr_node_core_slot_tick(&r.core, 0, 0);
-    CHECK_EQ_U(r.fake.n_tx - from, 2);
-    lbr_sample_t s;
-    CHECK(lbr_can_decode_sample(&r.fake.tx[from], 0, &s));
-    CHECK_EQ_U(s.signal, LBR_SIG_SUSP_TRAVEL_FL);
-    CHECK_EQ_U(s.source, LBR_NODE_SUSPENSION);
-    CHECK(s.valid && s.v.f32 == 12.5f);
-    CHECK(!s.synced); /* no gateway yet */
+    tick(&r);
+    CHECK_EQ_U(r.fake.n_tx - from, 1); /* both speeds in one POWERTRAIN_SPEEDS frame */
+    CHECK_EQ_U(r.fake.tx[from].id, 0x200);
+    lbr_sample_t s[4];
+    uint64_t     t = lbr_time_servo_now(&r.fake.servo, r.fake.mono);
+    CHECK_EQ_U(lbr_can_decode_data(&r.fake.tx[from], t + 700, false, s, 4), 2u);
+    CHECK_EQ_U(s[0].signal, LBR_SIG_ENGINE_RPM);
+    CHECK_EQ_U(s[0].source, LBR_NODE_POWERTRAIN);
+    CHECK(s[0].valid && s[0].v.f32 == 3000.0f);
+    CHECK(s[1].valid && s[1].v.f32 == 3001.0f);
+    CHECK_EQ_U(s[0].t_mono_us, t); /* the grid point it was sampled at */
     CHECK_EQ_I(r.fake.locks_held, 0);
 
-    /* Gateway sync arrives: synced event, later samples are synced. */
+    /* The Central's sync arrives: synced event, a new timeline. */
     feed_sync(&r, 0, 0x1234, 5000000);
     CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_EVENT, LBR_EVT_TIME_SYNCED), 1);
     from = r.fake.n_tx;
-    lbr_node_core_slot_tick(&r.core, 0, 0);
-    CHECK(lbr_can_decode_sample(&r.fake.tx[from], 0, &s));
-    CHECK(s.synced);
+    tick(&r);
+    CHECK_EQ_I(find_frame(&r.fake, from, 0x200), (int)from);
+    CHECK_EQ_U(r.core.overruns, 0u); /* the clock jump is not counted as overruns */
 
     lbr_health_record_t h;
     from = r.fake.n_tx;
     lbr_node_core_heartbeat(&r.core, &h);
-    CHECK_EQ_U(r.fake.n_tx - from, LBR_HEALTH_PAGE_COUNT);
+    CHECK_EQ_U(r.fake.n_tx - from, 1u + LBR_HEALTH_PAGE_COUNT);
+    uint8_t state, flags;
+    CHECK_EQ_U(lbr_can_decode_heartbeat(&r.fake.tx[from], &state, &flags), LBR_NODE_POWERTRAIN);
+    CHECK_EQ_U(state, LBR_NODE_RUN);
+    CHECK_EQ_U(flags, 0u);
+    CHECK_EQ_U(r.fake.tx[from + 1].id, 0x780u + 16u * LBR_NODE_POWERTRAIN);
     CHECK_EQ_U(h.state, LBR_NODE_RUN);
     CHECK((h.flags & LBR_HF_TIME_SYNCED) != 0);
     CHECK_EQ_U(h.sensor_status, 1);
@@ -294,26 +323,33 @@ static void test_node_sensor_fault_and_recovery(void)
 
     r.fs.fail_read = 1;
     size_t from    = r.fake.n_tx;
-    lbr_node_core_slot_tick(&r.core, 0, 0);
+    tick(&r);
     CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_FAULT, LBR_EVT_SENSOR_INIT_FAIL), 1);
-    lbr_sample_t s;
-    CHECK(lbr_can_decode_sample(&r.fake.tx[r.fake.n_tx - 1], 0, &s));
-    CHECK(!s.valid);
-    CHECK_EQ_U(s.v.u32, LBR_UNAVAIL_SENSOR_FAULT); /* never a fake zero */
+    int          at = find_frame(&r.fake, from, 0x200);
+    lbr_sample_t s[2];
+    CHECK(at >= 0);
+    CHECK_EQ_U(lbr_can_decode_data(&r.fake.tx[at], r.fake.mono, false, s, 2), 2u);
+    CHECK(!s[0].valid);
+    CHECK_EQ_U(s[0].v.u32, LBR_UNAVAIL_SENSOR_FAULT); /* never a fake zero */
 
     lbr_health_record_t h;
+    from = r.fake.n_tx;
     lbr_node_core_heartbeat(&r.core, &h);
     CHECK_EQ_U(h.state, LBR_NODE_DEGRADED);
     CHECK_EQ_U(h.sensor_status, 0);
+    uint8_t state, flags;
+    lbr_can_decode_heartbeat(&r.fake.tx[from], &state, &flags);
+    CHECK((flags & LBR_HB_ERR_SENSOR) != 0);
+    CHECK((flags & LBR_HB_ERR_NOT_SYNCED) != 0);
 
     /* No retry before the back-off, then recovery. */
     int inits = r.fs.inits;
-    r.fake.mono += LBR_NODE_SENSOR_RETRY_US - 1;
-    lbr_node_core_slot_tick(&r.core, 0, 0);
+    r.fake.mono += LBR_ACQ_RETRY_US - 20000;
+    tick(&r);
     CHECK_EQ_I(r.fs.inits, inits);
-    r.fake.mono += 1;
+    r.fake.mono += 20000;
     from = r.fake.n_tx;
-    lbr_node_core_slot_tick(&r.core, 0, 0);
+    tick(&r);
     CHECK_EQ_I(r.fs.inits, inits + 1);
     CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_EVENT, LBR_EVT_SENSOR_RECOVERED), 1);
 }
@@ -321,7 +357,7 @@ static void test_node_sensor_fault_and_recovery(void)
 static void test_node_rejects_bad_config(void)
 {
     static node_rig_t r;
-    CHECK(!rig_init(&r, 0)); /* rate 0 */
+    CHECK(!rig_init(&r, 50)); /* POWERTRAIN_SPEEDS is a 100 Hz frame */
     CHECK(r.core.config_error[0] != '\0');
     lbr_node_core_start(&r.core, true, true, NULL);
     CHECK_EQ_I(count_events(&r.fake, 0, LBR_SIG_FAULT, LBR_EVT_CONFIG_INVALID), 1);
@@ -337,7 +373,9 @@ static void test_node_counts_overruns_and_bus_off(void)
     CHECK(rig_init(&r, 100));
     lbr_node_core_start(&r.core, true, false, NULL);
     lbr_node_core_slot_start(&r.core, 0);
-    lbr_node_core_slot_tick(&r.core, 0, 3);
+    tick(&r);
+    r.fake.mono += 30000; /* three grid points go by unsampled */
+    tick(&r);
 
     r.fake.can.bus_off_count = 1;
     size_t              from = r.fake.n_tx;
@@ -345,18 +383,69 @@ static void test_node_counts_overruns_and_bus_off(void)
     lbr_node_core_heartbeat(&r.core, &h);
     CHECK_EQ_U(h.overflow_count, 3);
     CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_FAULT, LBR_EVT_CAN_BUS_OFF), 1);
+    uint8_t state, flags;
+    int     hb = find_frame(&r.fake, from, 0x700u + LBR_NODE_POWERTRAIN);
+    CHECK(hb >= 0 && lbr_can_decode_heartbeat(&r.fake.tx[hb], &state, &flags) != 0);
+    CHECK((flags & (LBR_HB_ERR_CAN | LBR_HB_ERR_LOSS)) == (LBR_HB_ERR_CAN | LBR_HB_ERR_LOSS));
     from = r.fake.n_tx;
-    lbr_node_core_heartbeat(&r.core, &h); /* same count: no second event */
+    lbr_node_core_heartbeat(&r.core, &h); /* same count: no second event, no new loss */
     CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_FAULT, LBR_EVT_CAN_BUS_OFF), 0);
+    lbr_can_decode_heartbeat(&r.fake.tx[from], &state, &flags);
+    CHECK((flags & (LBR_HB_ERR_CAN | LBR_HB_ERR_LOSS)) == 0);
 
     /* CAN down: nothing is sent, the node reports itself faulted. */
     r.fake.can.running = false;
     r.core.can_up      = false;
     from               = r.fake.n_tx;
-    lbr_node_core_slot_tick(&r.core, 0, 0);
+    tick(&r);
     lbr_node_core_heartbeat(&r.core, &h);
     CHECK_EQ_U(r.fake.n_tx, from);
     CHECK_EQ_U(h.state, LBR_NODE_FAULT);
+}
+
+static int  s_app_frames;
+static void app_frame(const lbr_can_frame_t *f, uint64_t rx_shared_us, void *ctx)
+{
+    (void)f;
+    (void)rx_shared_us;
+    (void)ctx;
+    s_app_frames++;
+}
+
+static void test_node_app_hooks(void)
+{
+    static node_rig_t r;
+    CHECK(rig_init(&r, 100));
+    r.cfg.on_frame = app_frame;
+    lbr_node_core_start(&r.core, true, false, NULL);
+
+    /* Commands are consumed by the runtime, other frames go to the app. */
+    uint8_t         args[7] = {0};
+    lbr_can_frame_t f;
+    lbr_can_encode_command(LBR_CMD_SESSION_START, args, &f);
+    lbr_node_core_on_frame(&r.core, &f, r.fake.mono);
+    CHECK_EQ_U(r.core.commands, 1u);
+    CHECK_EQ_I(s_app_frames, 0);
+    f.id = 0x300;
+    lbr_node_core_on_frame(&r.core, &f, r.fake.mono);
+    CHECK_EQ_I(s_app_frames, 1);
+
+    /* Forwarded frames count as published; app flags and losses reach the
+     * heartbeat. */
+    unsigned pub = r.core.published;
+    CHECK(lbr_node_core_send(&r.core, &f));
+    CHECK_EQ_U(r.core.published, pub + 1u);
+    lbr_node_core_set_app_flags(&r.core, LBR_HB_ERR_LINK);
+    lbr_node_core_count_loss(&r.core, 5);
+    lbr_health_record_t h;
+    size_t              from = r.fake.n_tx;
+    lbr_node_core_heartbeat(&r.core, &h);
+    uint8_t state, flags;
+    lbr_can_decode_heartbeat(&r.fake.tx[from], &state, &flags);
+    CHECK((flags & LBR_HB_ERR_LINK) != 0);
+    CHECK((flags & LBR_HB_ERR_LOSS) != 0);
+    CHECK_EQ_U(h.transport_error_count, 5u);
+    CHECK_EQ_U(h.state, LBR_NODE_DEGRADED);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -404,9 +493,13 @@ typedef struct {
     lbr_gw_core_t   core;
     lbr_logger_t    log;
     mem_t           disk;
-    fake_link_t     usb_l, lora_l;
-    lbr_transport_t usb, lora;
+    fake_link_t     usb_l, lora_l, dash_l;
+    lbr_transport_t usb, lora, dash;
+    lbr_sensor_t    dash_status;
+    lbr_acq_t       acq;
 } gw_rig_t;
+
+static const lbr_signal_id_t k_dash_status[] = {LBR_SIG_DASH_BATTERY, LBR_SIG_DASH_LINK};
 
 static uint8_t s_disk[512 * 1024];
 static uint8_t s_q[64 * 1024];
@@ -430,13 +523,15 @@ static void gw_rig_init(gw_rig_t *r)
     CHECK_EQ_I(lbr_log_init(&r->log, &lc), 0);
     r->disk                   = (mem_t){s_disk, 0, sizeof s_disk};
     lbr_log_storage_t st      = {mem_write, mem_ok, mem_ok, &r->disk};
-    lbr_log_session_t session = {.node_id = LBR_NODE_GATEWAY, .config_text = "node=gateway\n"};
+    lbr_log_session_t session = {.node_id = LBR_NODE_CENTRAL, .config_text = "node=central\n"};
     CHECK_EQ_I(lbr_log_open(&r->log, &st, &session), 0);
 
     r->usb =
         (lbr_transport_t){.name = "usb", .kind = LBR_LINK_USB, .send = fl_send, .ctx = &r->usb_l};
     r->lora = (lbr_transport_t){
         .name = "lora", .kind = LBR_LINK_LORA, .send = fl_send, .ctx = &r->lora_l};
+    r->dash = (lbr_transport_t){
+        .name = "dash", .kind = LBR_LINK_DASH, .send = fl_send, .ctx = &r->dash_l};
 
     lbr_gw_hal_t hal = {
         .ctx             = &r->fake,
@@ -454,16 +549,23 @@ static void gw_rig_init(gw_rig_t *r)
     };
     lbr_gw_config_t cfg;
     lbr_gw_config_defaults(&cfg);
+    /* The Central's dashboard-status slot reads the core's own link state. */
+    r->acq             = (lbr_acq_t){.sensor = &r->dash_status, .rate_hz = 1};
     lbr_gw_boot_t boot = {
         .reset_reason = LBR_RESET_POWER_ON,
         .boot_count   = 3,
         .epoch        = 0x2345,
         .config_valid = true,
-        .config_text  = "node=gateway\n",
+        .config_text  = "node=central\n",
+        .acq          = &r->acq,
+        .n_acq        = 1,
     };
     lbr_gw_core_init(&r->core, &hal, &cfg, &boot);
-    lbr_gw_links_t links = {.usb = &r->usb, .lora = &r->lora};
+    lbr_sensor_dash_link(&r->dash_status, "dash_status", k_dash_status, 2, &r->core.dash,
+                         lbr_gw_core_lock_state, lbr_gw_core_unlock_state, &r->core);
+    lbr_gw_links_t links = {.usb = &r->usb, .lora = &r->lora, .dash = &r->dash};
     lbr_gw_core_start(&r->core, &r->log, &links, true, false);
+    lbr_gw_core_slot_start(&r->core, 0);
 }
 
 /* Count CAN_FRAME records in the log (pumped to the fake disk). */
@@ -491,33 +593,130 @@ static void test_gw_logs_everything_first(void)
     static gw_rig_t r;
     gw_rig_init(&r);
     CHECK_EQ_I(count_events(&r.fake, 0, LBR_SIG_EVENT, LBR_EVT_BOOT), 1);
+    CHECK(find_frame(&r.fake, 0, LBR_CAN_ID_COMMAND) >= 0); /* SESSION_START: log is open */
 
-    /* A node sample: logged, the node becomes known, streamed to USB. */
-    lbr_sample_t s = {
-        .signal    = LBR_SIG_SUSP_TRAVEL_FL,
-        .source    = LBR_NODE_SUSPENSION,
-        .type      = LBR_VAL_F32,
-        .valid     = true,
-        .synced    = true,
-        .seq       = 1,
-        .t_mono_us = r.fake.mono,
-        .v.f32     = 3.0f,
+    /* A node's data frame: logged, the node becomes known, streamed to USB. */
+    lbr_sample_t v[2] = {
+        {.signal = LBR_SIG_ENGINE_RPM, .type = LBR_VAL_F32, .valid = true, .v.f32 = 3100.0f},
+        {.signal = LBR_SIG_CVT_RPM, .type = LBR_VAL_F32, .valid = true, .v.f32 = 900.0f},
     };
     lbr_can_frame_t f;
-    CHECK(lbr_can_encode_sample(&s, &f));
+    lbr_can_encode_data(lbr_frame_def(0x200), v, r.fake.mono / 10000u, &f);
     lbr_gw_core_on_rx(&r.core, &f, r.fake.mono);
-    CHECK(lbr_node_table_find(&r.core.nodes, LBR_NODE_SUSPENSION) != NULL);
-    CHECK(strstr(r.fake.last_log, "suspension") != NULL);
+    CHECK(lbr_node_table_find(&r.core.nodes, LBR_NODE_POWERTRAIN) != NULL);
+    CHECK(strstr(r.fake.last_log, "powertrain") != NULL);
     CHECK_EQ_I(logged_frames(&r, false), 1);
-    CHECK(logged_frames(&r, true) >= 1); /* our own BOOT event */
+    CHECK(logged_frames(&r, true) >= 2); /* our own BOOT event and SESSION_START */
 
     CHECK_EQ_I(r.usb_l.sends, 0);
     lbr_gw_core_stream_flush(&r.core);
     CHECK_EQ_I(r.usb_l.sends, 1);
     lbr_pkt_header_t hdr;
     CHECK(lbr_pkt_parse(r.usb_l.last, r.usb_l.last_len, &hdr, NULL, NULL));
-    CHECK(hdr.count >= 2);
+    CHECK(hdr.count >= 3);
     CHECK_EQ_I(r.fake.locks_held, 0);
+
+    /* The decoded value reaches the dashboard's view. */
+    lbr_sample_t got;
+    CHECK_EQ_I(lbr_value_table_get(&r.core.dash_values, LBR_SIG_ENGINE_RPM, r.fake.mono, &got),
+               LBR_VALUE_OK);
+    CHECK(got.v.f32 == 3100.0f);
+}
+
+typedef struct {
+    int  samples, lites;
+    bool rpm;
+} dash_seen_t;
+
+static void on_dash_rec(uint8_t type, const uint8_t *p, size_t len, void *ctx)
+{
+    dash_seen_t *d = ctx;
+    if (type == LBR_REC_SAMPLE) {
+        lbr_sample_t s;
+        if (lbr_sample_decode(p, len, &s) > 0) {
+            d->samples++;
+            d->rpm = d->rpm || (s.signal == LBR_SIG_ENGINE_RPM && s.valid);
+        }
+    } else if (type == LBR_REC_HEALTH_LITE) {
+        d->lites++;
+    }
+}
+
+static void test_gw_dashboard_link(void)
+{
+    static gw_rig_t r;
+    gw_rig_init(&r);
+
+    /* Before the dashboard is heard: DASH_STATUS says link down, battery NO_DATA. */
+    r.fake.mono = 2000000;
+    size_t from = r.fake.n_tx;
+    lbr_gw_core_slot_tick(&r.core, 0);
+    int          at = find_frame(&r.fake, from, 0x60A);
+    lbr_sample_t s[2];
+    CHECK(at >= 0);
+    CHECK_EQ_U(lbr_can_decode_data(&r.fake.tx[at], r.fake.mono, true, s, 2), 2u);
+    CHECK(!s[0].valid && s[0].v.u32 == LBR_UNAVAIL_NO_DATA);
+    CHECK(s[1].valid && !s[1].v.b);
+
+    /* The dashboard reports 76 % battery. */
+    uint8_t           pkt[128];
+    lbr_pkt_builder_t b;
+    lbr_sample_t      batt = {.signal = LBR_SIG_DASH_BATTERY,
+                              .source = LBR_NODE_DASHBOARD,
+                              .type   = LBR_VAL_F32,
+                              .valid  = true,
+                              .v.f32  = 76.0f};
+    uint8_t           rec[LBR_SAMPLE_WIRE_SIZE];
+    lbr_sample_encode(&batt, rec, sizeof rec);
+    lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_DASH, LBR_NODE_DASHBOARD, 0, 0);
+    lbr_pkt_add(&b, LBR_REC_SAMPLE, rec, sizeof rec);
+    size_t n = lbr_pkt_finish(&b);
+    lbr_gw_core_on_dash_packet(&r.core, pkt, n, r.fake.mono);
+    from = r.fake.n_tx;
+    lbr_gw_core_dash_tick(&r.core);
+    CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_EVENT, LBR_EVT_NODE_FOUND), 1);
+
+    r.fake.mono = 3000000;
+    lbr_gw_core_on_dash_packet(&r.core, pkt, n, r.fake.mono); /* it keeps reporting */
+    lbr_gw_core_dash_tick(&r.core);
+    from = r.fake.n_tx;
+    lbr_gw_core_slot_tick(&r.core, 0);
+    at = find_frame(&r.fake, from, 0x60A);
+    CHECK(at >= 0);
+    lbr_can_decode_data(&r.fake.tx[at], r.fake.mono, true, s, 2);
+    CHECK(s[0].valid && s[0].v.f32 == 76.0f);
+    CHECK(s[1].valid && s[1].v.b);
+
+    /* Display datagrams carry the latest values and node health. */
+    lbr_sample_t v[2] = {
+        {.signal = LBR_SIG_ENGINE_RPM, .type = LBR_VAL_F32, .valid = true, .v.f32 = 2500.0f},
+        {.signal = LBR_SIG_CVT_RPM, .type = LBR_VAL_F32, .valid = true, .v.f32 = 800.0f},
+    };
+    lbr_can_frame_t f;
+    lbr_can_encode_data(lbr_frame_def(0x200), v, r.fake.mono / 10000u, &f);
+    lbr_gw_core_on_rx(&r.core, &f, r.fake.mono);
+    int sends = r.dash_l.sends;
+    lbr_gw_core_dash_tick(&r.core);
+    CHECK_EQ_I(r.dash_l.sends, sends + 1);
+    lbr_pkt_header_t hdr;
+    dash_seen_t      seen = {0};
+    CHECK(lbr_pkt_parse(r.dash_l.last, r.dash_l.last_len, &hdr, on_dash_rec, &seen));
+    CHECK_EQ_U(hdr.link, LBR_LINK_DASH);
+    CHECK_EQ_U(hdr.source, LBR_NODE_CENTRAL);
+    CHECK(seen.rpm);
+    CHECK(seen.lites >= 1);
+
+    /* Silence: the link goes down, counted as a lost node. */
+    r.fake.mono += LBR_WLINK_DASH_TIMEOUT_US + 1000;
+    from = r.fake.n_tx;
+    lbr_gw_core_dash_tick(&r.core);
+    CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_FAULT, LBR_EVT_NODE_LOST), 1);
+    lbr_health_record_t h;
+    from = r.fake.n_tx;
+    lbr_gw_core_heartbeat(&r.core, &h);
+    uint8_t state, flags;
+    CHECK_EQ_U(lbr_can_decode_heartbeat(&r.fake.tx[from], &state, &flags), LBR_NODE_CENTRAL);
+    CHECK((flags & LBR_HB_ERR_LINK) != 0);
 }
 
 static void test_gw_time_sync(void)
@@ -554,7 +753,8 @@ static void test_gw_node_lost_and_lora(void)
     static gw_rig_t r;
     gw_rig_init(&r);
     lbr_health_record_t nh = {.node_id = LBR_NODE_TEMPERATURE, .state = LBR_NODE_RUN};
-    lbr_can_frame_t     f;
+    r.core.links.dash      = NULL; /* no dashboard in this test */
+    lbr_can_frame_t f;
     lbr_can_encode_health_page(LBR_NODE_TEMPERATURE, &nh, 0, &f);
     lbr_gw_core_on_rx(&r.core, &f, r.fake.mono);
 
@@ -590,8 +790,10 @@ int main(void)
     RUN(test_node_sensor_fault_and_recovery);
     RUN(test_node_rejects_bad_config);
     RUN(test_node_counts_overruns_and_bus_off);
+    RUN(test_node_app_hooks);
     RUN(test_gw_logs_everything_first);
     RUN(test_gw_time_sync);
+    RUN(test_gw_dashboard_link);
     RUN(test_gw_node_lost_and_lora);
     TEST_MAIN_END();
 }

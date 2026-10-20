@@ -27,13 +27,13 @@ static void unit_shape(lbr_unit_t unit, float *offset, float *amp)
             *offset = 0.0f;
             *amp    = 9.8f;
             break;
-        case LBR_UNIT_KPA:
-            *offset = 1500.0f;
-            *amp    = 1400.0f;
-            break;
-        case LBR_UNIT_MM:
+        case LBR_UNIT_RAD_PER_S:
             *offset = 0.0f;
-            *amp    = 120.0f;
+            *amp    = 2.0f;
+            break;
+        case LBR_UNIT_DEGREE:
+            *offset = 0.0f;
+            *amp    = 90.0f;
             break;
         case LBR_UNIT_MICROSTRAIN:
             *offset = 0.0f;
@@ -42,10 +42,6 @@ static void unit_shape(lbr_unit_t unit, float *offset, float *amp)
         case LBR_UNIT_RPM:
             *offset = 2500.0f;
             *amp    = 1200.0f;
-            break;
-        case LBR_UNIT_VOLT:
-            *offset = 12.6f;
-            *amp    = 0.4f;
             break;
         default:
             *offset = 0.0f;

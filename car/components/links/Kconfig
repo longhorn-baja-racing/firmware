@@ -1,0 +1,93 @@
+menu "LBR live links (Central)"
+
+    menu "USB serial link"
+        config LBR_USB_BAUD
+            int "UART0 baud rate"
+            default 921600
+            help
+                The ESP32 talks to the host through its USB-UART bridge on
+                UART0. Frames are COBS-encoded packets (packet.h); see
+                dev/tools/lbr_decode.py serial for a host-side reader.
+
+        config LBR_USB_TX_BUFFER_KB
+            int "TX buffer (KiB)"
+            range 4 64
+            default 16
+    endmenu
+
+    menu "LoRa link (SX127x)"
+        config LBR_LORA_SCLK_GPIO
+            int "SPI SCLK GPIO"
+            range -1 48
+            default -1
+        config LBR_LORA_MOSI_GPIO
+            int "SPI MOSI GPIO"
+            range -1 48
+            default -1
+        config LBR_LORA_MISO_GPIO
+            int "SPI MISO GPIO"
+            range -1 48
+            default -1
+        config LBR_LORA_CS_GPIO
+            int "SPI CS (NSS) GPIO"
+            range -1 48
+            default -1
+        config LBR_LORA_RST_GPIO
+            int "Reset GPIO (-1 = not wired)"
+            range -1 48
+            default -1
+        config LBR_LORA_DIO0_GPIO
+            int "DIO0 GPIO (-1 = poll the IRQ register)"
+            range -1 48
+            default -1
+
+        config LBR_LORA_FREQ_HZ
+            int "Carrier frequency (Hz)"
+            default 915000000
+            help
+                915 MHz for North America (FCC part 15.247). Use 868 MHz
+                with a 1% (10 permille) duty ceiling in the EU.
+
+        config LBR_LORA_SF
+            int "Spreading factor"
+            range 7 12
+            default 9
+
+        config LBR_LORA_BW_KHZ
+            int "Bandwidth (kHz)"
+            default 125
+            help
+                125, 250, or 500.
+
+        config LBR_LORA_CR
+            int "Coding rate denominator - 4 (1 = 4/5 .. 4 = 4/8)"
+            range 1 4
+            default 1
+
+        config LBR_LORA_TX_DBM
+            int "TX power (dBm, PA_BOOST)"
+            range 2 20
+            default 17
+
+        config LBR_LORA_SYNC_WORD
+            hex "Sync word"
+            default 0x12
+            help
+                0x12 is the private-network sync word; it must match the pit
+                receiver.
+    endmenu
+
+    menu "WiFi pit link"
+        config LBR_WIFI_STREAM_PORT
+            int "Live stream TCP port"
+            default 5760
+        comment "SSID, password, channel, and band: LBR wireless links menu"
+    endmenu
+
+    menu "BLE walk-up diagnostics"
+        config LBR_BLE_NAME
+            string "Advertised name"
+            default "LBR-CENTRAL"
+    endmenu
+
+endmenu

@@ -3,64 +3,33 @@
 #include "lbr/nodes.h"
 
 /*
- * temperature node: Engine, CVT, gearbox, brake, ambient, and auxiliary temperatures.
+ * temperature node, the Temperature Controller (ESP32, CAN node 4): four brake temperatures and the
+ * CVT temperature (DAQ-WIRING.md section 4).
  *
- * Pure data, compiled into the host tests: rates and the CAN budget of every
- * node are validated in CI. Rates are starting points; change them here and
- * the budget tests will say whether the bus can carry it.
+ * Pure data, compiled into the host tests: each slot's signals must travel in
+ * frames of the CAN frame table (car/components/protocol/frames.c) that this
+ * node sends at the slot's rate, and the whole bus must stay inside its
+ * budget. Change a rate in both places and the tests say whether it fits.
  */
 
-static const lbr_signal_id_t k_drivetrain[] = {
-    LBR_SIG_TEMP_ENGINE,
-    LBR_SIG_TEMP_CVT,
-    LBR_SIG_TEMP_GEARBOX,
-};
-static const lbr_signal_id_t k_brakes[] = {
-    LBR_SIG_TEMP_BRAKE_FRONT,
-    LBR_SIG_TEMP_BRAKE_REAR,
-};
-static const lbr_signal_id_t k_ambient[] = {
-    LBR_SIG_TEMP_AMBIENT,
-};
-static const lbr_signal_id_t k_aux[] = {
-    LBR_SIG_TEMP_AUX_1,
-    LBR_SIG_TEMP_AUX_2,
-    LBR_SIG_TEMP_AUX_3,
-    LBR_SIG_TEMP_AUX_4,
-};
+static const lbr_signal_id_t k_brakes[] = {LBR_SIG_TEMP_BRAKE_FL, LBR_SIG_TEMP_BRAKE_FR,
+                                           LBR_SIG_TEMP_BRAKE_BL, LBR_SIG_TEMP_BRAKE_BR};
+static const lbr_signal_id_t k_cvt[]    = {LBR_SIG_TEMP_CVT};
 
 static const lbr_slot_t k_slots[TEMPERATURE_SLOT_COUNT] = {
-    [TEMPERATURE_SLOT_DRIVETRAIN] =
-        {
-            .name        = "drivetrain",
-            .signals     = k_drivetrain,
-            .n_signals   = sizeof k_drivetrain / sizeof k_drivetrain[0],
-            .rate_hz     = 10,
-            .publish_div = 1,
-        },
     [TEMPERATURE_SLOT_BRAKES] =
         {
-            .name        = "brakes",
-            .signals     = k_brakes,
-            .n_signals   = sizeof k_brakes / sizeof k_brakes[0],
-            .rate_hz     = 10,
-            .publish_div = 1,
+            .name      = "brakes",
+            .signals   = k_brakes,
+            .n_signals = sizeof k_brakes / sizeof k_brakes[0],
+            .rate_hz   = 10,
         },
-    [TEMPERATURE_SLOT_AMBIENT] =
+    [TEMPERATURE_SLOT_CVT] =
         {
-            .name        = "ambient",
-            .signals     = k_ambient,
-            .n_signals   = sizeof k_ambient / sizeof k_ambient[0],
-            .rate_hz     = 1,
-            .publish_div = 1,
-        },
-    [TEMPERATURE_SLOT_AUX] =
-        {
-            .name        = "aux",
-            .signals     = k_aux,
-            .n_signals   = sizeof k_aux / sizeof k_aux[0],
-            .rate_hz     = 2,
-            .publish_div = 1,
+            .name      = "cvt",
+            .signals   = k_cvt,
+            .n_signals = sizeof k_cvt / sizeof k_cvt[0],
+            .rate_hz   = 10,
         },
 };
 

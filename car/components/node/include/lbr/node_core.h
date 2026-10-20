@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "lbr/acq.h"
 #include "lbr/can.h"
 #include "lbr/health.h"
 #include "lbr/logging.h"
@@ -14,8 +15,8 @@
 /*
  * Sensor-node logic, independent of the platform.
  *
- * Everything a sensor node decides (validation, acquisition and retries,
- * stamping, sequencing, decimation, publishing, local logging, time sync,
+ * Everything a sensor node decides (validation, grid-locked acquisition and
+ * retries, frame packing, publishing, local logging, time sync, commands,
  * heartbeats, events) lives here. It touches hardware only through
  * lbr_node_hal_t, so the same code runs on an ESP32 (node_esp.c: FreeRTOS
  * tasks, TWAI, esp_timer, SD) and in the simulator (dev/sim), where every
@@ -65,20 +66,20 @@ typedef struct {
 typedef struct {
     lbr_reset_reason_t reset_reason;
     uint32_t           boot_count;
-    uint32_t           can_bitrate;
-    uint32_t           can_budget_permille;
+    uint32_t           can_bitrate; /* recorded in the session config */
 } lbr_node_boot_t;
 
-#define LBR_NODE_SENSOR_RETRY_US 2000000u
+#define LBR_NODE_SLOT_MAX_FRAMES 4u
 
+/* One slot: its acquisition engine and the frames it fills. */
 typedef struct {
-    lbr_stream_t streams[LBR_SENSOR_MAX_SIGNALS];
-    atomic_bool  healthy;
-    atomic_bool  calibrated;
-    uint64_t     next_retry_us; /* local clock */
+    lbr_acq_slot_t         acq;
+    const lbr_frame_def_t *frames[LBR_NODE_SLOT_MAX_FRAMES];
+    uint8_t chan[LBR_NODE_SLOT_MAX_FRAMES][LBR_FRAME_MAX_FIELDS]; /* field -> channel */
+    size_t  n_frames;
 } lbr_node_slot_state_t;
 
-typedef struct {
+typedef struct lbr_node_core {
     const lbr_node_config_t *cfg;
     lbr_node_hal_t           hal;
     lbr_node_boot_t          boot;
@@ -92,20 +93,24 @@ typedef struct {
     char     config_error[128];
 
     lbr_node_slot_state_t slot[LBR_NODE_MAX_SENSORS];
-    lbr_stream_t          evt_stream;
-    lbr_stream_t          fault_stream;
-    lbr_time_sync_rx_t    sync; /* touched only by the CAN RX caller */
+    uint32_t              evt_seq; /* guarded by hal.lock */
+    lbr_time_sync_rx_t    sync;    /* touched only by the CAN RX caller */
 
     atomic_uint   acquired;
     atomic_uint   published;
     atomic_uint   logged;
     atomic_uint   overruns;
+    atomic_uint   out_of_range; /* readings sent as OUT_OF_RANGE: did not fit their field */
     atomic_ullong last_sample_us;
     atomic_uint   sync_unmatched;
+    atomic_uint   commands;
+    atomic_uint   app_loss;  /* losses the app counted (lbr_node_core_count_loss) */
+    atomic_uint   app_flags; /* LBR_HB_ERR_* the app raises (lbr_node_core_set_app_flags) */
 
     /* Heartbeat caller only. */
     uint32_t prev_acquired, prev_published, prev_logged;
     uint32_t last_bus_off;
+    uint32_t prev_loss;
 } lbr_node_core_t;
 
 /*
@@ -123,20 +128,33 @@ void lbr_node_core_start(lbr_node_core_t *c, bool can_up, bool can_pins_unset, l
 /* First bring-up of slot i's sensor (call from that slot's context). */
 void lbr_node_core_slot_start(lbr_node_core_t *c, size_t i);
 
-/* One acquisition period of slot i. `missed` periods were skipped since the
- * last call (counted as overruns). */
-void lbr_node_core_slot_tick(lbr_node_core_t *c, size_t i, uint32_t missed);
+/* Slot i woke up at (or just after) a grid point: sample, log, publish. */
+void lbr_node_core_slot_tick(lbr_node_core_t *c, size_t i);
 
-/* A received CAN frame with its local receive time. Consumes time sync;
- * passes everything else to cfg->on_frame. */
+/* Shared time of slot i's next grid point (the platform waits for it). */
+uint64_t lbr_node_core_slot_next_due(lbr_node_core_t *c, size_t i);
+
+/* A received CAN frame with its local receive time. Consumes time sync and
+ * commands; passes everything else to cfg->on_frame. */
 void lbr_node_core_on_frame(lbr_node_core_t *c, const lbr_can_frame_t *f, uint64_t rx_local_us);
 
-/* One heartbeat period: build the record, publish its pages, log it, and
- * raise a bus-off event when the count moved. */
+/* One heartbeat period: build the record, publish the heartbeat and its
+ * health pages, log it, and raise a bus-off event when the count moved. */
 void lbr_node_core_heartbeat(lbr_node_core_t *c, lbr_health_record_t *out);
 
-/* Publish an EVENT or FAULT sample (and log it locally). */
+/* Publish an EVENT or FAULT (and log it locally). */
 void lbr_node_core_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault);
 
 /* Callback shape for lbr_log_service on_event, routed to a core. */
 void lbr_node_core_on_log_event(lbr_node_core_t *c, uint16_t code, bool fault);
+
+/* Send a frame the app built (the IMU Controller forwarding corner data);
+ * counted as published. False if it was not queued (counted by the
+ * controller). */
+bool lbr_node_core_send(lbr_node_core_t *c, const lbr_can_frame_t *f);
+
+/* App-level heartbeat error flags (e.g. LBR_HB_ERR_LINK), and losses the app
+ * detected (e.g. corner samples that never arrived), reported in
+ * transport_error_count. */
+void lbr_node_core_set_app_flags(lbr_node_core_t *c, uint8_t flags);
+void lbr_node_core_count_loss(lbr_node_core_t *c, uint32_t n);

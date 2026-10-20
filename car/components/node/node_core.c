@@ -43,13 +43,21 @@ static void unlock(lbr_node_core_t *c)
 /* ------------------------------------------------------------------------ */
 /* Publishing                                                                */
 
-static void publish(lbr_node_core_t *c, const lbr_sample_t *s)
+static void send_frame(lbr_node_core_t *c, const lbr_can_frame_t *f)
 {
-    lbr_can_frame_t f;
-    if (c->can_up && lbr_can_encode_sample(s, &f) && c->hal.can_send(c->hal.ctx, &f)) {
+    if (c->can_up && c->hal.can_send(c->hal.ctx, f)) {
         atomic_fetch_add(&c->published, 1);
     }
     /* A failed send is counted by the CAN controller (tx_dropped). */
+}
+
+bool lbr_node_core_send(lbr_node_core_t *c, const lbr_can_frame_t *f)
+{
+    if (!c->can_up || !c->hal.can_send(c->hal.ctx, f)) {
+        return false;
+    }
+    atomic_fetch_add(&c->published, 1);
+    return true;
 }
 
 static void log_sample(lbr_node_core_t *c, const lbr_sample_t *s)
@@ -62,28 +70,48 @@ static void log_sample(lbr_node_core_t *c, const lbr_sample_t *s)
 
 void lbr_node_core_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault)
 {
-    lbr_reading_t r = {.valid = true, .v.u32 = lbr_event_value(code, arg)};
-    lbr_sample_t  s;
-    uint32_t      pub_seq = 0;
-
     const char *name = lbr_event_name(code);
     say(c, fault ? LBR_LOG_LVL_ERROR : LBR_LOG_LVL_WARN, "%s %s (0x%04x) arg %u",
         fault ? "FAULT" : "event", name != NULL ? name : "?", (unsigned)code, (unsigned)arg);
-    uint64_t t      = c->hal.now_us(c->hal.ctx);
-    bool     synced = c->hal.time_synced(c->hal.ctx);
+
+    lbr_sample_t s = {
+        .signal    = fault ? LBR_SIG_FAULT : LBR_SIG_EVENT,
+        .source    = c->cfg->node_id,
+        .type      = LBR_VAL_STATUS,
+        .valid     = true,
+        .synced    = c->hal.time_synced(c->hal.ctx),
+        .t_mono_us = c->hal.now_us(c->hal.ctx),
+    };
+    s.v.u32 = lbr_event_value(code, arg);
     lock(c);
-    lbr_stream_sample(fault ? &c->fault_stream : &c->evt_stream, 1, c->cfg->node_id,
-                      fault ? LBR_SIG_FAULT : LBR_SIG_EVENT, &r, t, synced, &s, &pub_seq);
+    s.seq = c->evt_seq++;
     unlock(c);
 
     log_sample(c, &s);
-    s.seq = pub_seq;
-    publish(c, &s);
+    lbr_can_frame_t f;
+    if (lbr_can_encode_event(&s, &f)) {
+        send_frame(c, &f);
+    }
 }
 
 void lbr_node_core_on_log_event(lbr_node_core_t *c, uint16_t code, bool fault)
 {
     lbr_node_core_event(c, (lbr_event_code_t)code, 0, fault);
+}
+
+static void acq_event(void *ctx, lbr_event_code_t code, uint16_t arg, bool fault)
+{
+    lbr_node_core_event(ctx, code, arg, fault);
+}
+
+void lbr_node_core_set_app_flags(lbr_node_core_t *c, uint8_t flags)
+{
+    atomic_store(&c->app_flags, flags);
+}
+
+void lbr_node_core_count_loss(lbr_node_core_t *c, uint32_t n)
+{
+    atomic_fetch_add(&c->app_loss, n);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -97,8 +125,14 @@ bool lbr_node_core_init(lbr_node_core_t *c, const lbr_node_config_t *cfg, const 
     c->hal  = *hal;
     c->boot = *boot;
     for (size_t i = 0; i < cfg->n_acq && i < LBR_NODE_MAX_SENSORS; i++) {
-        c->sim = c->sim || (cfg->acq[i].sensor != NULL && cfg->acq[i].sensor->simulated);
-        atomic_store(&c->slot[i].calibrated, true);
+        const lbr_acq_t       *a  = &cfg->acq[i];
+        lbr_node_slot_state_t *st = &c->slot[i];
+        c->sim                    = c->sim || (a->sensor != NULL && a->sensor->simulated);
+        lbr_acq_slot_init(&st->acq, a->sensor, a->rate_hz, (uint16_t)i);
+        if (a->sensor != NULL && a->sensor->signals != NULL) {
+            st->n_frames = lbr_slot_frames(cfg->node_id, a->sensor->signals, a->sensor->n_signals,
+                                           st->frames, st->chan, LBR_NODE_SLOT_MAX_FRAMES);
+        }
     }
     lbr_node_config_text(cfg, c->config_text, sizeof c->config_text);
     c->config_crc = lbr_crc32(c->config_text, strlen(c->config_text));
@@ -108,8 +142,7 @@ bool lbr_node_core_init(lbr_node_core_t *c, const lbr_node_config_t *cfg, const 
         LBR_FW_VERSION_PATCH, LBR_PROTOCOL_VERSION, (unsigned long)boot->boot_count,
         (int)boot->reset_reason, c->sim ? " SIMULATED SENSORS" : "");
 
-    c->config_valid = lbr_node_config_validate(cfg, boot->can_bitrate, boot->can_budget_permille,
-                                               c->config_error, sizeof c->config_error) == 0;
+    c->config_valid = lbr_node_config_validate(cfg, c->config_error, sizeof c->config_error) == 0;
     if (!c->config_valid) {
         say(c, LBR_LOG_LVL_ERROR, "configuration rejected: %s", c->config_error);
     }
@@ -132,93 +165,82 @@ void lbr_node_core_start(lbr_node_core_t *c, bool can_up, bool can_pins_unset, l
 /* ------------------------------------------------------------------------ */
 /* Acquisition                                                               */
 
-static void mark_all(lbr_reading_t *out, size_t n, lbr_unavail_reason_t why)
-{
-    for (size_t i = 0; i < n; i++) {
-        out[i].valid  = false;
-        out[i].reason = why;
-        out[i].v.u32  = 0;
-    }
-}
-
 void lbr_node_core_slot_start(lbr_node_core_t *c, size_t i)
 {
-    lbr_sensor_t          *sensor = c->cfg->acq[i].sensor;
-    lbr_node_slot_state_t *st     = &c->slot[i];
-    bool                   ok     = sensor->init(sensor) == 0;
-    atomic_store(&st->healthy, ok);
-    if (!ok) {
-        lbr_node_core_event(c, LBR_EVT_SENSOR_INIT_FAIL, (uint16_t)i, true);
-        st->next_retry_us = c->hal.mono_us(c->hal.ctx) + LBR_NODE_SENSOR_RETRY_US;
-    }
+    lbr_acq_slot_start(&c->slot[i].acq, c->hal.mono_us(c->hal.ctx), acq_event, c);
 }
 
-void lbr_node_core_slot_tick(lbr_node_core_t *c, size_t i, uint32_t missed)
+uint64_t lbr_node_core_slot_next_due(lbr_node_core_t *c, size_t i)
 {
-    const lbr_acq_t       *acq    = &c->cfg->acq[i];
-    lbr_sensor_t          *sensor = acq->sensor;
+    return lbr_acq_next_due(c->hal.now_us(c->hal.ctx), c->slot[i].acq.period_us);
+}
+
+static uint32_t timeline(lbr_node_core_t *c, bool *synced)
+{
+    lbr_time_servo_t ts;
+    c->hal.time_servo(c->hal.ctx, &ts);
+    *synced = ts.synced;
+    return lbr_acq_timeline(ts.synced, ts.step_count, ts.epoch_changes);
+}
+
+void lbr_node_core_slot_tick(lbr_node_core_t *c, size_t i)
+{
     lbr_node_slot_state_t *st     = &c->slot[i];
+    lbr_sensor_t          *sensor = st->acq.sensor;
     lbr_reading_t          readings[LBR_SENSOR_MAX_SIGNALS];
+    lbr_sample_t           samples[LBR_SENSOR_MAX_SIGNALS];
+    lbr_acq_tick_t         tick;
+    bool                   synced;
 
-    if (missed > 0) {
-        /* Acquisition fell behind its schedule: missed slots are counted. */
-        atomic_fetch_add(&c->overruns, missed);
+    uint32_t tl  = timeline(c, &synced);
+    uint64_t now = c->hal.now_us(c->hal.ctx);
+    if (!lbr_acq_slot_tick(&st->acq, now, c->hal.mono_us(c->hal.ctx), tl, readings, &tick,
+                           acq_event, c)) {
+        return;
     }
-
-    uint64_t t      = c->hal.now_us(c->hal.ctx);
-    bool     synced = c->hal.time_synced(c->hal.ctx);
-
-    if (atomic_load(&st->healthy)) {
-        if (sensor->read(sensor, t, readings) != 0) {
-            atomic_store(&st->healthy, false);
-            lbr_node_core_event(c, LBR_EVT_SENSOR_INIT_FAIL, (uint16_t)i, true);
-            st->next_retry_us = c->hal.mono_us(c->hal.ctx) + LBR_NODE_SENSOR_RETRY_US;
-            mark_all(readings, sensor->n_signals, LBR_UNAVAIL_SENSOR_FAULT);
-        }
-    } else {
-        mark_all(readings, sensor->n_signals, LBR_UNAVAIL_SENSOR_FAULT);
-        uint64_t now = c->hal.mono_us(c->hal.ctx);
-        if (now >= st->next_retry_us) {
-            if (sensor->init(sensor) == 0) {
-                atomic_store(&st->healthy, true);
-                lbr_node_core_event(c, LBR_EVT_SENSOR_RECOVERED, (uint16_t)i, false);
-            } else {
-                st->next_retry_us = now + LBR_NODE_SENSOR_RETRY_US;
-            }
-        }
+    if (tick.missed > 0) {
+        /* Acquisition fell behind its grid: the skipped samples are counted. */
+        atomic_fetch_add(&c->overruns, tick.missed);
     }
-    atomic_store(&st->calibrated, sensor->is_calibrated == NULL || sensor->is_calibrated(sensor));
 
     for (size_t ch = 0; ch < sensor->n_signals; ch++) {
-        lbr_sample_t s;
-        uint32_t     pub_seq;
-        bool pub = lbr_stream_sample(&st->streams[ch], acq->publish_div, c->cfg->node_id,
-                                     sensor->signals[ch], &readings[ch], t, synced, &s, &pub_seq);
-        log_sample(c, &s);
-        if (pub) {
-            s.seq = pub_seq;
-            publish(c, &s);
+        lbr_reading_to_sample(c->cfg->node_id, sensor->signals[ch], &readings[ch], tick.k,
+                              st->acq.period_us, synced, &samples[ch]);
+        log_sample(c, &samples[ch]);
+    }
+    for (size_t f = 0; f < st->n_frames; f++) {
+        const lbr_frame_def_t *d = st->frames[f];
+        lbr_sample_t           values[LBR_FRAME_MAX_FIELDS];
+        lbr_can_frame_t        frame;
+        for (size_t k = 0; k < d->n_fields; k++) {
+            values[k] = samples[st->chan[f][k]];
         }
+        unsigned misfit = lbr_can_encode_data(d, values, tick.k, &frame);
+        if (misfit > 0) {
+            atomic_fetch_add(&c->out_of_range, misfit);
+        }
+        send_frame(c, &frame);
     }
     atomic_fetch_add(&c->acquired, 1);
-    atomic_store(&c->last_sample_us, t);
+    atomic_store(&c->last_sample_us, now);
 }
 
 /* ------------------------------------------------------------------------ */
-/* CAN receive: time sync + app frames                                       */
+/* CAN receive: time sync, commands, app frames                              */
 
 void lbr_node_core_on_frame(lbr_node_core_t *c, const lbr_can_frame_t *f, uint64_t rx_local_us)
 {
-    lbr_can_id_t id = lbr_can_id_parse(f->id);
-    uint8_t      seq;
-    uint16_t     epoch;
-    uint64_t     tx_us;
+    uint8_t  seq;
+    uint16_t epoch;
+    uint64_t tx_us;
+    uint8_t  code;
+    uint8_t  args[7];
 
-    if (id.source == LBR_NODE_GATEWAY && lbr_can_decode_time_sync(f, &seq, &epoch)) {
+    if (lbr_can_decode_time_sync(f, &seq, &epoch)) {
         lbr_time_sync_on_sync(&c->sync, seq, epoch, rx_local_us);
         return;
     }
-    if (id.source == LBR_NODE_GATEWAY && lbr_can_decode_time_follow_up(f, &seq, &tx_us)) {
+    if (lbr_can_decode_time_follow_up(f, &seq, &tx_us)) {
         uint64_t gw_us, local_us;
         if (lbr_time_sync_on_follow_up(&c->sync, seq, tx_us, &gw_us, &local_us, &epoch)) {
             lbr_time_update_t r = c->hal.time_apply(c->hal.ctx, gw_us, local_us, epoch);
@@ -230,6 +252,12 @@ void lbr_node_core_on_frame(lbr_node_core_t *c, const lbr_can_frame_t *f, uint64
         } else {
             atomic_store(&c->sync_unmatched, c->sync.unmatched);
         }
+        return;
+    }
+    if (lbr_can_decode_command(f, &code, args)) {
+        /* No command changes what a sensor node does today; each is noted. */
+        atomic_fetch_add(&c->commands, 1);
+        say(c, LBR_LOG_LVL_INFO, "command 0x%02x from the Central", (unsigned)code);
         return;
     }
     if (c->cfg->on_frame != NULL) {
@@ -247,7 +275,7 @@ static uint16_t rate_hz(uint32_t now, uint32_t *prev, uint32_t period_ms)
     return (uint16_t)((uint64_t)d * 1000u / period_ms);
 }
 
-static void build_health(lbr_node_core_t *c, lbr_health_record_t *h)
+static void build_health(lbr_node_core_t *c, lbr_health_record_t *h, uint8_t *err_flags)
 {
     const lbr_node_config_t *cfg    = c->cfg;
     const uint32_t           period = cfg->health_period_ms ? cfg->health_period_ms : 1000u;
@@ -267,10 +295,11 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h)
     uint32_t calibrated = 0;
     size_t   n_acq      = cfg->n_acq < LBR_NODE_MAX_SENSORS ? cfg->n_acq : LBR_NODE_MAX_SENSORS;
     for (size_t i = 0; i < n_acq; i++) {
-        sensor_ok |= atomic_load(&c->slot[i].healthy) ? (1u << i) : 0u;
-        calibrated |= atomic_load(&c->slot[i].calibrated) ? (1u << i) : 0u;
+        sensor_ok |= atomic_load(&c->slot[i].acq.healthy) ? (1u << i) : 0u;
+        calibrated |= atomic_load(&c->slot[i].acq.calibrated) ? (1u << i) : 0u;
     }
     uint32_t all_sensors = (1u << n_acq) - 1u;
+    uint8_t  app_flags   = (uint8_t)atomic_load(&c->app_flags);
 
     uint16_t flags = 0;
     flags |= ts.synced ? LBR_HF_TIME_SYNCED : 0;
@@ -286,7 +315,8 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h)
     } else if (!c->can_up) {
         state = LBR_NODE_FAULT;
     } else if (sensor_ok != all_sensors || !ts.synced || !cs.running ||
-               (cfg->local_log && !log_open)) {
+               (cfg->local_log && !log_open) ||
+               (app_flags & (LBR_HB_ERR_LINK | LBR_HB_ERR_SENSOR))) {
         state = LBR_NODE_DEGRADED;
     }
 
@@ -308,9 +338,10 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h)
         .queue_high_water = ls.queue_high_water,
         .overflow_count   = atomic_load(&c->overruns) + ls.records_dropped + ls.records_lost_write +
                             (cfg->local_log ? ls.records_rejected_closed : 0u),
-        .rejected_count   = cs.rx_foreign + atomic_load(&c->sync_unmatched),
+        .rejected_count =
+            cs.rx_foreign + atomic_load(&c->sync_unmatched) + atomic_load(&c->out_of_range),
         .write_error_count     = ls.write_errors + ls.sync_errors,
-        .transport_error_count = cs.tx_failed,
+        .transport_error_count = cs.tx_failed + atomic_load(&c->app_loss),
         .can_tec               = cs.tec,
         .can_rec               = cs.rec,
         .can_bus_off_count     = cs.bus_off_count,
@@ -324,22 +355,44 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h)
         .time_step_count       = ts.step_count,
         .last_sync_error_us    = ts.last_error_us,
     };
+
+    /* Anything lost since the last heartbeat raises LOSS for this period. */
+    uint32_t loss = h->overflow_count + h->can_tx_dropped + h->can_rx_dropped +
+                    h->transport_error_count + ls.records_rejected_closed;
+    uint8_t  e    = app_flags;
+    e |= ts.synced ? 0u : LBR_HB_ERR_NOT_SYNCED;
+    e |= (sensor_ok != all_sensors || (calibrated & all_sensors) != all_sensors) ? LBR_HB_ERR_SENSOR
+                                                                                 : 0u;
+    e |= (cs.tec >= 128 || cs.rec >= 128 || !cs.running || cs.bus_off_count != c->last_bus_off)
+             ? LBR_HB_ERR_CAN
+             : 0u;
+    e |= c->config_valid ? 0u : LBR_HB_ERR_CONFIG;
+    e |= (cfg->local_log && !log_open) ? LBR_HB_ERR_STORAGE : 0u;
+    e |= c->sim ? LBR_HB_ERR_SIM : 0u;
+    e |= loss != c->prev_loss ? LBR_HB_ERR_LOSS : 0u;
+    c->prev_loss = loss;
+    *err_flags   = e;
 }
 
 void lbr_node_core_heartbeat(lbr_node_core_t *c, lbr_health_record_t *out)
 {
     lbr_health_record_t h;
-    build_health(c, &h);
+    uint8_t             err_flags;
+    build_health(c, &h, &err_flags);
 
     if (h.can_bus_off_count != c->last_bus_off) {
         c->last_bus_off = h.can_bus_off_count;
         lbr_node_core_event(c, LBR_EVT_CAN_BUS_OFF, (uint16_t)c->last_bus_off, true);
     }
     if (c->can_up) {
-        for (unsigned p = 0; p < LBR_HEALTH_PAGE_COUNT; p++) {
-            lbr_can_frame_t f;
-            lbr_can_encode_health_page(c->cfg->node_id, &h, p, &f);
+        lbr_can_frame_t f;
+        if (lbr_can_encode_heartbeat(c->cfg->node_id, h.state, err_flags, &f)) {
             c->hal.can_send(c->hal.ctx, &f);
+        }
+        for (unsigned p = 0; p < LBR_HEALTH_PAGE_COUNT; p++) {
+            if (lbr_can_encode_health_page(c->cfg->node_id, &h, p, &f)) {
+                c->hal.can_send(c->hal.ctx, &f);
+            }
         }
     }
     if (c->log != NULL) {

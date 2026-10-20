@@ -46,22 +46,32 @@ static bool parse_uint(const char *s, uint32_t lo, uint32_t hi, uint32_t *out)
     return true;
 }
 
-/* ESP32 (classic): GPIO 6..11 belong to the SPI flash, 20/24/28..31 do not
- * exist, and 34..39 are input-only without internal pulls. */
-static bool gpio_exists(uint32_t g)
-{
-    return g <= 39u && !(g >= 6u && g <= 11u) && g != 20u && g != 24u && !(g >= 28u && g <= 31u);
-}
+#define BIT(g)        (1ull << (g))
+#define RANGE(lo, hi) (((hi) >= 63 ? ~0ull : (BIT((hi) + 1) - 1u)) & ~(BIT(lo) - 1u))
 
-static bool gpio_has_pulls(uint32_t g)
+const lbr_io_chip_t lbr_io_chip_esp32 = {
+    .name   = "esp32",
+    .usable = RANGE(0, 39) & ~RANGE(6, 11) & ~BIT(20) & ~BIT(24) & ~RANGE(28, 31),
+    .pulls  = RANGE(0, 33),
+    .adc    = RANGE(32, 39),
+};
+
+const lbr_io_chip_t lbr_io_chip_esp32c5 = {
+    .name   = "esp32c5",
+    .usable = RANGE(0, 28) & ~RANGE(15, 22),
+    .pulls  = RANGE(0, 28),
+    .adc    = RANGE(1, 6),
+};
+
+static bool chip_has(uint64_t set, int8_t g)
 {
-    return g < 34u;
+    return g >= 0 && (set & BIT((unsigned)g)) != 0;
 }
 
 static bool parse_gpio(const char *s, int8_t *out)
 {
     uint32_t g;
-    if (!parse_uint(s, 0, 39, &g) || !gpio_exists(g)) {
+    if (!parse_uint(s, 0, 63, &g)) {
         return false;
     }
     *out = (int8_t)g;
@@ -274,19 +284,30 @@ static bool apply_key(lbr_io_chan_t *c, uint32_t bit, const char *v)
 
 /* Cross-key checks once a channel is fully parsed. */
 static int check_chan(const lbr_io_chan_t *c, uint32_t seen, lbr_value_type_t type, const char *sig,
-                      char *err, size_t err_len)
+                      const lbr_io_chip_t *chip, char *err, size_t err_len)
 {
     if ((seen & K_GPIO) == 0) {
         return fail(err, err_len, "%s: gpio missing", sig);
+    }
+    int8_t        first = c->kind == LBR_IO_ADC     ? c->u.adc.gpio
+                          : c->kind == LBR_IO_PULSE ? c->u.pulse.gpio
+                                                    : c->u.din.gpio[0];
+    uint8_t       n_pin = c->kind == LBR_IO_DIN ? c->u.din.n_gpio : 1u;
+    const int8_t *pin   = c->kind == LBR_IO_DIN ? c->u.din.gpio : &first;
+    for (uint8_t i = 0; i < n_pin; i++) {
+        if (!chip_has(chip->usable, pin[i])) {
+            return fail(err, err_len, "%s: gpio %d is not usable on %s", sig, (int)pin[i],
+                        chip->name);
+        }
     }
     switch (c->kind) {
         case LBR_IO_ADC: {
             if (type != LBR_VAL_F32) {
                 return fail(err, err_len, "%s: adc needs an f32 signal", sig);
             }
-            if (c->u.adc.gpio < 32) {
-                return fail(err, err_len, "%s: adc gpio %d is not an ADC1 pin (32..39)", sig,
-                            (int)c->u.adc.gpio);
+            if (!chip_has(chip->adc, c->u.adc.gpio)) {
+                return fail(err, err_len, "%s: adc gpio %d is not an ADC1 pin on %s", sig,
+                            (int)c->u.adc.gpio, chip->name);
             }
             const uint32_t lin = K_MV0 | K_V0 | K_MV1 | K_V1;
             const uint32_t ntc = K_R25 | K_BETA | K_RPULL | K_VSUP;
@@ -318,7 +339,7 @@ static int check_chan(const lbr_io_chan_t *c, uint32_t seen, lbr_value_type_t ty
             if ((seen & K_SCALE) == 0 || c->u.pulse.scale <= 0.0f) {
                 return fail(err, err_len, "%s: pulse needs scale > 0", sig);
             }
-            if (c->u.pulse.pull != LBR_IO_PULL_NONE && !gpio_has_pulls((uint32_t)c->u.pulse.gpio)) {
+            if (c->u.pulse.pull != LBR_IO_PULL_NONE && !chip_has(chip->pulls, c->u.pulse.gpio)) {
                 return fail(err, err_len, "%s: gpio %d has no internal pulls", sig,
                             (int)c->u.pulse.gpio);
             }
@@ -332,8 +353,7 @@ static int check_chan(const lbr_io_chan_t *c, uint32_t seen, lbr_value_type_t ty
                 return fail(err, err_len, "%s: din needs a bool or u32 signal", sig);
             }
             for (uint8_t i = 0; i < c->u.din.n_gpio; i++) {
-                if (c->u.din.pull != LBR_IO_PULL_NONE &&
-                    !gpio_has_pulls((uint32_t)c->u.din.gpio[i])) {
+                if (c->u.din.pull != LBR_IO_PULL_NONE && !chip_has(chip->pulls, c->u.din.gpio[i])) {
                     return fail(err, err_len, "%s: gpio %d has no internal pulls", sig,
                                 (int)c->u.din.gpio[i]);
                 }
@@ -356,8 +376,8 @@ static char *trim(char *s)
     return s;
 }
 
-static int parse_chan(char *text, lbr_signal_id_t signal, lbr_io_chan_t *c, char *err,
-                      size_t err_len)
+static int parse_chan(char *text, lbr_signal_id_t signal, lbr_io_chan_t *c,
+                      const lbr_io_chip_t *chip, char *err, size_t err_len)
 {
     const lbr_signal_info_t *info = lbr_signal_info(signal);
     const char              *sig  = info != NULL ? info->name : "?";
@@ -405,11 +425,11 @@ static int parse_chan(char *text, lbr_signal_id_t signal, lbr_io_chan_t *c, char
         }
         seen |= k->bit;
     }
-    return check_chan(c, seen, info->type, sig, err, err_len);
+    return check_chan(c, seen, info->type, sig, chip, err, err_len);
 }
 
 int lbr_io_parse(const char *spec, const lbr_signal_id_t *signals, size_t n, lbr_io_chan_t *chans,
-                 char *err, size_t err_len)
+                 const lbr_io_chip_t *chip, char *err, size_t err_len)
 {
     if (spec == NULL || spec[0] == '\0') {
         return fail(err, err_len, "empty input spec");
@@ -438,7 +458,7 @@ int lbr_io_parse(const char *spec, const lbr_signal_id_t *signals, size_t n, lbr
         char text[CHAN_TEXT_MAX];
         memcpy(text, start, len);
         text[len] = '\0';
-        if (parse_chan(text, signals[idx], &chans[idx], err, err_len) != 0) {
+        if (parse_chan(text, signals[idx], &chans[idx], chip, err, err_len) != 0) {
             return -1;
         }
         idx++;

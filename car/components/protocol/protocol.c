@@ -4,20 +4,20 @@
 
 #include "lbr/bytes.h"
 #include "lbr/crc32.h"
+#include "lbr/frames.h"
 #include "lbr/nodes.h"
 
 /* ------------------------------------------------------------------------ */
 /* Catalog                                                                   */
 
 static const lbr_signal_info_t s_catalog[] = {
-#define LBR_SIGNAL(name_, id_, type_, unit_, prio_, desc_)                                         \
+#define LBR_SIGNAL(name_, id_, type_, unit_, desc_)                                                \
     {                                                                                              \
-        .id       = LBR_SIG_##name_,                                                               \
-        .name     = #name_,                                                                        \
-        .type     = LBR_VAL_##type_,                                                               \
-        .unit     = LBR_UNIT_##unit_,                                                              \
-        .can_prio = (prio_),                                                                       \
-        .desc     = (desc_),                                                                       \
+        .id   = LBR_SIG_##name_,                                                                   \
+        .name = #name_,                                                                            \
+        .type = LBR_VAL_##type_,                                                                   \
+        .unit = LBR_UNIT_##unit_,                                                                  \
+        .desc = (desc_),                                                                           \
     },
 #include "lbr/signals.def"
 #undef LBR_SIGNAL
@@ -60,12 +60,9 @@ const char *lbr_unit_name(lbr_unit_t unit)
         [LBR_UNIT_NONE] = "",           [LBR_UNIT_M_PER_S2] = "m/s^2",
         [LBR_UNIT_RAD_PER_S] = "rad/s", [LBR_UNIT_DEG_C] = "degC",
         [LBR_UNIT_RPM] = "rpm",         [LBR_UNIT_M_PER_S] = "m/s",
-        [LBR_UNIT_PERCENT] = "%",       [LBR_UNIT_VOLT] = "V",
-        [LBR_UNIT_AMP] = "A",           [LBR_UNIT_MICROTESLA] = "uT",
-        [LBR_UNIT_DEG_E7] = "deg*1e-7", [LBR_UNIT_METER] = "m",
-        [LBR_UNIT_DEGREE] = "deg",      [LBR_UNIT_COUNT] = "count",
-        [LBR_UNIT_KPA] = "kPa",         [LBR_UNIT_MM] = "mm",
-        [LBR_UNIT_MICROSTRAIN] = "ue",  [LBR_UNIT_LITER] = "L",
+        [LBR_UNIT_PERCENT] = "%",       [LBR_UNIT_DEG_E7] = "deg*1e-7",
+        [LBR_UNIT_METER] = "m",         [LBR_UNIT_DEGREE] = "deg",
+        [LBR_UNIT_COUNT] = "count",     [LBR_UNIT_MICROSTRAIN] = "ue",
         [LBR_UNIT_UNIX_S] = "unix_s",   [LBR_UNIT_BITMASK] = "bitmask",
     };
     return ((unsigned)unit < LBR_UNIT_COUNT_) ? names[unit] : "?";
@@ -148,15 +145,14 @@ uint32_t lbr_catalog_hash(void)
     uint32_t crc = 0;
     for (size_t i = 0; i < CATALOG_LEN; i++) {
         const lbr_signal_info_t *s = &s_catalog[i];
-        uint8_t                  rec[5];
+        uint8_t                  rec[4];
         lbr_put_u16(rec, (uint16_t)s->id);
         rec[2] = (uint8_t)s->type;
         rec[3] = (uint8_t)s->unit;
-        rec[4] = s->can_prio;
         crc    = lbr_crc32_update(crc, rec, sizeof rec);
         crc    = lbr_crc32_update(crc, s->name, strlen(s->name) + 1);
     }
-    return crc;
+    return lbr_frames_hash(crc);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -164,7 +160,7 @@ uint32_t lbr_catalog_hash(void)
 
 #define FLAG_VALID     0x10u
 #define FLAG_SYNCED    0x20u
-#define FLAG_SEQ_SHORT 0x40u
+#define FLAG_SEQ_INFER 0x40u
 #define FLAG_RESERVED  0x80u
 #define TYPE_MASK      0x0Fu
 
@@ -207,7 +203,7 @@ size_t lbr_sample_encode(const lbr_sample_t *s, uint8_t *buf, size_t cap)
     uint8_t tf = (uint8_t)s->type;
     tf |= s->valid ? FLAG_VALID : 0u;
     tf |= s->synced ? FLAG_SYNCED : 0u;
-    tf |= s->seq_short ? FLAG_SEQ_SHORT : 0u;
+    tf |= s->seq_inferred ? FLAG_SEQ_INFER : 0u;
 
     lbr_put_u16(buf + 0, (uint16_t)s->signal);
     buf[2] = s->source;
@@ -228,14 +224,14 @@ size_t lbr_sample_decode(const uint8_t *buf, size_t len, lbr_sample_t *out)
         return 0;
     }
     lbr_sample_t s = {
-        .signal    = (lbr_signal_id_t)lbr_get_u16(buf + 0),
-        .source    = buf[2],
-        .type      = (lbr_value_type_t)(tf & TYPE_MASK),
-        .valid     = (tf & FLAG_VALID) != 0,
-        .synced    = (tf & FLAG_SYNCED) != 0,
-        .seq_short = (tf & FLAG_SEQ_SHORT) != 0,
-        .seq       = lbr_get_u32(buf + 4),
-        .t_mono_us = lbr_get_u64(buf + 8),
+        .signal       = (lbr_signal_id_t)lbr_get_u16(buf + 0),
+        .source       = buf[2],
+        .type         = (lbr_value_type_t)(tf & TYPE_MASK),
+        .valid        = (tf & FLAG_VALID) != 0,
+        .synced       = (tf & FLAG_SYNCED) != 0,
+        .seq_inferred = (tf & FLAG_SEQ_INFER) != 0,
+        .seq          = lbr_get_u32(buf + 4),
+        .t_mono_us    = lbr_get_u64(buf + 8),
     };
     lbr_sample_set_value_bits(&s, lbr_get_u32(buf + 16));
     *out = s;
@@ -248,22 +244,28 @@ size_t lbr_sample_decode(const uint8_t *buf, size_t len, lbr_sample_t *out)
 const char *lbr_node_name(uint8_t node_id)
 {
     switch (node_id) {
-        case LBR_NODE_GATEWAY:
-            return "gateway";
-        case LBR_NODE_IMU_GPS:
-            return "imu_gps";
-        case LBR_NODE_SUSPENSION:
-            return "suspension";
-        case LBR_NODE_DRIVER_INPUTS:
-            return "driver_inputs";
+        case LBR_NODE_IMU:
+            return "imu";
+        case LBR_NODE_POWERTRAIN:
+            return "powertrain";
+        case LBR_NODE_DRIVER_INPUT:
+            return "driver_input";
         case LBR_NODE_TEMPERATURE:
             return "temperature";
-        case LBR_NODE_FUEL_GAUGE:
-            return "fuel_gauge";
         case LBR_NODE_STRESS:
             return "stress";
+        case LBR_NODE_CENTRAL:
+            return "central";
         case LBR_NODE_DASHBOARD:
             return "dashboard";
+        case LBR_NODE_CORNER_FL:
+            return "corner_fl";
+        case LBR_NODE_CORNER_FR:
+            return "corner_fr";
+        case LBR_NODE_CORNER_BL:
+            return "corner_bl";
+        case LBR_NODE_CORNER_BR:
+            return "corner_br";
         default:
             return "?";
     }

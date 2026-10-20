@@ -65,7 +65,7 @@ size_t lbr_status_format(const lbr_health_record_t *gw, const char *log_name,
     }
     buf[0] = '\0';
 
-    put(&o, "gw");
+    put(&o, "central");
     put_common(&o, gw);
     put(&o, " log=%s", log_name && log_name[0] ? log_name : "none");
     put(&o, " can tec%u boff%lu\n", gw->can_tec, (unsigned long)gw->can_bus_off_count);

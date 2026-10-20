@@ -64,7 +64,7 @@ static void test_status_text(void)
                              .fw_version    = 0x000200};
     lbr_can_frame_t     f;
     for (unsigned p = 0; p < LBR_HEALTH_PAGE_COUNT; p++) {
-        lbr_can_encode_health_page(LBR_NODE_IMU_GPS, &h, p, &f);
+        lbr_can_encode_health_page(LBR_NODE_IMU, &h, p, &f);
         lbr_node_table_on_frame(&t, &f, 1000);
     }
     lbr_can_encode_health_page(LBR_NODE_STRESS, &h, 0, &f);
@@ -77,8 +77,8 @@ static void test_status_text(void)
     char   buf[512];
     size_t n = lbr_status_format(&gw, "00000012.LBR", &t, 15000000, buf, sizeof buf);
     CHECK(n > 0 && n < sizeof buf);
-    CHECK(strstr(buf, "gw RUN sync sd up 5s log=00000012.LBR") != NULL);
-    CHECK(strstr(buf, "imu_gps LOST") != NULL);
+    CHECK(strstr(buf, "central RUN sync sd up 5s log=00000012.LBR") != NULL);
+    CHECK(strstr(buf, "imu LOST") != NULL);
     CHECK(strstr(buf, "stress LOST 14s") != NULL);
     for (size_t i = 0; i < n; i++) {
         CHECK((unsigned char)buf[i] < 0x80);

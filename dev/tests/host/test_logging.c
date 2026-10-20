@@ -82,7 +82,7 @@ static void open_logger(lbr_logger_t *lg, mem_store_t *m, size_t queue_cap)
 static lbr_sample_t make_sample(uint32_t seq)
 {
     lbr_sample_t s = {
-        .signal    = LBR_SIG_STRAIN_1,
+        .signal    = LBR_SIG_STRESS_1,
         .source    = 7,
         .type      = LBR_VAL_F32,
         .valid     = true,

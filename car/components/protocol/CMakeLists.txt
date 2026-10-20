@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "protocol.c"
+    SRCS "protocol.c" "frames.c"
     INCLUDE_DIRS "include"
     REQUIRES util
 )

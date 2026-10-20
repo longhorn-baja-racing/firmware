@@ -1,0 +1,35 @@
+menu "LBR central inputs"
+
+    config LBR_GPS_UART_NUM
+        int "GPS UART port"
+        range 1 1
+        default 1
+        help
+            UART used for the GPS module's NMEA output (the ESP32-C5 has
+            UART0, the console, and UART1).
+
+    config LBR_GPS_RX_GPIO
+        int "GPS RX GPIO (module TX -> ESP32-C5)"
+        range -1 28
+        default -1
+        help
+            -1 = GPS not fitted: the GPS slot reports NOT_FITTED (or simulated
+            with LBR_SENSOR_SIM). Any module with NMEA 0183 output works.
+            Pin TBD from the Central's schematic.
+
+    config LBR_GPS_TX_GPIO
+        int "GPS TX GPIO (ESP32-C5 -> module RX)"
+        range -1 28
+        default -1
+        help
+            Optional; -1 = receive only (the module runs its stored config).
+
+    config LBR_GPS_BAUD
+        int "GPS baud rate"
+        range 4800 921600
+        default 9600
+        help
+            Module default is usually 9600. A 10 Hz fix rate with GGA, RMC,
+            and GSA needs at least 38400.
+
+endmenu

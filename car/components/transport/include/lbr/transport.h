@@ -15,6 +15,8 @@ typedef enum {
     LBR_LINK_USB,      /* wired bench/pit, bulk */
     LBR_LINK_WIFI,     /* pit, bulk / OTA / config */
     LBR_LINK_BLE,      /* walk-up diagnostics, low power */
+    LBR_LINK_CORNER,   /* corner node <-> IMU Controller, 5 GHz WiFi UDP (wlink.h) */
+    LBR_LINK_DASH,     /* Central <-> cockpit dashboard, 5 GHz WiFi UDP (wlink.h) */
     LBR_LINK_COUNT_
 } lbr_link_kind_t;
 

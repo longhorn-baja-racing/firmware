@@ -1,6 +1,6 @@
 # Settings shared by every LBR node (listed first in each node's
 # SDKCONFIG_DEFAULTS; a node's own sdkconfig.defaults overrides these).
-CONFIG_IDF_TARGET="esp32"
+# The chip (CONFIG_IDF_TARGET) is set per node: esp32 or esp32c5.
 CONFIG_FREERTOS_HZ=1000
 
 # Hung tasks reset the node; the reset reason is reported next boot.

@@ -89,14 +89,28 @@ typedef struct {
     } u;
 } lbr_io_chan_t;
 
+/* Which pins a spec may use on a chip (bit g = GPIO g). */
+typedef struct {
+    const char *name;
+    uint64_t    usable; /* exists and is free for inputs (not flash/PSRAM) */
+    uint64_t    pulls;  /* has internal pull-up/down */
+    uint64_t    adc;    /* ADC1 channel (ADC2 is unusable with WiFi) */
+} lbr_io_chip_t;
+
+/* ESP32 (classic): ADC1 on 32..39, 34..39 input-only without pulls, 6..11
+ * flash. ESP32-C5: GPIO 0..28, ADC1 on 1..6, 15..22 flash/PSRAM. */
+extern const lbr_io_chip_t lbr_io_chip_esp32;
+extern const lbr_io_chip_t lbr_io_chip_esp32c5;
+
 /*
  * Parse `spec` for a slot of `n` signals into chans[0..n-1], checking every
- * channel kind against the catalog type of its signal. Returns 0, or <0 with
- * a one-line reason in `err`. An empty spec (or NULL) is an error: callers
- * use the unconfigured driver for slots without one.
+ * channel kind against the catalog type of its signal and every pin against
+ * `chip`. Returns 0, or <0 with a one-line reason in `err`. An empty spec
+ * (or NULL) is an error: callers use the unconfigured driver for slots
+ * without one.
  */
 int lbr_io_parse(const char *spec, const lbr_signal_id_t *signals, size_t n, lbr_io_chan_t *chans,
-                 char *err, size_t err_len);
+                 const lbr_io_chip_t *chip, char *err, size_t err_len);
 
 /* ADC: convert a calibrated pin voltage (mV) into a reading. */
 void lbr_io_adc_convert(const lbr_io_chan_t *c, float mv, lbr_reading_t *out);
@@ -130,7 +144,8 @@ typedef struct {
 uint32_t lbr_io_din_update(lbr_io_din_t *st, uint32_t raw, uint64_t now_us, uint32_t debounce_ms);
 
 /*
- * Hardware driver (sensor_io_esp.c). Fills `out` for the slot; the spec
+ * Hardware driver (sensor_io_esp.c), for the chip it is built for. Fills
+ * `out` for the slot; the spec
  * string must outlive the sensor. A spec that does not parse still yields a
  * sensor, whose init() fails, so the runtime reports SENSOR_INIT_FAIL and
  * every channel as SENSOR_FAULT instead of silently looking not fitted.

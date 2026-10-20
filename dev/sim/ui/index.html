@@ -73,6 +73,7 @@ svg text { font-family: system-ui, sans-serif; }
 .node.sel rect { stroke-width: 3.5; }
 .sensor { cursor: pointer; }
 .sensor.sel circle { stroke: #fff; stroke-width: 2.5; }
+.link { cursor: pointer; }
 .help { font-family: system-ui, sans-serif; color: var(--muted); }
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; grid-template-rows: auto 60vh auto 320px;
@@ -127,14 +128,14 @@ svg text { font-family: system-ui, sans-serif; }
     </div>
     <div class="pane show" id="pane-cmds"><div class="help">Pick a node (click it, then
       "Trace commands") to see every hardware call its firmware makes: CAN sends, ADC and
-      GPIO reads, UART bytes, SD writes, time-sync updates, link packets.</div></div>
+      GPIO reads, UART bytes, SD writes, time-sync updates, WiFi packets.</div></div>
     <div class="pane" id="pane-events"></div>
     <div class="pane" id="pane-cockpit"><div class="tiles" id="tiles"></div>
-      <p class="help">What the cockpit dashboard node shows, from its own value table
-      (the firmware's), including stale and unavailable values.</p></div>
+      <p class="help">What the cockpit dashboard shows, from its own value table (the
+      firmware's), fed by central over 5 GHz WiFi; stale and unavailable values included.</p></div>
     <div class="pane" id="pane-console">
       <div id="console-out"></div>
-      <input id="console-in" placeholder="command, e.g.  unplug suspension travel   |   expect all synced == 1   |   help" autocomplete="off">
+      <input id="console-in" placeholder="command, e.g.  unplug corner_fl imu   |   wifi corner_br down   |   expect can synced == 1   |   help" autocomplete="off">
     </div>
   </div>
 </div>
@@ -143,59 +144,72 @@ svg text { font-family: system-ui, sans-serif; }
 "use strict";
 // ---------------------------------------------------------------------------
 // Layout: top-down view, front of the car at the top.
+// The CAN bus is one daisy-chained trunk (DAQ-WIRING.md section 5): imu at one
+// terminated end, central at the other. Each CAN node sits on the trunk at its
+// tap (an index into TRUNK). Wireless nodes reach their peer over 5 GHz WiFi.
+const TRUNK = [[340, 418], [340, 470], [340, 720], [470, 720], [470, 110], [320, 110],
+               [200, 110], [200, 480], [200, 640], [200, 820], [200, 868]];
 const NODES = {
-  driver_inputs: {x: 320, y: 92,  label: "driver_inputs", where: "pedal box"},
-  dashboard:     {x: 320, y: 268, label: "dashboard", where: "cockpit display"},
-  stress:        {x: 150, y: 420, label: "stress", where: "frame"},
-  suspension:    {x: 490, y: 420, label: "suspension", where: "chassis"},
-  imu_gps:       {x: 320, y: 500, label: "imu_gps", where: "near CoG"},
-  gateway:       {x: 150, y: 640, label: "gateway", where: "behind the seat"},
-  fuel_gauge:    {x: 490, y: 640, label: "fuel_gauge", where: "tank"},
-  temperature:   {x: 320, y: 790, label: "temperature", where: "engine bay"},
+  imu:          {x: 340, y: 470, tap: 1, label: "imu", where: "IMU controller, under the seat, CAN end 1"},
+  powertrain:   {x: 340, y: 720, tap: 2, label: "powertrain", where: "engine bay, CAN node 2"},
+  driver_input: {x: 320, y: 110, tap: 5, label: "driver_input", where: "ahead of the pedal box, CAN node 3"},
+  temperature:  {x: 200, y: 480, tap: 7, label: "temperature", where: "left side member, CAN node 4"},
+  stress:       {x: 200, y: 640, tap: 8, label: "stress", where: "frame, CAN node 5"},
+  central:      {x: 200, y: 820, tap: 9, label: "central", where: "logger, time master, LoRa, GPS; CAN end 6"},
+  corner_fl:    {x: 95,  y: 120, peer: "imu", label: "corner_fl", where: "FL upright, own battery"},
+  corner_fr:    {x: 545, y: 120, peer: "imu", label: "corner_fr", where: "FR upright, own battery"},
+  corner_bl:    {x: 95,  y: 895, peer: "imu", label: "corner_bl", where: "BL upright, own battery"},
+  corner_br:    {x: 545, y: 895, peer: "imu", label: "corner_br", where: "BR upright, own battery"},
+  dashboard:    {x: 320, y: 262, peer: "central", label: "dashboard", where: "cockpit display, own battery"},
 };
-const TRUNK_X = 320, TRUNK_TOP = 60, TRUNK_BOTTOM = 900;
 // Sensors: position, owning node, and the signals they carry.
 const SENSORS = [
-  {id: "susp_fl", x: 125, y: 250, node: "suspension", sigs: ["SUSP_TRAVEL_FL"], label: "shock FL"},
-  {id: "susp_fr", x: 515, y: 250, node: "suspension", sigs: ["SUSP_TRAVEL_FR"], label: "shock FR"},
-  {id: "susp_rl", x: 125, y: 740, node: "suspension", sigs: ["SUSP_TRAVEL_RL"], label: "shock RL"},
-  {id: "susp_rr", x: 515, y: 740, node: "suspension", sigs: ["SUSP_TRAVEL_RR"], label: "shock RR"},
-  {id: "throttle", x: 292, y: 168, node: "driver_inputs", sigs: ["THROTTLE_POS"], label: "throttle pot"},
-  {id: "brake_f", x: 332, y: 168, node: "driver_inputs", sigs: ["BRAKE_PRESS_FRONT"], label: "brake front"},
-  {id: "brake_r", x: 358, y: 186, node: "driver_inputs", sigs: ["BRAKE_PRESS_REAR"], label: "brake rear"},
-  {id: "brake_sw", x: 278, y: 192, node: "driver_inputs", sigs: ["BRAKE_SWITCH"], label: "brake switch"},
-  {id: "steer", x: 362, y: 330, node: "driver_inputs", sigs: ["STEERING_ANGLE"], label: "steering angle"},
-  {id: "buttons", x: 402, y: 268, node: "dashboard", sigs: ["DASH_BUTTONS"], label: "buttons"},
-  {id: "imu", x: 268, y: 540, node: "imu_gps", label: "IMU",
-   sigs: ["ACCEL_X","ACCEL_Y","ACCEL_Z","GYRO_X","GYRO_Y","GYRO_Z","ORIENT_QUAT_W","ORIENT_QUAT_X",
-          "ORIENT_QUAT_Y","ORIENT_QUAT_Z","MAG_X","MAG_Y","MAG_Z","IMU_TEMP","IMU_CALIB_STATE"]},
-  {id: "gps", x: 372, y: 540, node: "imu_gps", label: "GPS",
+  {id: "gas", x: 296, y: 178, node: "driver_input", sigs: ["GAS_PEDAL"], label: "gas pedal"},
+  {id: "brake", x: 344, y: 178, node: "driver_input", sigs: ["BRAKE_PEDAL"], label: "brake pedal"},
+  {id: "steer", x: 360, y: 330, node: "driver_input", sigs: ["STEERING_ANGLE"], label: "steering angle"},
+  {id: "fuel", x: 330, y: 645, node: "powertrain", sigs: ["FUEL_LEVEL"], label: "fuel level"},
+  {id: "rpm_eng", x: 300, y: 778, node: "powertrain", sigs: ["ENGINE_RPM"], label: "engine speed"},
+  {id: "rpm_cvt", x: 427, y: 760, node: "powertrain", sigs: ["CVT_RPM"], label: "CVT speed"},
+  {id: "t_fl", x: 150, y: 290, node: "temperature", sigs: ["TEMP_BRAKE_FL"], label: "brake temp FL"},
+  {id: "t_fr", x: 490, y: 290, node: "temperature", sigs: ["TEMP_BRAKE_FR"], label: "brake temp FR"},
+  {id: "t_bl", x: 148, y: 738, node: "temperature", sigs: ["TEMP_BRAKE_BL"], label: "brake temp BL"},
+  {id: "t_br", x: 492, y: 738, node: "temperature", sigs: ["TEMP_BRAKE_BR"], label: "brake temp BR"},
+  {id: "t_cvt", x: 427, y: 810, node: "temperature", sigs: ["TEMP_CVT"], label: "CVT temp"},
+  {id: "sg1", x: 240, y: 180, node: "stress", sigs: ["STRESS_1"], label: "stress 1"},
+  {id: "sg2", x: 400, y: 180, node: "stress", sigs: ["STRESS_2"], label: "stress 2"},
+  {id: "sg3", x: 230, y: 400, node: "stress", sigs: ["STRESS_3"], label: "stress 3"},
+  {id: "sg4", x: 430, y: 400, node: "stress", sigs: ["STRESS_4"], label: "stress 4"},
+  {id: "sg5", x: 232, y: 600, node: "stress", sigs: ["STRESS_5"], label: "stress 5"},
+  {id: "sg6", x: 410, y: 600, node: "stress", sigs: ["STRESS_6"], label: "stress 6"},
+  {id: "sg7", x: 240, y: 895, node: "stress", sigs: ["STRESS_7"], label: "stress 7"},
+  {id: "sg8", x: 400, y: 895, node: "stress", sigs: ["STRESS_8"], label: "stress 8"},
+  {id: "imu_ch", x: 295, y: 530, node: "imu", label: "chassis IMU",
+   sigs: ["IMU_CH_ACCEL_X","IMU_CH_ACCEL_Y","IMU_CH_ACCEL_Z","IMU_CH_GYRO_X","IMU_CH_GYRO_Y","IMU_CH_GYRO_Z"]},
+  {id: "corner_st", x: 395, y: 530, node: "imu", label: "corner status",
+   sigs: ["CORNER_LINK","CORNER_SYNCED","CORNER_FL_BATTERY","CORNER_FR_BATTERY","CORNER_BL_BATTERY",
+          "CORNER_BR_BATTERY"]},
+  {id: "gps", x: 120, y: 575, node: "central", label: "GPS",
    sigs: ["GPS_LATITUDE","GPS_LONGITUDE","GPS_ALTITUDE","GPS_SPEED","GPS_COURSE","GPS_FIX",
           "GPS_SATELLITES","GPS_HDOP","GPS_UTC"]},
-  {id: "t_eng", x: 280, y: 735, node: "temperature", sigs: ["TEMP_ENGINE"], label: "engine NTC"},
-  {id: "t_cvt", x: 430, y: 770, node: "temperature", sigs: ["TEMP_CVT"], label: "CVT NTC"},
-  {id: "t_gbx", x: 362, y: 858, node: "temperature", sigs: ["TEMP_GEARBOX"], label: "gearbox NTC"},
-  {id: "t_bf", x: 170, y: 180, node: "temperature", sigs: ["TEMP_BRAKE_FRONT"], label: "brake temp F"},
-  {id: "t_br", x: 170, y: 830, node: "temperature", sigs: ["TEMP_BRAKE_REAR"], label: "brake temp R"},
-  {id: "t_amb", x: 440, y: 560, node: "temperature", sigs: ["TEMP_AMBIENT"], label: "ambient"},
-  {id: "t_aux", x: 230, y: 810, node: "temperature", sigs: ["TEMP_AUX_1","TEMP_AUX_2","TEMP_AUX_3","TEMP_AUX_4"], label: "aux temps"},
-  {id: "fuel", x: 368, y: 652, node: "fuel_gauge", sigs: ["FUEL_LEVEL","FUEL_VOLUME"], label: "fuel sender"},
-  {id: "sg1", x: 196, y: 300, node: "stress", sigs: ["STRAIN_1"], label: "strain 1"},
-  {id: "sg2", x: 446, y: 300, node: "stress", sigs: ["STRAIN_2"], label: "strain 2"},
-  {id: "sg3", x: 178, y: 560, node: "stress", sigs: ["STRAIN_3"], label: "strain 3"},
-  {id: "sg4", x: 462, y: 560, node: "stress", sigs: ["STRAIN_4"], label: "strain 4"},
-  {id: "sg5", x: 210, y: 880, node: "stress", sigs: ["STRAIN_5"], label: "strain 5"},
-  {id: "sg6", x: 430, y: 880, node: "stress", sigs: ["STRAIN_6"], label: "strain 6"},
-  {id: "sg7", x: 245, y: 100, node: "stress", sigs: ["STRAIN_7"], label: "strain 7"},
-  {id: "sg8", x: 395, y: 100, node: "stress", sigs: ["STRAIN_8"], label: "strain 8"},
+  {id: "dash_st", x: 255, y: 862, node: "central", sigs: ["DASH_LINK","DASH_BATTERY"], label: "dashboard status"},
+  {id: "dash_bat", x: 392, y: 262, node: "dashboard", sigs: ["DASH_BATTERY"], label: "dashboard battery"},
 ];
-const STATE_COLOR = {RUN: "var(--ok)", DEGRADED: "var(--warn)", FAULT: "var(--bad)",
+for (const c of ["FL", "FR", "BL", "BR"]) {
+  const n = NODES["corner_" + c.toLowerCase()], front = c[0] === "F", left = c[1] === "L";
+  SENSORS.push({id: "imu_" + c, x: n.x, y: front ? 235 : 795, node: "corner_" + c.toLowerCase(),
+    label: "IMU " + c, sigs: ["ACCEL_X", "ACCEL_Y", "ACCEL_Z", "GYRO_X", "GYRO_Y", "GYRO_Z"].map((a) => "IMU_" + c + "_" + a)});
+  SENSORS.push({id: "bat_" + c, x: left ? 26 : 614, y: n.y, node: "corner_" + c.toLowerCase(),
+    sigs: ["CORNER_" + c + "_BATTERY"], label: "battery " + c});
+}
+const STATE_COLOR = {RUN: "var(--ok)", DEGRADED: "var(--warn)", FAULT: "var(--bad)", LOST: "var(--bad)",
   BADCONFIG: "var(--bad)", CONFIG_INVALID: "var(--bad)", BOOT: "var(--accent)", OFF: "var(--off)"};
 const PRIO_COLOR = ["#f85149", "#ffa657", "#d2a8ff", "#79c0ff", "#56d364", "#e3b341", "#8b949e", "#8b949e"];
+const CORNER_BITS = ["FL", "FR", "BL", "BR"];
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-let snap = null, ui = {}, selected = {kind: "node", id: "gateway"};
+const wireless = (n) => n.kind === "corner" || n.kind === "dash";
+let snap = null, ui = {}, selected = {kind: "node", id: "central"};
 const seenWire = new Set();
 
 function send(cmd) {
@@ -214,11 +228,14 @@ function el(tag, attrs, parent, text) {
 }
 
 const svg = el("svg", {viewBox: "0 0 640 960", preserveAspectRatio: "xMidYMid meet"}, $("car"));
-const gCar = el("g", {}, svg), gWires = el("g", {}, svg), gBus = el("g", {}, svg),
+const gCar = el("g", {}, svg), gLinks = el("g", {}, svg), gWires = el("g", {}, svg), gBus = el("g", {}, svg),
       gSensors = el("g", {}, svg), gNodes = el("g", {}, svg), gDots = el("g", {}, svg);
 
 (function drawCar() {
   const body = {fill: "none", stroke: "#3d444d", "stroke-width": 3};
+  const part = {rx: 8, fill: "#161b22", stroke: "#30363d"};
+  const label = (x, y, text, anchor) =>
+    el("text", {x, y, "text-anchor": anchor || "middle", fill: "#484f58", "font-size": 11}, gCar, text);
   for (const [x, y] of [[60, 160], [510, 160], [60, 720], [510, 720]]) {
     el("rect", {x, y, width: 70, height: 150, rx: 18, fill: "#21262d", stroke: "#3d444d", "stroke-width": 2}, gCar);
   }
@@ -227,51 +244,69 @@ const gCar = el("g", {}, svg), gWires = el("g", {}, svg), gBus = el("g", {}, svg
                         [[470, 260], [510, 260]], [[160, 760], [130, 790]], [[480, 760], [510, 790]]]) {
     el("line", {x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: "#3d444d", "stroke-width": 4}, gCar);
   }
-  el("rect", {x: 262, y: 140, width: 116, height: 70, rx: 6, fill: "#161b22", stroke: "#30363d"}, gCar);
-  el("text", {x: 320, y: 228, "text-anchor": "middle", fill: "#484f58", "font-size": 11}, gCar, "pedal box");
+  el("rect", {x: 262, y: 140, width: 116, height: 70, ...part, rx: 6}, gCar);
+  label(320, 228, "pedal box");
   el("circle", {cx: 320, cy: 330, r: 34, fill: "none", stroke: "#484f58", "stroke-width": 5}, gCar);
-  el("rect", {x: 255, y: 420, width: 130, height: 150, rx: 18, fill: "#161b22", stroke: "#30363d"}, gCar);
-  el("text", {x: 320, y: 588, "text-anchor": "middle", fill: "#484f58", "font-size": 11}, gCar, "seat");
+  el("rect", {x: 255, y: 420, width: 130, height: 150, ...part, rx: 18}, gCar);
+  label(320, 588, "seat");
   el("line", {x1: 160, y1: 600, x2: 480, y2: 600, stroke: "#30363d", "stroke-dasharray": "6 5"}, gCar);
-  el("rect", {x: 250, y: 615, width: 140, height: 60, rx: 8, fill: "#161b22", stroke: "#30363d"}, gCar);
-  el("text", {x: 385, y: 690, "text-anchor": "end", fill: "#484f58", "font-size": 11}, gCar, "fuel tank");
-  el("rect", {x: 240, y: 700, width: 150, height: 110, rx: 8, fill: "#161b22", stroke: "#30363d"}, gCar);
-  el("text", {x: 250, y: 718, fill: "#484f58", "font-size": 11}, gCar, "engine");
-  el("rect", {x: 400, y: 700, width: 55, height: 140, rx: 8, fill: "#161b22", stroke: "#30363d"}, gCar);
-  el("text", {x: 427, y: 855, "text-anchor": "middle", fill: "#484f58", "font-size": 11}, gCar, "CVT");
-  el("rect", {x: 265, y: 830, width: 110, height: 50, rx: 8, fill: "#161b22", stroke: "#30363d"}, gCar);
+  el("rect", {x: 270, y: 615, width: 120, height: 60, ...part}, gCar);
+  label(385, 690, "fuel tank", "end");
+  el("rect", {x: 270, y: 700, width: 120, height: 110, ...part}, gCar);
+  label(280, 802, "engine", "start");
+  el("rect", {x: 400, y: 700, width: 55, height: 140, ...part}, gCar);
+  label(427, 855, "CVT");
+  el("rect", {x: 270, y: 830, width: 100, height: 50, ...part}, gCar);
+  label(320, 860, "gearbox");
   el("text", {x: 15, y: 30, fill: "#484f58", "font-size": 12}, gCar, "FRONT");
+  // Legend
+  el("line", {x1: 15, y1: 944, x2: 45, y2: 944, stroke: "var(--bus)", "stroke-width": 4}, gCar);
+  el("text", {x: 52, y: 948, fill: "var(--muted)", "font-size": 11}, gCar, "CAN (daisy chain)");
+  el("line", {x1: 170, y1: 944, x2: 200, y2: 944, stroke: "var(--ok)", "stroke-width": 2, "stroke-dasharray": "7 6"}, gCar);
+  el("text", {x: 207, y: 948, fill: "var(--muted)", "font-size": 11}, gCar, "5 GHz WiFi");
+  el("line", {x1: 290, y1: 944, x2: 320, y2: 944, stroke: "#30363d", "stroke-dasharray": "3 4"}, gCar);
+  el("text", {x: 327, y: 948, fill: "var(--muted)", "font-size": 11}, gCar, "sensor wiring");
 })();
 
 (function drawBus() {
-  const bus = {stroke: "var(--bus)", "stroke-width": 4, "stroke-linecap": "round", opacity: 0.85};
-  const trunk = el("line", {x1: TRUNK_X, y1: TRUNK_TOP, x2: TRUNK_X, y2: TRUNK_BOTTOM, ...bus}, gBus);
-  for (const [name, n] of Object.entries(NODES)) {
-    if (n.x !== TRUNK_X) el("line", {x1: n.x, y1: n.y, x2: TRUNK_X, y2: n.y, ...bus}, gBus);
+  const bus = {stroke: "var(--bus)", "stroke-width": 4, "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0.85};
+  const trunk = el("polyline", {points: TRUNK.map((p) => p.join(",")).join(" "), fill: "none", ...bus}, gBus);
+  for (const [x, y] of [TRUNK[0], TRUNK[TRUNK.length - 1]]) {
+    el("rect", {x: x - 9, y: y - 6, width: 18, height: 12, rx: 2, fill: "#2d1f4a", stroke: "var(--bus)"}, gBus);
+    el("text", {x: x + 14, y: y + 4, fill: "var(--bus)", "font-size": 10}, gBus, "120 ohm");
   }
-  for (const y of [TRUNK_TOP, TRUNK_BOTTOM]) {
-    el("rect", {x: TRUNK_X - 9, y: y - 6, width: 18, height: 12, rx: 2, fill: "#2d1f4a", stroke: "var(--bus)"}, gBus);
-  }
-  el("text", {x: TRUNK_X + 14, y: TRUNK_TOP + 4, fill: "var(--bus)", "font-size": 10}, gBus, "120 ohm");
-  el("text", {x: TRUNK_X + 14, y: TRUNK_BOTTOM + 4, fill: "var(--bus)", "font-size": 10}, gBus, "120 ohm");
   trunk.style.cursor = "pointer";
   trunk.addEventListener("click", () => select("bus", "bus"));
 })();
 
-const nodeEls = {}, sensorEls = {};
+const nodeEls = {}, sensorEls = {}, linkEls = {};
+for (const [name, n] of Object.entries(NODES)) {
+  if (!n.peer) continue;
+  const p = NODES[n.peer];
+  const g = el("g", {class: "link"}, gLinks);
+  const line = el("line", {x1: n.x, y1: n.y, x2: p.x, y2: p.y, stroke: "var(--off)", "stroke-width": 2,
+                           "stroke-dasharray": "7 6", opacity: 0.8}, g);
+  el("line", {x1: n.x, y1: n.y, x2: p.x, y2: p.y, stroke: "transparent", "stroke-width": 12}, g);
+  el("title", {}, g, "5 GHz WiFi: " + name + " to " + n.peer);
+  g.addEventListener("click", () => select("node", name));
+  linkEls[name] = line;
+}
 for (const s of SENSORS) {
   const n = NODES[s.node];
   el("line", {x1: s.x, y1: s.y, x2: n.x, y2: n.y, stroke: "#30363d", "stroke-dasharray": "3 4"}, gWires);
   const g = el("g", {class: "sensor"}, gSensors);
-  const c = el("circle", {cx: s.x, cy: s.y, r: s.sigs.length > 4 ? 11 : 8, fill: "var(--off)", stroke: "#0d1117", "stroke-width": 2}, g);
+  const big = s.sigs.length > 4;
+  const c = el("circle", {cx: s.x, cy: s.y, r: big ? 11 : 8, fill: "var(--off)", stroke: "#0d1117", "stroke-width": 2}, g);
   el("title", {}, g, s.label);
-  if (s.sigs.length > 4) el("text", {x: s.x, y: s.y + 25, "text-anchor": "middle", fill: "var(--muted)", "font-size": 10}, g, s.label);
+  if (big) el("text", {x: s.x, y: s.y + 25, "text-anchor": "middle", fill: "var(--muted)", "font-size": 10}, g, s.label);
   g.addEventListener("click", (e) => { e.stopPropagation(); select("sensor", s.id); });
   sensorEls[s.id] = {g, c};
 }
 for (const [name, n] of Object.entries(NODES)) {
   const g = el("g", {class: "node"}, gNodes);
-  const r = el("rect", {x: n.x - 66, y: n.y - 22, width: 132, height: 44, rx: 9, fill: "#161b22", stroke: "var(--off)"}, g);
+  const w = n.peer ? 108 : 124;
+  const r = el("rect", {x: n.x - w / 2, y: n.y - 22, width: w, height: 44, rx: 9, fill: "#161b22", stroke: "var(--off)"}, g);
+  if (n.peer) r.setAttribute("stroke-dasharray", "5 3");
   el("text", {x: n.x, y: n.y - 3, "text-anchor": "middle", fill: "var(--text)", "font-size": 13, "font-weight": 600}, g, n.label);
   const sub = el("text", {x: n.x, y: n.y + 13, "text-anchor": "middle", fill: "var(--muted)", "font-size": 10}, g, "booting");
   g.addEventListener("click", () => select("node", name));
@@ -279,24 +314,36 @@ for (const [name, n] of Object.entries(NODES)) {
 }
 
 // ---------------------------------------------------------------------------
-// Frames on the wire: a dot from the sender along its stub and the trunk to
-// the gateway (or out from the gateway for its own frames).
+// Frames on the wire: a dot from the sender's tap along the trunk to central
+// (or from central's tap to the far, imu end for its own frames). WiFi packets
+// run along their dashed link.
 const dots = [];
 function pathFor(src) {
-  const a = NODES[src], gw = NODES.gateway;
-  if (!a) return null;
-  if (src === "gateway") {
-    const far = Math.random() < 0.5 ? TRUNK_TOP : TRUNK_BOTTOM;
-    return [[gw.x, gw.y], [TRUNK_X, gw.y], [TRUNK_X, far]];
-  }
-  return [[a.x, a.y], [TRUNK_X, a.y], [TRUNK_X, gw.y], [gw.x, gw.y]];
+  const a = NODES[src], end = NODES.central.tap;
+  if (!a || a.tap === undefined) return null;
+  if (src === "central") return TRUNK.slice(NODES.imu.tap, end + 1).reverse();
+  return TRUNK.slice(a.tap, end + 1);
+}
+function lengthOf(pts) {
+  let total = 0;
+  for (let k = 1; k < pts.length; k++) total += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
+  return total;
+}
+function addDot(pts, r, fill, dur) {
+  if (dots.length > 70 || pts.length < 2) return;
+  const c = el("circle", {r, fill, cx: pts[0][0], cy: pts[0][1]}, gDots);
+  dots.push({c, pts, t0: performance.now(), dur});
 }
 function spawnDot(w) {
-  if (dots.length > 70) return;
   const pts = pathFor(w.src);
   if (!pts) return;
-  const c = el("circle", {r: w.error ? 6 : 4, fill: w.error ? "var(--bad)" : PRIO_COLOR[w.prio] || "#fff"}, gDots);
-  dots.push({c, pts, t0: performance.now(), dur: 700});
+  addDot(pts, w.error ? 6 : 4, w.error ? "var(--bad)" : PRIO_COLOR[w.prio] || "#fff", 250 + lengthOf(pts) * 0.45);
+}
+function spawnWifiDot(name) {
+  const n = NODES[name], p = NODES[n.peer];
+  // Corners send to imu; central sends to the dashboard.
+  const pts = n.peer === "imu" ? [[n.x, n.y], [p.x, p.y]] : [[p.x, p.y], [n.x, n.y]];
+  addDot(pts, 3.5, "var(--accent)", 500);
 }
 function animate(now) {
   for (let i = dots.length - 1; i >= 0; i--) {
@@ -329,13 +376,26 @@ function sigClass(sig) {
   if (v.reason === "NO_DATA") return {color: "var(--warn)", text: "no data"};
   return {color: "var(--bad)", text: v.reason};
 }
+function cornerBits(v) {
+  const s = CORNER_BITS.filter((c, i) => (v >> i) & 1).join(" ");
+  return s || "none";
+}
 function fmtVal(sig) {
   const v = snap && snap.signals[sig];
   if (!v) return "-";
   if (!v.valid) return v.reason;
+  if (v.unit === "bitmask" && sig.startsWith("CORNER_")) return cornerBits(v.v) + " (0x" + v.v.toString(16) + ")";
   const x = typeof v.v === "number" && !Number.isInteger(v.v) ? v.v.toFixed(Math.abs(v.v) < 10 ? 3 : 1) : v.v;
   return x + (v.unit ? " " + v.unit : "");
 }
+function linkColor(n) {
+  const w = n.wifi;
+  if (!n.powered) return "var(--off)";
+  if (!w.up) return "var(--bad)";
+  if (!w.link) return "var(--warn)";
+  return w.loss_permille > 0 ? "var(--warn)" : "var(--ok)";
+}
+const lastDelivered = {};
 
 function render() {
   if (!snap) return;
@@ -350,17 +410,26 @@ function render() {
   for (const n of snap.nodes) {
     const e = nodeEls[n.name];
     if (!e) continue;
+    const wl = wireless(n);
     const col = STATE_COLOR[n.state] || "var(--off)";
     e.r.setAttribute("stroke", col);
-    e.r.setAttribute("fill", n.connected ? "#161b22" : "#2a1215");
+    e.r.setAttribute("fill", (wl ? n.wifi.up : n.connected) ? "#161b22" : "#2a1215");
     e.g.classList.toggle("sel", selected.kind === "node" && selected.id === n.name);
     let sub = n.state;
     if (!n.powered) sub = "power off";
-    else if (!n.connected) sub = "CAN unplugged";
-    else if (n.name === "gateway") sub = n.state + "  master";
+    else if (!wl && !n.connected) sub = "CAN unplugged";
+    else if (wl && !n.wifi.up) sub = "out of WiFi range";
+    else if (n.kind === "central") sub = n.state + "  master";
+    else if (n.kind === "dash") sub = n.state + "  " + (n.wifi.link ? "linked" : "no link");
     else if (n.synced) sub = n.state + "  " + n.sync_err_us + " us";
     if (n.traced) sub += "  [trace]";
     e.sub.textContent = sub;
+    if (wl && linkEls[n.name]) {
+      linkEls[n.name].setAttribute("stroke", linkColor(n));
+      const prev = lastDelivered[n.name];
+      if (prev !== undefined && n.wifi.delivered > prev) spawnWifiDot(n.name);
+      lastDelivered[n.name] = n.wifi.delivered;
+    }
   }
   for (const s of SENSORS) {
     const e = sensorEls[s.id];
@@ -392,6 +461,7 @@ function select(kind, id) {
 function btn(label, cmd, cls) {
   return '<button class="' + (cls || "") + '" data-cmd="' + esc(cmd) + '">' + esc(label) + "</button>";
 }
+const count = (v) => (v ? '<span class="bad">' + v + "</span>" : 0);
 
 function renderSide() {
   const side = $("side");
@@ -409,100 +479,147 @@ function renderSide() {
       "<div>noise</div><div>" + b.noise_permille + " permille</div></div>" +
       "<h3>Inject</h3><div class=\"btns\">" + btn("Noise off", "noise 0") + btn("1%", "noise 10") +
       btn("5%", "noise 50") + btn("20%", "noise 200", "danger") + "</div>" +
-      '<p class="help">Every frame is timed bit for bit (bit stuffing included), arbitrated ' +
-      "by identifier, and counted in each controller's TEC/REC like the real TWAI.</p>";
+      '<p class="help">One daisy-chained trunk, imu to central, 120 ohm at both ends. Every frame ' +
+      "is timed bit for bit (bit stuffing included), arbitrated by identifier (priority = id &gt;&gt; 8, " +
+      "lower wins), and counted in each controller's TEC/REC like the real TWAI.</p>";
   } else if (selected.kind === "sensor") {
     const s = SENSORS.find((x) => x.id === selected.id);
+    const nn = node(s.node);
+    const slot = nn && nn.slots.find((sl) => sl.signals.includes(s.sigs[0]));
     h += "<h2>" + esc(s.label) + ' <span class="muted" style="font-size:12px">on ' + s.node + "</span></h2>";
     h += "<table><tr><th>signal</th><th>value</th><th></th></tr>";
     for (const sig of s.sigs) {
       const c = sigClass(sig), v = snap.signals[sig];
       h += "<tr><td>" + sig + '</td><td style="color:' + c.color + '">' + esc(fmtVal(sig)) +
-        '</td><td class="muted">' + (v ? v.age_ms + " ms" : "") + "</td></tr>";
+        '</td><td class="muted">' + (v ? v.age_ms + " ms" + (v.synced ? "" : ", unsynced") : "") + "</td></tr>";
     }
-    h += "</table><h3>Drive the sensor</h3>";
-    for (const sig of s.sigs.slice(0, 4)) {
-      h += '<div class="btns"><span class="muted" style="min-width:140px">' + sig + "</span>" +
-        '<input type="number" step="any" data-set="' + sig + '" placeholder="value">' +
-        btn("Set", "") .replace('data-cmd=""', 'data-setbtn="' + sig + '"') +
-        btn("Auto", "auto " + sig) + btn("Open circuit", "open " + sig, "danger") +
-        btn("Repair", "close " + sig) + "</div>";
-    }
-    const nn = node(s.node);
-    if (nn) {
-      const slot = nn.slots.find((sl) => sl.signals.includes(s.sigs[0]));
-      if (slot) {
-        h += "<h3>Part</h3><div class=\"kv\"><div>slot</div><div>" + slot.name + " (" + slot.kind + ")</div>" +
-          "<div>rate</div><div>" + slot.rate_hz + " Hz" + (slot.div > 1 ? ", 1/" + slot.div + " on CAN" : "") + "</div>" +
-          "<div>responding</div><div>" + (slot.unplugged ? '<span class="bad">unplugged</span>' : "yes") + "</div></div>" +
-          '<div class="btns">' + (slot.unplugged ? btn("Plug in", "plug " + s.node + " " + slot.name)
-                                                  : btn("Unplug part", "unplug " + s.node + " " + slot.name, "danger")) + "</div>";
+    h += "</table>";
+    if (slot && slot.kind === "firmware") {
+      h += '<p class="help">Computed by ' + s.node + "'s firmware from its WiFi peers, not wired to a " +
+        "pin: change it with the WiFi buttons on the peer node.</p>";
+    } else {
+      h += "<h3>Drive the sensor</h3>";
+      for (const sig of s.sigs.slice(0, 4)) {
+        h += '<div class="btns"><span class="muted" style="min-width:140px">' + sig + "</span>" +
+          '<input type="number" step="any" data-set="' + sig + '" placeholder="value">' +
+          btn("Set", "") .replace('data-cmd=""', 'data-setbtn="' + sig + '"') +
+          btn("Auto", "auto " + sig) + btn("Open circuit", "open " + sig, "danger") +
+          btn("Repair", "close " + sig) + "</div>";
       }
     }
+    if (slot) {
+      h += "<h3>Part</h3><div class=\"kv\"><div>slot</div><div>" + slot.name + " (" + slot.kind + ")</div>" +
+        "<div>rate</div><div>" + slot.rate_hz + " Hz</div>" +
+        "<div>responding</div><div>" + (slot.unplugged ? '<span class="bad">unplugged</span>' : "yes") + "</div></div>" +
+        '<div class="btns">' + (slot.unplugged ? btn("Plug in", "plug " + s.node + " " + slot.name)
+                                                : btn("Unplug part", "unplug " + s.node + " " + slot.name, "danger")) + "</div>";
+    }
     h += '<p class="help">On-chip inputs go through the firmware\'s own input-spec conversion ' +
-      "(window, range, NTC curve); the GPS through its NMEA parser. Open circuit puts the pin at 0 mV.</p>";
+      "(window, range, NTC curve); the GPS through its NMEA parser. Corner IMUs reach CAN through " +
+      "imu over 5 GHz WiFi. Open circuit puts the pin at 0 mV.</p>";
   } else {
     const n = node(selected.id);
     if (!n) { side.innerHTML = ""; return; }
+    const wl = wireless(n), central = n.kind === "central";
     const col = STATE_COLOR[n.state] || "var(--off)";
-    const c = n.can, hl = n.health;
+    const c = n.can, hl = n.health, w = n.wifi, cr = n.corner, meta = NODES[n.name] || {};
     h += "<h2>" + n.name + ' <span class="pill" style="color:' + col + ";border-color:" + col + '">' + n.state + "</span></h2>";
-    h += '<div class="muted">' + (NODES[n.name] ? NODES[n.name].where : "") + ", node id 0x" + n.id.toString(16).padStart(2, "0") + "</div>";
+    h += '<div class="muted">' + (meta.where || "") + ", node id 0x" + n.id.toString(16).padStart(2, "0") + "</div>";
     h += '<div class="btns">' +
-      btn(n.traced ? "Tracing commands" : "Trace commands", n.traced ? "trace none" : "trace " + n.name, n.traced ? "on" : "") +
-      (n.connected ? btn("Unplug CAN", "disconnect " + n.name, "danger") : btn("Plug CAN in", "connect " + n.name)) +
-      btn("Force bus-off", "busoff " + n.name, "danger") + btn("Reboot", "reboot " + n.name) +
+      btn(n.traced ? "Tracing commands" : "Trace commands", n.traced ? "trace none" : "trace " + n.name, n.traced ? "on" : "");
+    if (wl) {
+      h += w.up ? btn("Out of WiFi range", "wifi " + n.name + " down", "danger") : btn("Back in range", "wifi " + n.name + " up");
+    } else {
+      h += (n.connected ? btn("Unplug CAN", "disconnect " + n.name, "danger") : btn("Plug CAN in", "connect " + n.name)) +
+        btn("Force bus-off", "busoff " + n.name, "danger");
+    }
+    h += btn("Reboot", "reboot " + n.name) +
       (n.powered ? btn("Power off", "power " + n.name + " off", "danger") : btn("Power on", "power " + n.name + " on")) +
       "</div>";
+    const steps = hl ? hl.steps : cr ? cr.steps : "-";
     h += "<h3>Time</h3><div class=\"kv\">" +
-      "<div>synced</div><div>" + (n.name === "gateway" ? "time master (epoch " + snap.gw.epoch + ")" : n.synced ? "yes" : '<span class="warn">no</span>') + "</div>" +
-      "<div>sync error</div><div>" + (n.name === "gateway" ? "-" : n.sync_err_us + " us") + "</div>" +
-      "<div>time steps</div><div>" + hl.steps + "</div>" +
+      "<div>synced</div><div>" + (central ? "time master (epoch " + snap.gw.epoch + ")"
+                                   : n.kind === "dash" ? "no shared clock (display only)"
+                                   : n.synced ? "yes" : '<span class="warn">no</span>') + "</div>" +
+      "<div>sync error</div><div>" + (central || n.kind === "dash" ? "-" : n.sync_err_us + " us") + "</div>" +
+      "<div>time steps</div><div>" + steps + "</div>" +
       "<div>crystal</div><div>" + n.ppm.toFixed(1) + " ppm</div>" +
       "<div>uptime</div><div>" + n.uptime_s.toFixed(1) + " s, boot " + n.boot_count + "</div></div>" +
       '<div class="btns"><input type="number" data-drift="' + n.name + '" placeholder="ppm">' +
       '<button data-driftbtn="' + n.name + '">Set drift</button></div>';
-    h += "<h3>CAN controller</h3><div class=\"kv\">" +
-      "<div>state</div><div>" + (c.running ? (c.tec >= 128 ? "error passive" : "error active") : '<span class="bad">bus-off</span>') + "</div>" +
-      "<div>TEC / REC</div><div>" + c.tec + " / " + c.rec + "</div>" +
-      "<div>tx / rx</div><div>" + c.tx + " / " + c.rx + "</div>" +
-      "<div>tx dropped</div><div>" + (c.tx_dropped ? '<span class="bad">' + c.tx_dropped + "</span>" : 0) + "</div>" +
-      "<div>bus-off count</div><div>" + c.bus_off + "</div>" +
-      "<div>TX queue</div><div>" + c.queue + " frames</div></div>";
-    h += "<h3>Heartbeat</h3><div class=\"kv\">" +
-      "<div>acquire / publish</div><div>" + hl.acquire_hz + " / " + hl.publish_hz + " Hz</div>" +
-      "<div>logged</div><div>" + hl.log_hz + " /s</div>" +
-      "<div>overflow</div><div>" + (hl.overflow ? '<span class="bad">' + hl.overflow + "</span>" : 0) + "</div>" +
-      "<div>seen by gateway</div><div>" + (n.seen ? "yes" : '<span class="bad">no</span>') + "</div></div>";
+    if (c) {
+      h += "<h3>CAN controller</h3><div class=\"kv\">" +
+        "<div>state</div><div>" + (c.running ? (c.tec >= 128 ? "error passive" : "error active") : '<span class="bad">bus-off</span>') + "</div>" +
+        "<div>TEC / REC</div><div>" + c.tec + " / " + c.rec + "</div>" +
+        "<div>tx / rx</div><div>" + c.tx + " / " + c.rx + "</div>" +
+        "<div>tx dropped</div><div>" + count(c.tx_dropped) + "</div>" +
+        "<div>bus-off count</div><div>" + c.bus_off + "</div>" +
+        "<div>TX queue</div><div>" + c.queue + " frames</div></div>";
+    }
+    if (hl) {
+      h += "<h3>Heartbeat</h3><div class=\"kv\">" +
+        "<div>acquire / publish</div><div>" + hl.acquire_hz + " / " + hl.publish_hz + " Hz</div>" +
+        "<div>logged</div><div>" + hl.log_hz + " /s</div>" +
+        "<div>overflow</div><div>" + count(hl.overflow) + "</div>" +
+        "<div>transport errors</div><div>" + count(hl.transport_errors) + "</div>" +
+        "<div>seen by central</div><div>" + (n.seen ? "yes" : '<span class="bad">no</span>') + "</div></div>";
+    }
+    if (w) {
+      const lc = linkColor(n);
+      h += "<h3>5 GHz WiFi to " + meta.peer + "</h3><div class=\"kv\">" +
+        '<div>link</div><div style="color:' + lc + '">' + (!w.up ? "out of range" : w.link ? "up" : "down (reconnecting)") + "</div>" +
+        "<div>injected loss</div><div>" + w.loss_permille + " permille</div>" +
+        "<div>sent / delivered</div><div>" + w.sent + " / " + w.delivered + "</div>" +
+        "<div>dropped (queue)</div><div>" + count(w.dropped) + "</div>" +
+        "<div>sequence gaps</div><div>" + count(w.gaps) + "</div>" +
+        (n.kind === "corner" ? "<div>forwarded to CAN</div><div>" + w.forwarded + " samples</div>" +
+                               "<div>lost before CAN</div><div>" + count(w.lost) + "</div>" : "") +
+        "<div>seen by central</div><div>" + (n.seen ? "yes" : '<span class="bad">no</span>') + "</div></div>" +
+        '<div class="btns"><span class="muted">loss</span>' + btn("0", "wifi " + n.name + " loss 0") +
+        btn("5%", "wifi " + n.name + " loss 50") + btn("20%", "wifi " + n.name + " loss 200", "danger") +
+        btn("50%", "wifi " + n.name + " loss 500", "danger") + "</div>";
+    }
+    if (cr) {
+      h += "<h3>Corner sampler</h3><div class=\"kv\">" +
+        "<div>acquired</div><div>" + cr.acquired + " samples</div>" +
+        "<div>overruns</div><div>" + count(cr.overruns) + "</div>" +
+        "<div>clock updates</div><div>" + cr.clock_ok + " ok, " + cr.clock_rejected + " rejected</div>" +
+        "<div>round trip</div><div>" + cr.rtt_us + " us</div></div>";
+    }
+    const peers = snap.nodes.filter((p) => NODES[p.name] && NODES[p.name].peer === n.name);
+    if (peers.length) {
+      h += "<h3>WiFi peers</h3><table><tr><th>node</th><th>state</th><th>delivered</th><th>lost</th><th>gaps</th></tr>";
+      for (const p of peers) {
+        const pc = STATE_COLOR[p.state] || "var(--off)";
+        h += '<tr><td><button data-select="' + p.name + '">' + p.name + '</button></td><td style="color:' + pc + '">' +
+          p.state + "</td><td>" + p.wifi.delivered + "</td><td>" + count(p.wifi.lost) + "</td><td>" + count(p.wifi.gaps) + "</td></tr>";
+      }
+      h += "</table>";
+    }
     if (n.slots.length) {
       h += "<h3>Slots</h3><table><tr><th>slot</th><th>part</th><th>rate</th><th></th></tr>";
       for (const sl of n.slots) {
         h += "<tr><td>" + sl.name + '</td><td class="' + (sl.healthy ? "ok" : "bad") + '">' +
-          sl.kind + (sl.healthy ? "" : " (fault)") + "</td><td>" + sl.rate_hz + " Hz" +
-          (sl.div > 1 ? " /" + sl.div : "") + "</td><td>" +
+          sl.kind + (sl.healthy ? "" : " (fault)") + "</td><td>" + sl.rate_hz + " Hz</td><td>" +
           (sl.unplugged ? btn("Plug in", "plug " + n.name + " " + sl.name) : btn("Unplug", "unplug " + n.name + " " + sl.name, "danger")) +
           "</td></tr>";
       }
       h += "</table>";
     }
-    if (n.name === "gateway" || n.name === "stress") {
-      const sdTarget = n.name === "gateway" ? "" : " stress";
-      h += "<h3>SD card</h3>";
-      if (n.name === "gateway") {
-        const g = snap.gw;
-        h += '<div class="kv"><div>session</div><div>' + (g.log_open ? g.log_file : '<span class="bad">none</span>') + "</div>" +
-          "<div>written</div><div>" + g.records + " records, " + (g.log_bytes / 1048576).toFixed(2) + " MiB</div>" +
-          "<div>dropped</div><div>" + (g.dropped ? '<span class="bad">' + g.dropped + "</span>" : 0) + "</div>" +
-          "<div>queue high-water</div><div>" + (g.queue_hw / 100).toFixed(1) + " %</div></div>";
-      }
-      h += '<div class="btns">' + btn("Remove card", "sd" + sdTarget + " remove", "danger") +
-        btn("Insert card", "sd" + sdTarget + " insert") + btn("Fail 3 writes", "sd" + sdTarget + " fail 3", "danger") + "</div>";
-    }
-    if (n.name === "gateway") {
+    if (central) {
       const g = snap.gw;
+      h += "<h3>SD card</h3>" +
+        '<div class="kv"><div>session</div><div>' + (g.log_open ? g.log_file : '<span class="bad">none</span>') + "</div>" +
+        "<div>written</div><div>" + g.records + " records, " + (g.log_bytes / 1048576).toFixed(2) + " MiB</div>" +
+        "<div>dropped</div><div>" + count(g.dropped) + "</div>" +
+        "<div>write errors</div><div>" + count(g.write_errors) + "</div>" +
+        "<div>queue high-water</div><div>" + (g.queue_hw / 100).toFixed(1) + " %</div></div>" +
+        '<div class="btns">' + btn("Remove card", "sd remove", "danger") + btn("Insert card", "sd insert") +
+        btn("Fail 3 writes", "sd fail 3", "danger") + "</div>";
       h += "<h3>Live links</h3><div class=\"kv\">" +
         "<div>USB</div><div>" + g.usb_pkts + " packets, " + (g.usb_bytes / 1048576).toFixed(2) + " MiB</div>" +
-        "<div>WiFi</div><div>" + g.wifi_pkts + " packets</div>" +
+        "<div>WiFi (pit)</div><div>" + g.wifi_pkts + " packets</div>" +
+        "<div>dashboard</div><div>" + g.dash_pkts + " packets</div>" +
         "<div>LoRa</div><div>" + g.lora_pkts + " packets (" + g.lora_records + " records last)</div>" +
         "<div>sync not sent</div><div>" + g.sync_fail + "</div></div>" +
         '<p class="help">The SD log and the USB stream are real files in the simulator\'s output folder: ' +
@@ -517,9 +634,11 @@ function renderCockpit() {
   let h = "";
   for (const d of snap.dash) {
     const col = d.state === "ok" ? "var(--text)" : d.state === "invalid" ? "var(--bad)" : "var(--off)";
-    const v = d.state === "ok" ? (Number.isInteger(d.v) ? d.v : d.v.toFixed(1)) : d.state === "invalid" ? "n/a" : d.state;
+    let v = d.state === "invalid" ? "n/a" : d.state, unit = d.unit;
+    if (d.state === "ok" && d.unit === "bitmask") { v = cornerBits(d.v); unit = ""; }
+    else if (d.state === "ok") v = Number.isInteger(d.v) ? d.v : d.v.toFixed(1);
     h += '<div class="tile"><div class="l">' + d.sig + '</div><div class="v" style="color:' + col + '">' +
-      esc(v) + ' <span class="l">' + esc(d.unit) + "</span></div></div>";
+      esc(v) + ' <span class="l">' + esc(unit) + "</span></div></div>";
   }
   $("tiles").innerHTML = h;
 }
@@ -528,6 +647,7 @@ $("side").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
   if (b.dataset.cmd) send(b.dataset.cmd);
+  if (b.dataset.select) select("node", b.dataset.select);
   if (b.dataset.setbtn) {
     const inp = document.querySelector('input[data-set="' + b.dataset.setbtn + '"]');
     if (inp && inp.value !== "") send("set " + b.dataset.setbtn + " " + inp.value);
@@ -633,19 +753,24 @@ const HELP = [
   "unplug|plug <node> <slot>     a part stops / starts responding",
   "open|close <SIGNAL>           open circuit on one input / repair it",
   "set <SIGNAL> <value> | auto <SIGNAL>   override the vehicle model",
-  "press|release <bit>           dashboard buttons",
-  "disconnect|connect <node>     CAN cable",
-  "busoff <node>                 force the controller bus-off",
-  "noise <permille>              corrupt that share of frames",
+  "wifi <node> up|down           corner_* or dashboard in / out of range",
+  "wifi <node> loss <permille>   drop that share of its WiFi packets",
+  "disconnect|connect <node>     CAN cable (CAN nodes only)",
+  "busoff <node>                 force the controller bus-off (CAN nodes only)",
+  "noise <permille>              corrupt that share of CAN frames",
   "drift <node> <ppm>            crystal error",
   "reboot <node> | power <node> on|off",
-  "sd [node] remove|insert|fail <n>",
+  "sd remove|insert|fail <n>     the central's SD card",
   "drive race|idle",
-  "expect <node|all|bus|gateway|log|SIGNAL> <metric> <op> <value>",
-  "   metrics: state seen synced sync_err_us tx_dropped bus_off tec overflow steps",
-  "            boot_count event:<NAME>; bus: load errors; log: intact frames;",
-  "            gateway: frames_logged log_dropped usb_pkts lora_pkts sync_fail;",
+  "expect <node|all|can|corners|wireless|bus|central|log|SIGNAL> <metric> <op> <value>",
+  "   metrics: state seen synced link sync_err_us tx_dropped bus_off tec overflow steps",
+  "            boot_count transport_errors lost forwarded gaps event:<NAME>;",
+  "            bus: load errors; log: intact frames;",
+  "            central: frames_logged log_dropped usb_pkts lora_pkts dash_pkts sync_fail;",
   "            SIGNAL: valid value age_ms reason",
+  "slots: imu chassis corner_status | powertrain speeds fuel | driver_input inputs |",
+  "       temperature brakes cvt | stress stress | central gps dash_status |",
+  "       corner_* imu battery | dashboard battery",
 ];
 const hist = []; let hpos = 0;
 $("console-in").addEventListener("keydown", (e) => {

@@ -9,7 +9,10 @@
  *     same input-spec syntax as menuconfig;
  *   - the GPS (SIM_SLOT_NMEA): the position becomes NMEA sentences that the
  *     firmware's real NMEA parser decodes;
- *   - digital parts (SIM_SLOT_DIRECT, e.g. the IMU): values in catalog units.
+ *   - digital parts (SIM_SLOT_DIRECT, e.g. the IMUs): values in catalog units;
+ *   - slots whose driver is firmware (corner status on the IMU Controller,
+ *     the dashboard link on the Central) are bound by the simulator exactly
+ *     as the node apps bind them.
  */
 #include <math.h>
 #include <stdio.h>
@@ -21,7 +24,6 @@
 
 #define PI          3.14159265358979
 #define WHEELBASE_M 1.6
-#define TANK_L      4.0
 #define START_LAT   30.2849 /* a loop near Austin, TX */
 #define START_LON   (-97.7341)
 #define UTC_BASE    1792300000u
@@ -46,14 +48,13 @@ void world_init(sim_world_t *w)
     memset(w, 0, sizeof *w);
     w->mode         = SIM_DRIVE_RACE;
     w->temp_ambient = 31.0;
-    w->temp_engine  = 31.0;
     w->temp_cvt     = 31.0;
-    w->temp_gearbox = 31.0;
-    w->temp_brake_f = 31.0;
-    w->temp_brake_r = 31.0;
     w->fuel_pct     = 96.0;
+    w->batt_dash    = 88.0;
     for (int i = 0; i < 4; i++) {
-        w->travel[i] = 80.0;
+        w->travel[i]      = 80.0;
+        w->temp_brake[i]  = 31.0;
+        w->batt_corner[i] = 97.0 - 3.0 * i;
     }
 }
 
@@ -100,21 +101,46 @@ void world_step(sim_t *s, double dt)
     }
     w->vert = (w->bump - prev_bump) / dt / 1000.0 * 4.0;
 
+    /* Each corner: travel, its rate, and the wheel's vertical acceleration
+     * (what the corner IMU feels), clipped to a plausible 15 g. */
+    double roll_prev  = (w->travel[0] + w->travel[2] - w->travel[1] - w->travel[3]) / 2.0;
+    double pitch_prev = (w->travel[0] + w->travel[1] - w->travel[2] - w->travel[3]) / 2.0;
     for (int i = 0; i < 4; i++) {
-        bool   left  = (i % 2) == 0;
-        bool   front = i < 2;
-        double roll  = w->lat_acc * 4.0 * (left ? 1.0 : -1.0);
-        double pitch = w->accel * 3.0 * (front ? -1.0 : 1.0);
-        double hit   = w->bump * (front ? 1.0 : 0.7) + gauss(s) * 2.0;
-        w->travel[i] = clampd(80.0 + roll + pitch + hit, 0.0, 240.0);
+        bool   left     = (i % 2) == 0;
+        bool   front    = i < 2;
+        double roll     = w->lat_acc * 4.0 * (left ? 1.0 : -1.0);
+        double pitch    = w->accel * 3.0 * (front ? -1.0 : 1.0);
+        double hit      = w->bump * (front ? 1.0 : 0.7) + gauss(s) * 2.0;
+        double x        = clampd(80.0 + roll + pitch + hit, 0.0, 240.0);
+        double v        = (x - w->travel[i]) / dt;
+        w->corner_az[i] = clampd((v - w->travel_v[i]) / dt / 1000.0, -147.0, 147.0);
+        w->travel_v[i]  = v;
+        w->travel[i]    = x;
     }
+    double roll_now  = (w->travel[0] + w->travel[2] - w->travel[1] - w->travel[3]) / 2.0;
+    double pitch_now = (w->travel[0] + w->travel[1] - w->travel[2] - w->travel[3]) / 2.0;
+    w->roll_rate     = (roll_now - roll_prev) / dt / 1300.0; /* mm across the track -> rad/s */
+    w->pitch_rate    = (pitch_now - pitch_prev) / dt / 1600.0;
 
-    w->temp_engine  = approach(w->temp_engine, 95.0 + w->throttle / 10.0, 60.0, dt);
-    w->temp_cvt     = approach(w->temp_cvt, 60.0 + w->speed * 3.0, 90.0, dt);
-    w->temp_gearbox = approach(w->temp_gearbox, 50.0 + w->speed * 2.0, 120.0, dt);
-    w->temp_brake_f += (w->brake_kpa * 0.02 - (w->temp_brake_f - w->temp_ambient) * 0.03) * dt;
-    w->temp_brake_r += (w->brake_kpa * 0.012 - (w->temp_brake_r - w->temp_ambient) * 0.03) * dt;
+    /* Engine follows the throttle; the CVT secondary follows the wheels
+     * (0.29 m tire, 8:1 final drive). */
+    w->engine_rpm = approach(w->engine_rpm, 1800.0 + w->throttle * 20.0, 0.3, dt);
+    w->cvt_rpm    = w->speed / (2.0 * PI * 0.29) * 60.0 * 8.0;
+
+    w->temp_cvt = approach(w->temp_cvt, 60.0 + w->speed * 3.0, 90.0, dt);
+    for (int i = 0; i < 4; i++) {
+        double share = i < 2 ? 0.02 : 0.012; /* front brakes do more of the work */
+        double side  = (i % 2) == 0 ? 1.03 : 0.97;
+        w->temp_brake[i] +=
+            (w->brake_kpa * share * side - (w->temp_brake[i] - w->temp_ambient) * 0.03) * dt;
+    }
     w->fuel_pct = fmax(0.0, w->fuel_pct - (0.002 + w->throttle * 0.0004) * dt);
+    /* Batteries: a 4 h race plus margin takes them down about 20 %/h here,
+     * so a long run shows the drain. */
+    for (int i = 0; i < 4; i++) {
+        w->batt_corner[i] = fmax(0.0, w->batt_corner[i] - 0.0055 * dt);
+    }
+    w->batt_dash = fmax(0.0, w->batt_dash - 0.004 * dt);
 }
 
 static double heading_deg(const sim_world_t *w)
@@ -122,99 +148,94 @@ static double heading_deg(const sim_world_t *w)
     return w->heading * 180.0 / PI;
 }
 
+/* Corner IMU: sensor X forward, Y left, Z up (mounting is session metadata). */
+static bool corner_imu(const sim_world_t *w, sim_t *s, unsigned corner, unsigned axis, double *v)
+{
+    switch (axis) {
+        case 0:
+            *v = w->accel + 0.05 * gauss(s);
+            return true;
+        case 1:
+            *v = w->lat_acc + 0.05 * gauss(s);
+            return true;
+        case 2:
+            *v = 9.81 + w->corner_az[corner];
+            return true;
+        case 3:
+            *v = w->roll_rate + 0.01 * gauss(s);
+            return true;
+        case 4:
+            *v = w->pitch_rate + 0.01 * gauss(s);
+            return true;
+        default:
+            *v = w->yaw_rate;
+            return true;
+    }
+}
+
 bool world_signal_value(sim_t *s, lbr_signal_id_t sig, double *v)
 {
     const sim_world_t *w = &s->world;
-    double             h = w->heading;
+    if (sig >= LBR_SIG_IMU_FL_ACCEL_X && sig <= LBR_SIG_IMU_BR_GYRO_Z) {
+        unsigned k = sig - LBR_SIG_IMU_FL_ACCEL_X;
+        return corner_imu(w, s, k / 6u, k % 6u, v);
+    }
+    if (sig >= LBR_SIG_STRESS_1 && sig <= LBR_SIG_STRESS_8) {
+        unsigned k    = sig - LBR_SIG_STRESS_1;
+        double   load = w->travel[k % 4] - 80.0;
+        *v            = load * (6.0 + (double)k) + (k >= 4 ? w->lat_acc * 30.0 : 0.0) + gauss(s);
+        return true;
+    }
+    if (sig >= LBR_SIG_TEMP_BRAKE_FL && sig <= LBR_SIG_TEMP_BRAKE_BR) {
+        *v = w->temp_brake[sig - LBR_SIG_TEMP_BRAKE_FL];
+        return true;
+    }
+    if (sig >= LBR_SIG_CORNER_FL_BATTERY && sig <= LBR_SIG_CORNER_BR_BATTERY) {
+        *v = w->batt_corner[sig - LBR_SIG_CORNER_FL_BATTERY];
+        return true;
+    }
     switch (sig) {
-        case LBR_SIG_ACCEL_X:
+        case LBR_SIG_IMU_CH_ACCEL_X:
             *v = w->accel;
             return true;
-        case LBR_SIG_ACCEL_Y:
+        case LBR_SIG_IMU_CH_ACCEL_Y:
             *v = w->lat_acc;
             return true;
-        case LBR_SIG_ACCEL_Z:
+        case LBR_SIG_IMU_CH_ACCEL_Z:
             *v = 9.81 + w->vert;
             return true;
-        case LBR_SIG_GYRO_X:
-        case LBR_SIG_GYRO_Y:
-            *v = 0.02 * gauss(s);
+        case LBR_SIG_IMU_CH_GYRO_X:
+            *v = w->roll_rate * 0.6 + 0.02 * gauss(s);
             return true;
-        case LBR_SIG_GYRO_Z:
+        case LBR_SIG_IMU_CH_GYRO_Y:
+            *v = w->pitch_rate * 0.6 + 0.02 * gauss(s);
+            return true;
+        case LBR_SIG_IMU_CH_GYRO_Z:
             *v = w->yaw_rate;
             return true;
-        case LBR_SIG_ORIENT_QUAT_W:
-            *v = cos(h / 2.0);
+        case LBR_SIG_BRAKE_PEDAL:
+            *v = clampd(w->brake_kpa / 54.0, 0.0, 100.0);
             return true;
-        case LBR_SIG_ORIENT_QUAT_X:
-        case LBR_SIG_ORIENT_QUAT_Y:
-            *v = 0.0;
-            return true;
-        case LBR_SIG_ORIENT_QUAT_Z:
-            *v = sin(h / 2.0);
-            return true;
-        case LBR_SIG_MAG_X:
-            *v = 24.0 * cos(h);
-            return true;
-        case LBR_SIG_MAG_Y:
-            *v = -24.0 * sin(h);
-            return true;
-        case LBR_SIG_MAG_Z:
-            *v = -42.0;
-            return true;
-        case LBR_SIG_IMU_TEMP:
-            *v = 36.0 + 0.1 * gauss(s);
-            return true;
-        case LBR_SIG_IMU_CALIB_STATE:
-            *v = 3.0;
-            return true;
-        case LBR_SIG_FUEL_LEVEL:
-            *v = w->fuel_pct;
-            return true;
-        case LBR_SIG_FUEL_VOLUME:
-            *v = w->fuel_pct / 100.0 * TANK_L;
-            return true;
-        case LBR_SIG_TEMP_ENGINE:
-            *v = w->temp_engine;
-            return true;
-        case LBR_SIG_TEMP_CVT:
-            *v = w->temp_cvt;
-            return true;
-        case LBR_SIG_TEMP_GEARBOX:
-            *v = w->temp_gearbox;
-            return true;
-        case LBR_SIG_TEMP_BRAKE_FRONT:
-            *v = w->temp_brake_f;
-            return true;
-        case LBR_SIG_TEMP_BRAKE_REAR:
-            *v = w->temp_brake_r;
-            return true;
-        case LBR_SIG_TEMP_AMBIENT:
-            *v = w->temp_ambient;
-            return true;
-        case LBR_SIG_SUSP_TRAVEL_FL:
-        case LBR_SIG_SUSP_TRAVEL_FR:
-        case LBR_SIG_SUSP_TRAVEL_RL:
-        case LBR_SIG_SUSP_TRAVEL_RR:
-            *v = w->travel[sig - LBR_SIG_SUSP_TRAVEL_FL];
-            return true;
-        case LBR_SIG_THROTTLE_POS:
+        case LBR_SIG_GAS_PEDAL:
             *v = w->throttle;
-            return true;
-        case LBR_SIG_BRAKE_PRESS_FRONT:
-            *v = w->brake_kpa;
-            return true;
-        case LBR_SIG_BRAKE_PRESS_REAR:
-            *v = w->brake_kpa * 0.8;
             return true;
         case LBR_SIG_STEERING_ANGLE:
             *v = w->steer_deg;
             return true;
-        case LBR_SIG_BRAKE_SWITCH:
-            *v = w->brake_kpa > 200.0 ? 1.0 : 0.0;
+        case LBR_SIG_ENGINE_RPM:
+            *v = w->engine_rpm;
             return true;
-        case LBR_SIG_DASH_BUTTONS:
-            *v = (double)w->buttons;
+        case LBR_SIG_CVT_RPM:
+            *v = w->cvt_rpm;
+            return true;
+        case LBR_SIG_FUEL_LEVEL:
+            *v = w->fuel_pct;
+            return true;
+        case LBR_SIG_TEMP_CVT:
+            *v = w->temp_cvt;
+            return true;
+        case LBR_SIG_DASH_BATTERY:
+            *v = w->batt_dash;
             return true;
         case LBR_SIG_GPS_SPEED:
             *v = w->speed;
@@ -223,15 +244,8 @@ bool world_signal_value(sim_t *s, lbr_signal_id_t sig, double *v)
             *v = heading_deg(w);
             return true;
         default:
-            break;
+            return false;
     }
-    if (sig >= LBR_SIG_STRAIN_1 && sig <= LBR_SIG_STRAIN_8) {
-        unsigned k    = sig - LBR_SIG_STRAIN_1;
-        double   load = w->travel[k % 4] - 80.0;
-        *v            = load * (6.0 + (double)k) + (k >= 4 ? w->lat_acc * 30.0 : 0.0) + gauss(s);
-        return true;
-    }
-    return false;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -449,8 +463,9 @@ static int part_read(lbr_sensor_t *self, uint64_t t_us, lbr_reading_t *out)
 }
 
 /* How each slot of the 2026 car is wired in the simulator. IO specs use the
- * menuconfig syntax (CONFIG_LBR_IO_<SLOT>) and are plausible wiring for
- * bench work, not a pin map. */
+ * menuconfig syntax (CONFIG_LBR_IO_<SLOT>) for the node's chip and are
+ * plausible wiring for bench work, not a pin map. Slots not listed are
+ * digital parts (SIM_SLOT_DIRECT). */
 typedef struct {
     const char     *node;
     const char     *slot;
@@ -458,31 +473,27 @@ typedef struct {
     const char     *spec;
 } wiring_t;
 
+#define CORNER_BATTERY "adc gpio=3 mv0=1650 v0=0 mv1=2100 v1=100 lo=1000 hi=2400 min=-2 max=102"
+
 static const wiring_t k_wiring[] = {
-    {"suspension", "travel", SIM_SLOT_IO,
-     "adc gpio=32 mv0=200 v0=0 mv1=2400 v1=250 lo=100 hi=2500;"
-     "adc gpio=33 mv0=200 v0=0 mv1=2400 v1=250 lo=100 hi=2500;"
-     "adc gpio=34 mv0=200 v0=0 mv1=2400 v1=250 lo=100 hi=2500;"
-     "adc gpio=35 mv0=200 v0=0 mv1=2400 v1=250 lo=100 hi=2500"},
-    {"driver_inputs", "pedals", SIM_SLOT_IO,
+    {"driver_input", "inputs", SIM_SLOT_IO,
      "adc gpio=36 mv0=300 v0=0 mv1=2300 v1=100 lo=150 hi=2450 min=-5 max=105;"
-     "adc gpio=39 mv0=200 v0=0 mv1=2400 v1=13790 lo=100 hi=2500;"
-     "adc gpio=34 mv0=200 v0=0 mv1=2400 v1=13790 lo=100 hi=2500"},
-    {"driver_inputs", "steering", SIM_SLOT_IO,
+     "adc gpio=39 mv0=300 v0=0 mv1=2300 v1=100 lo=150 hi=2450 min=-5 max=105;"
      "adc gpio=35 mv0=200 v0=-180 mv1=2400 v1=180 lo=100 hi=2500"},
-    {"driver_inputs", "brake_switch", SIM_SLOT_IO, "din gpio=4 active=low pull=up debounce_ms=10"},
-    {"temperature", "drivetrain", SIM_SLOT_IO,
-     "adc gpio=32 curve=ntc r25=10000 beta=3950 rpull=2200 vsup=3300 lo=50 hi=3250;"
-     "adc gpio=33 curve=ntc r25=10000 beta=3950 rpull=2200 vsup=3300 lo=50 hi=3250;"
-     "adc gpio=34 curve=ntc r25=10000 beta=3950 rpull=2200 vsup=3300 lo=50 hi=3250"},
-    {"temperature", "brakes", SIM_SLOT_DIRECT, NULL},
-    {"temperature", "ambient", SIM_SLOT_IO,
-     "adc gpio=35 curve=ntc r25=10000 beta=3950 rpull=10000 vsup=3300 lo=50 hi=3250"},
-    {"temperature", "aux", SIM_SLOT_IO, "-;-;-;-"},
-    {"fuel_gauge", "fuel", SIM_SLOT_IO,
-     "adc gpio=36 mv0=250 v0=0 mv1=2350 v1=100 lo=120 hi=2480;-"},
-    {"dashboard", "buttons", SIM_SLOT_IO, "din gpio=4,5,18,19"},
-    {"imu_gps", "gps", SIM_SLOT_NMEA, NULL},
+    {"powertrain", "speeds", SIM_SLOT_IO,
+     "pulse gpio=27 scale=60 stall_ms=500;pulse gpio=26 scale=30 stall_ms=1000"},
+    {"powertrain", "fuel", SIM_SLOT_IO, "adc gpio=34 mv0=250 v0=0 mv1=2350 v1=100 lo=120 hi=2480"},
+    {"temperature", "cvt", SIM_SLOT_IO,
+     "adc gpio=32 curve=ntc r25=10000 beta=3950 rpull=2200 vsup=3300 lo=50 hi=3250"},
+    {"central", "gps", SIM_SLOT_NMEA, NULL},
+    {"central", "dash_status", SIM_SLOT_FIRMWARE, NULL},
+    {"imu", "corner_status", SIM_SLOT_FIRMWARE, NULL},
+    {"corner_fl", "battery", SIM_SLOT_IO, CORNER_BATTERY},
+    {"corner_fr", "battery", SIM_SLOT_IO, CORNER_BATTERY},
+    {"corner_bl", "battery", SIM_SLOT_IO, CORNER_BATTERY},
+    {"corner_br", "battery", SIM_SLOT_IO, CORNER_BATTERY},
+    {"dashboard", "battery", SIM_SLOT_IO,
+     "adc gpio=4 mv0=1650 v0=0 mv1=2100 v1=100 lo=1000 hi=2400 min=-2 max=102"},
 };
 
 static const wiring_t *wiring_for(const char *node, const char *slot)
@@ -495,6 +506,9 @@ static const wiring_t *wiring_for(const char *node, const char *slot)
     return NULL; /* digital part */
 }
 
+/* Build the node's configuration from its plan and put a simulated part on
+ * every slot. Slots whose driver is firmware (SIM_SLOT_FIRMWARE) are left to
+ * the caller, as the node app binds them. */
 void world_bind_sensors(sim_t *s, int node)
 {
     sim_node_t *n = &s->nodes[node];
@@ -512,9 +526,12 @@ void world_bind_sensors(sim_t *s, int node)
         sl->kind      = wr != NULL ? wr->kind : SIM_SLOT_DIRECT;
         sl->spec      = wr != NULL ? wr->spec : NULL;
         lbr_nmea_init(&sl->nmea);
+        if (sl->kind == SIM_SLOT_FIRMWARE) {
+            continue;
+        }
         if (sl->kind == SIM_SLOT_IO) {
             char err[96];
-            if (lbr_io_parse(sl->spec, slot->signals, slot->n_signals, sl->chans, err,
+            if (lbr_io_parse(sl->spec, slot->signals, slot->n_signals, sl->chans, n->chip, err,
                              sizeof err) != 0) {
                 fprintf(stderr, "sim: bad wiring for %s.%s: %s\n", n->name, slot->name, err);
                 exit(2);

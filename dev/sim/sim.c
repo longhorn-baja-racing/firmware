@@ -1,7 +1,7 @@
 /*
  * Simulator core: event scheduler, per-node platforms (the HAL tables the
- * firmware cores call), the gateway's SD card and links, the command
- * language, and JSON output for the UI.
+ * firmware cores call), virtual WiFi, the Central's SD card and links, the
+ * command language, and JSON output for the UI.
  */
 #include <errno.h>
 #include <math.h>
@@ -10,30 +10,31 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "central_plan.h"
+#include "corner_plan.h"
 #include "dashboard_plan.h"
-#include "driver_inputs_plan.h"
-#include "fuel_gauge_plan.h"
-#include "imu_gps_plan.h"
+#include "driver_input_plan.h"
+#include "imu_plan.h"
 #include "lbr/cobs.h"
+#include "lbr/dash_link.h"
 #include "lbr/nodes.h"
 #include "lbr/packet.h"
 #include "lbr/status.h"
 #include "lbr/version.h"
+#include "powertrain_plan.h"
 #include "sim.h"
 #include "stress_plan.h"
-#include "suspension_plan.h"
 #include "temperature_plan.h"
 
-#define GW                   0 /* index of the gateway in s->nodes */
-#define BOOT_TIME_US         300000u
-#define LOG_QUEUE            (64u * 1024u) /* CONFIG_LBR_LOG_QUEUE_KB on the gateway */
-#define LOG_SYNC_MS          1000u
-#define SYNC_TIMEOUT         50000u
-#define WORLD_STEP_US        10000u
-#define TRACE_BUDGET         400u
-#define PUMP_JOB             (SIM_MAX_SLOTS + 1)
-#define DASH_STALE_US        2000000u /* as car/nodes/dashboard/main/main.c */
-#define DASH_NODE_TIMEOUT_US 3000000u
+#define GW            0 /* index of the Central in s->nodes */
+#define BOOT_TIME_US  300000u
+#define LOG_QUEUE     (64u * 1024u) /* CONFIG_LBR_LOG_QUEUE_KB on the gateway */
+#define LOG_SYNC_MS   1000u
+#define SYNC_TIMEOUT  50000u
+#define WORLD_STEP_US 10000u
+#define TRACE_BUDGET  400u
+#define WIFI_POOL     512
+#define WIFI_BASE_US  1000u /* one-way 5 GHz UDP latency, plus up to 2 ms jitter */
 
 /* ------------------------------------------------------------------------ */
 /* Small helpers                                                             */
@@ -51,6 +52,16 @@ int sim_node_index(const sim_t *s, const char *name)
 {
     for (int i = 0; i < s->n_nodes; i++) {
         if (strcmp(s->nodes[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int sim_node_by_id(const sim_t *s, uint8_t id)
+{
+    for (int i = 0; i < s->n_nodes; i++) {
+        if (s->nodes[i].id == id) {
             return i;
         }
     }
@@ -137,18 +148,23 @@ void sim_note(sim_t *s, const char *fmt, ...)
 
 static const char *frame_desc(const lbr_can_frame_t *f, char *buf, size_t cap)
 {
-    lbr_can_id_t id = lbr_can_id_parse(f->id);
-    if (id.kind == LBR_CAN_KIND_SAMPLE) {
-        const lbr_signal_info_t *info = lbr_signal_info(id.sub);
-        snprintf(buf, cap, "%s", info != NULL ? info->name : "sample");
-    } else if (id.sub == LBR_SYS_TIME_SYNC) {
+    const lbr_frame_def_t *d = lbr_frame_def((uint16_t)f->id);
+    if (d != NULL) {
+        snprintf(buf, cap, "%s", d->name);
+    } else if (f->id == LBR_CAN_ID_TIME_SYNC) {
         snprintf(buf, cap, "TIME_SYNC");
-    } else if (id.sub == LBR_SYS_TIME_FOLLOW_UP) {
+    } else if (f->id == LBR_CAN_ID_TIME_FOLLOW_UP) {
         snprintf(buf, cap, "FOLLOW_UP");
-    } else if (id.sub >= LBR_SYS_HEALTH_BASE && id.sub < LBR_SYS_HEALTH_BASE + 16u) {
-        snprintf(buf, cap, "HEARTBEAT p%u", (unsigned)(id.sub - LBR_SYS_HEALTH_BASE));
+    } else if (f->id == LBR_CAN_ID_COMMAND) {
+        snprintf(buf, cap, "COMMAND");
+    } else if (f->id > LBR_CAN_ID_EVENT_BASE && f->id <= LBR_CAN_ID_EVENT_BASE + LBR_NODE_CAN_MAX) {
+        snprintf(buf, cap, "%s", (f->data[4] & 1u) ? "FAULT" : "EVENT");
+    } else if (f->id > LBR_CAN_ID_HEARTBEAT_BASE && f->id < LBR_CAN_ID_HEALTH_BASE) {
+        snprintf(buf, cap, "HEARTBEAT");
+    } else if (f->id >= LBR_CAN_ID_HEALTH_BASE) {
+        snprintf(buf, cap, "HEALTH p%u", (unsigned)(f->id & 0xFu));
     } else {
-        snprintf(buf, cap, "system 0x%04x", (unsigned)id.sub);
+        snprintf(buf, cap, "id 0x%03lx", (unsigned long)f->id);
     }
     return buf;
 }
@@ -270,7 +286,7 @@ static lbr_time_update_t h_apply(void *ctx, uint64_t gw, uint64_t local, uint16_
     hal_ctx_t         *c       = ctx;
     lbr_time_update_t  r       = lbr_time_servo_update(&c->s->nodes[c->n].servo, gw, local, epoch);
     static const char *names[] = {"FIRST", "EPOCH_CHANGE", "STEP", "SLEW", "IGNORED"};
-    sim_trace(c->s, c->n, "time.apply", "gateway %llu us at local %llu us -> %s (error %ld us)",
+    sim_trace(c->s, c->n, "time.apply", "shared %llu us at local %llu us -> %s (error %ld us)",
               (unsigned long long)gw, (unsigned long long)local, names[r],
               (long)c->s->nodes[c->n].servo.last_error_us);
     return r;
@@ -287,7 +303,7 @@ static bool h_send(void *ctx, const lbr_can_frame_t *f)
     hal_ctx_t *c  = ctx;
     bool       ok = vbus_send(c->s, c->n, f);
     char       d[48];
-    sim_trace(c->s, c->n, "twai.send", "id 0x%08lx dlc %u %s%s", (unsigned long)f->id,
+    sim_trace(c->s, c->n, "twai.send", "id 0x%03lx dlc %u %s%s", (unsigned long)f->id,
               (unsigned)f->dlc, frame_desc(f, d, sizeof d), ok ? "" : " -> DROPPED");
     return ok;
 }
@@ -336,6 +352,38 @@ static void h_gw_lock(void *ctx, lbr_gw_lock_t which)
     (void)which; /* single-threaded simulation */
 }
 
+static bool h_wifi_send(void *ctx, const uint8_t *pkt, size_t len)
+{
+    hal_ctx_t *c = ctx;
+    return wifi_send(c->s, c->n, c->s->nodes[c->n].peer, pkt, len);
+}
+
+/* IMU Controller: its corner receiver's platform. */
+static uint16_t h_epoch(void *ctx)
+{
+    hal_ctx_t *c = ctx;
+    return c->s->nodes[c->n].servo.epoch;
+}
+
+static bool h_rx_send_frame(void *ctx, const lbr_can_frame_t *f)
+{
+    hal_ctx_t *c = ctx;
+    return lbr_node_core_send(c->s->nodes[c->n].core, f);
+}
+
+static bool h_rx_reply(void *ctx, uint8_t node, const uint8_t *pkt, size_t len)
+{
+    hal_ctx_t *c  = ctx;
+    int        to = sim_node_by_id(c->s, node);
+    return to >= 0 && wifi_send(c->s, c->n, to, pkt, len);
+}
+
+static void h_rx_event(void *ctx, lbr_event_code_t code, uint16_t arg, bool fault)
+{
+    hal_ctx_t *c = ctx;
+    lbr_node_core_event(c->s->nodes[c->n].core, code, arg, fault);
+}
+
 static const lbr_node_hal_t k_node_hal = {
     .mono_us         = h_mono,
     .now_us          = h_now,
@@ -347,6 +395,30 @@ static const lbr_node_hal_t k_node_hal = {
     .can_stats       = h_stats,
     .sd_present      = h_sd_present,
     .log             = h_log,
+};
+
+static const lbr_corner_hal_t k_corner_hal = {
+    .mono_us    = h_mono,
+    .now_us     = h_now,
+    .time_servo = h_servo,
+    .time_apply = h_apply,
+    .send       = h_wifi_send,
+    .log        = h_log,
+};
+
+static const lbr_dash_hal_t k_dash_hal = {
+    .mono_us = h_mono,
+    .send    = h_wifi_send,
+    .log     = h_log,
+};
+
+static const lbr_corner_rx_hal_t k_rx_hal = {
+    .now_us     = h_now,
+    .synced     = h_synced,
+    .epoch      = h_epoch,
+    .send_frame = h_rx_send_frame,
+    .reply      = h_rx_reply,
+    .event      = h_rx_event,
 };
 
 static const lbr_gw_hal_t k_gw_hal = {
@@ -517,7 +589,7 @@ static int usb_send(lbr_transport_t *self, const uint8_t *pkt, size_t len)
     return 0;
 }
 
-static int wifi_send(lbr_transport_t *self, const uint8_t *pkt, size_t len)
+static int wifi_send_pit(lbr_transport_t *self, const uint8_t *pkt, size_t len)
 {
     sim_t *s = self->ctx;
     (void)pkt;
@@ -548,6 +620,21 @@ static int lora_send(lbr_transport_t *self, const uint8_t *pkt, size_t len)
     return 0;
 }
 
+/* The Central's dashboard datagrams (as the app's UDP link would send them). */
+static int dash_send(lbr_transport_t *self, const uint8_t *pkt, size_t len)
+{
+    sim_t    *s    = self->ctx;
+    sim_gw_t *g    = &s->gw;
+    int       dash = s->nodes[GW].peer;
+    if (dash < 0 || !wifi_send(s, GW, dash, pkt, len)) {
+        g->dash_st.packets_dropped++;
+        return -1;
+    }
+    g->dash_st.packets_sent++;
+    g->dash_st.bytes_sent += (uint32_t)len;
+    return 0;
+}
+
 static void link_stats(lbr_transport_t *self, lbr_transport_stats_t *out)
 {
     sim_t *s = self->ctx;
@@ -555,8 +642,87 @@ static void link_stats(lbr_transport_t *self, lbr_transport_stats_t *out)
         *out = s->gw.usb_st;
     } else if (self == &s->gw.wifi) {
         *out = s->gw.wifi_st;
+    } else if (self == &s->gw.dash) {
+        *out = s->gw.dash_st;
     } else {
         *out = s->gw.lora_st;
+    }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Virtual 5 GHz WiFi                                                        */
+
+typedef struct {
+    bool    used;
+    int     from, to;
+    size_t  len;
+    uint8_t data[LBR_PKT_MAX_SIZE];
+} wifi_dgram_t;
+
+static wifi_dgram_t s_wifi[WIFI_POOL];
+
+/* The wireless end of a pair owns the link (range, loss). */
+static sim_wifi_t *link_of(sim_t *s, int a, int b)
+{
+    sim_node_t *na = &s->nodes[a], *nb = &s->nodes[b];
+    if (na->kind == SIM_NODE_CORNER || na->kind == SIM_NODE_DASH) {
+        return &na->wifi;
+    }
+    return &nb->wifi;
+}
+
+bool wifi_send(sim_t *s, int from, int to, const uint8_t *buf, size_t len)
+{
+    if (to < 0 || len > LBR_PKT_MAX_SIZE) {
+        return false;
+    }
+    sim_wifi_t *w = link_of(s, from, to);
+    w->sent++;
+    sim_trace(s, from, "udp.send", "%u bytes to %s", (unsigned)len, s->nodes[to].name);
+    if (!w->up || (w->loss_permille > 0 && sim_rand(s) * 1000.0 < (double)w->loss_permille)) {
+        w->dropped++; /* sent, never arrives: the receiver sees a seq gap */
+        return true;
+    }
+    for (int i = 0; i < WIFI_POOL; i++) {
+        if (!s_wifi[i].used) {
+            s_wifi[i] = (wifi_dgram_t){.used = true, .from = from, .to = to, .len = len};
+            memcpy(s_wifi[i].data, buf, len);
+            uint64_t lat = WIFI_BASE_US + (uint64_t)(sim_rand(s) * 2000.0);
+            sim_schedule(s, s->now + lat, EV_WIFI, to, i);
+            return true;
+        }
+    }
+    s->wifi_pool_full++;
+    w->dropped++;
+    return true;
+}
+
+static void wifi_deliver(sim_t *s, int slot)
+{
+    wifi_dgram_t *d = &s_wifi[slot];
+    d->used         = false;
+    sim_node_t *n   = &s->nodes[d->to];
+    if (!n->booted) {
+        return; /* powered off: nothing listens */
+    }
+    link_of(s, d->from, d->to)->delivered++;
+    uint64_t local = sim_local_us(s, d->to);
+    sim_trace(s, d->to, "udp.recv", "%u bytes from %s", (unsigned)d->len, s->nodes[d->from].name);
+    switch (n->kind) {
+        case SIM_NODE_CENTRAL:
+            lbr_gw_core_on_dash_packet(s->gw.core, d->data, d->len, local);
+            break;
+        case SIM_NODE_CAN:
+            if (n->corner_rx != NULL) {
+                lbr_corner_rx_on_packet(n->corner_rx, d->data, d->len, h_now(&s_ctx[d->to]));
+            }
+            break;
+        case SIM_NODE_CORNER:
+            lbr_corner_core_on_packet(n->corner, d->data, d->len, local);
+            break;
+        case SIM_NODE_DASH:
+            lbr_dash_core_on_packet(n->dash, d->data, d->len, local);
+            break;
     }
 }
 
@@ -574,13 +740,42 @@ static void schedule_local(sim_t *s, int node, int job, uint64_t local, sim_ev_t
     sim_schedule(s, sim_from_local(s, node, local), type, node, job);
 }
 
+/* Wake slot k at its next grid point (shared time), as node_esp.c does. */
+static void schedule_acq(sim_t *s, int ni, size_t k)
+{
+    sim_node_t *n     = &s->nodes[ni];
+    uint64_t    local = sim_local_us(s, ni);
+    uint64_t    now, due;
+    switch (n->kind) {
+        case SIM_NODE_CENTRAL:
+            now = h_now(&s_ctx[ni]);
+            due = lbr_gw_core_slot_next_due(s->gw.core, k);
+            break;
+        case SIM_NODE_CORNER:
+            now = h_now(&s_ctx[ni]);
+            due = lbr_corner_core_slot_next_due(n->corner, k);
+            break;
+        case SIM_NODE_DASH:
+            now = local; /* the dashboard keeps no shared clock */
+            due = lbr_dash_core_slot_next_due(n->dash, k);
+            break;
+        default:
+            now = h_now(&s_ctx[ni]);
+            due = lbr_node_core_slot_next_due(n->core, k);
+            break;
+    }
+    schedule_local(s, ni, (int)k, local + (due > now ? due - now : 0u), EV_ACQ);
+}
+
 static void reset_can(sim_node_t *n, bool accept_all)
 {
-    bool connected = n->can.connected;
+    bool   connected = n->can.connected;
+    size_t cap       = n->can.tx_cap;
     memset(&n->can, 0, sizeof n->can);
     n->can.connected  = connected;
     n->can.started    = true;
     n->can.accept_all = accept_all;
+    n->can.tx_cap     = cap;
     n->can.st.running = true;
 }
 
@@ -591,15 +786,16 @@ static void boot_gateway(sim_t *s)
     lbr_time_servo_init(&n->servo);
     lbr_time_servo_set_master(&n->servo);
     reset_can(n, true);
+    world_bind_sensors(s, GW);
 
     g->epoch = (uint16_t)((uint16_t)(sim_rand(s) * 65535.0) | 1u);
     lbr_gw_config_defaults(&g->cfg);
     g->cfg.ble_enable = false; /* no BLE model */
     int len = snprintf(g->config_text, sizeof g->config_text,
-                       "node=gateway\nnode_id=%u\nfw_version=%u.%u.%u\nsimulator=1\nseed=%llu\n"
+                       "node=central\nnode_id=%u\nfw_version=%u.%u.%u\nsimulator=1\nseed=%llu\n"
                        "protocol_version=%u\ncatalog_hash=%08lx\ncan_bitrate=%lu\n"
                        "time_sync_hz=%u\n",
-                       LBR_NODE_GATEWAY, LBR_FW_VERSION_MAJOR, LBR_FW_VERSION_MINOR,
+                       LBR_NODE_CENTRAL, LBR_FW_VERSION_MAJOR, LBR_FW_VERSION_MINOR,
                        LBR_FW_VERSION_PATCH, (unsigned long long)s->seed, LBR_PROTOCOL_VERSION,
                        (unsigned long)lbr_catalog_hash(), (unsigned long)s->bus.bitrate,
                        LBR_TIME_SYNC_HZ);
@@ -617,8 +813,9 @@ static void boot_gateway(sim_t *s)
     lbr_log_init(&g->log, &lc);
 
     g->usb   = (lbr_transport_t){"usb", LBR_LINK_USB, NULL, usb_send, link_stats, s};
-    g->wifi  = (lbr_transport_t){"wifi", LBR_LINK_WIFI, NULL, wifi_send, link_stats, s};
+    g->wifi  = (lbr_transport_t){"wifi", LBR_LINK_WIFI, NULL, wifi_send_pit, link_stats, s};
     g->lora  = (lbr_transport_t){"lora", LBR_LINK_LORA, NULL, lora_send, link_stats, s};
+    g->dash  = (lbr_transport_t){"dash", LBR_LINK_DASH, NULL, dash_send, link_stats, s};
     g->modem = (lbr_lora_modem_t){.sf = 9, .bw_hz = 125000, .cr = 1, .preamble = 8, .crc = true};
     g->lora_next_tx_local = 0;
     g->sync_pending       = false;
@@ -629,33 +826,46 @@ static void boot_gateway(sim_t *s)
         .epoch        = g->epoch,
         .config_valid = true,
         .config_text  = g->config_text,
+        .acq          = n->acq,
+        .n_acq        = n->cfg.n_acq,
     };
     if (g->core == NULL) {
         g->core = calloc(1, sizeof *g->core);
     }
     lbr_gw_core_init(g->core, &k_gw_hal, &g->cfg, &boot);
     g->core->hal.ctx = &s_ctx[GW];
-    /* Same order as the gateway app: core, then the log service, then start. */
+    /* Same order as the Central app: core, its own link-state driver, the
+     * log service, then start. */
+    lbr_sensor_dash_link(&n->sensors[CENTRAL_SLOT_DASH_STATUS], "dash_status",
+                         n->plan->slots[CENTRAL_SLOT_DASH_STATUS].signals,
+                         n->plan->slots[CENTRAL_SLOT_DASH_STATUS].n_signals, &g->core->dash,
+                         lbr_gw_core_lock_state, lbr_gw_core_unlock_state, g->core);
     keeper_start(s, GW, &g->log, g->config_text);
     lbr_gw_links_t links = {
         .usb  = g->cfg.usb_enable ? &g->usb : NULL,
         .wifi = g->cfg.wifi_enable ? &g->wifi : NULL,
         .lora = g->cfg.lora_enable ? &g->lora : NULL,
+        .dash = g->cfg.dash_enable ? &g->dash : NULL,
     };
     lbr_gw_core_start(g->core, &g->log, &links, true, false);
 
     uint64_t l = sim_local_us(s, GW);
-    schedule_local(s, GW, 0, l + 1000000u / LBR_TIME_SYNC_HZ, EV_GW_SYNC);
-    schedule_local(s, GW, 1, l + g->cfg.stream_batch_ms * 1000u, EV_GW_STREAM);
-    schedule_local(s, GW, 2, l + g->cfg.lora_period_ms * 1000u, EV_GW_LORA);
-    schedule_local(s, GW, 3, l + 20000u, EV_GW_PUMP);
-    schedule_local(s, GW, 4, l + LBR_GW_HEALTH_PERIOD_MS * 1000u, EV_HEALTH);
+    schedule_local(s, GW, SIM_JOB_SYNC, l + 1000000u / LBR_TIME_SYNC_HZ, EV_GW_SYNC);
+    schedule_local(s, GW, SIM_JOB_STREAM, l + g->cfg.stream_batch_ms * 1000u, EV_GW_STREAM);
+    schedule_local(s, GW, SIM_JOB_LORA, l + g->cfg.lora_period_ms * 1000u, EV_GW_LORA);
+    schedule_local(s, GW, SIM_JOB_PUMP, l + 20000u, EV_GW_PUMP);
+    schedule_local(s, GW, SIM_JOB_DASH, l + g->cfg.dash_period_ms * 1000u, EV_GW_DASH);
+    schedule_local(s, GW, SIM_JOB_HEALTH, l + LBR_GW_HEALTH_PERIOD_MS * 1000u, EV_HEALTH);
+    for (size_t k = 0; k < n->cfg.n_acq; k++) {
+        lbr_gw_core_slot_start(g->core, k);
+        schedule_acq(s, GW, k);
+    }
 }
 
 static void start_local_log(sim_t *s, int node)
 {
     sim_node_t    *n = &s->nodes[node];
-    static uint8_t q[96u * 1024u]; /* stress: CONFIG_LBR_LOG_QUEUE_KB=96 */
+    static uint8_t q[96u * 1024u];
     static uint8_t chunk[LBR_LOG_MAX_RECORD + 512u];
     if (n->local_log == NULL) {
         n->local_log = calloc(1, sizeof *n->local_log);
@@ -671,15 +881,88 @@ static void start_local_log(sim_t *s, int node)
     keeper_start(s, node, n->local_log, n->core->config_text);
 }
 
-/* The dashboard app's frame handler, minus the FreeRTOS lock. */
-static void dash_on_frame(const lbr_can_frame_t *f, uint64_t rx_shared_us, void *ctx)
+static void boot_can_node(sim_t *s, int i)
 {
-    sim_t       *s = ctx;
-    lbr_sample_t smp;
-    bool         is_sample = lbr_can_decode_sample(f, rx_shared_us, &smp);
-    lbr_node_table_on_frame(&s->dash_nodes, f, rx_shared_us);
-    if (is_sample) {
-        lbr_value_table_offer(&s->dash_values, &smp, rx_shared_us);
+    sim_node_t *n = &s->nodes[i];
+    reset_can(n, n->plan->listen_all);
+    world_bind_sensors(s, i);
+    if (n->id == LBR_NODE_IMU) {
+        /* As the IMU Controller app: the corner receiver feeds a slot. */
+        if (n->corner_rx == NULL) {
+            n->corner_rx = calloc(1, sizeof *n->corner_rx);
+        }
+        lbr_corner_rx_hal_t rh = k_rx_hal;
+        rh.ctx                 = &s_ctx[i];
+        lbr_corner_rx_init(n->corner_rx, &rh);
+        const lbr_slot_t *st = &n->plan->slots[IMU_SLOT_CORNER_STATUS];
+        lbr_sensor_corner_status(&n->sensors[IMU_SLOT_CORNER_STATUS], st->name, st->signals,
+                                 st->n_signals, n->corner_rx);
+    }
+    if (n->core == NULL) {
+        n->core = calloc(1, sizeof *n->core);
+    }
+    lbr_node_hal_t  hal  = k_node_hal;
+    lbr_node_boot_t boot = {
+        .reset_reason = (lbr_reset_reason_t)n->reset_reason,
+        .boot_count   = n->boot_count,
+        .can_bitrate  = s->bus.bitrate,
+    };
+    hal.ctx    = &s_ctx[i];
+    bool valid = lbr_node_core_init(n->core, &n->cfg, &hal, &boot);
+    if (n->plan->local_log) {
+        start_local_log(s, i);
+    }
+    lbr_node_core_start(n->core, true, false, n->plan->local_log ? n->local_log : NULL);
+
+    uint64_t l = sim_local_us(s, i);
+    if (valid) {
+        for (size_t k = 0; k < n->cfg.n_acq; k++) {
+            lbr_node_core_slot_start(n->core, k);
+            schedule_acq(s, i, k);
+        }
+    }
+    schedule_local(s, i, SIM_JOB_HEALTH, l + n->cfg.health_period_ms * 1000u, EV_HEALTH);
+    if (n->local_log != NULL) {
+        schedule_local(s, i, SIM_JOB_PUMP, l + 20000u, EV_GW_PUMP); /* LOG_PUMP_MS on target */
+    }
+    if (n->corner_rx != NULL) {
+        schedule_local(s, i, SIM_JOB_AUX, l + LBR_CORNER_SERVICE_MS * 1000u, EV_CORNER_RX);
+    }
+}
+
+static void boot_corner(sim_t *s, int i)
+{
+    sim_node_t *n = &s->nodes[i];
+    world_bind_sensors(s, i);
+    if (n->corner == NULL) {
+        n->corner = calloc(1, sizeof *n->corner);
+    }
+    lbr_corner_hal_t hal = k_corner_hal;
+    hal.ctx              = &s_ctx[i];
+    if (!lbr_corner_core_init(n->corner, &n->cfg, &hal, LBR_CORNER_DEFAULT_BATCH)) {
+        return;
+    }
+    uint64_t l = sim_local_us(s, i);
+    for (size_t k = 0; k < n->cfg.n_acq; k++) {
+        lbr_corner_core_slot_start(n->corner, k);
+        schedule_acq(s, i, k);
+    }
+    schedule_local(s, i, SIM_JOB_AUX, l + 100000u, EV_CORNER_CLOCK);
+}
+
+static void boot_dash(sim_t *s, int i)
+{
+    sim_node_t *n = &s->nodes[i];
+    world_bind_sensors(s, i);
+    if (n->dash == NULL) {
+        n->dash = calloc(1, sizeof *n->dash);
+    }
+    lbr_dash_hal_t hal = k_dash_hal;
+    hal.ctx            = &s_ctx[i];
+    lbr_dash_core_init(n->dash, &n->cfg, &hal);
+    for (size_t k = 0; k < n->cfg.n_acq; k++) {
+        lbr_dash_core_slot_start(n->dash, k);
+        schedule_acq(s, i, k);
     }
 }
 
@@ -693,48 +976,19 @@ static void boot_node(sim_t *s, int i)
     for (int k = 0; k < s->n_nodes; k++) {
         s_ctx[k] = (hal_ctx_t){s, k};
     }
-    if (n->is_gateway) {
-        boot_gateway(s);
-        return;
-    }
-    reset_can(n, n->plan->listen_all);
-    world_bind_sensors(s, i);
-    if (n->plan->listen_all) {
-        lbr_value_table_init(&s->dash_values, DASH_STALE_US);
-        lbr_node_table_init(&s->dash_nodes, DASH_NODE_TIMEOUT_US);
-        for (size_t k = 0; k < lbr_dashboard_watch_count; k++) {
-            lbr_value_table_watch(&s->dash_values, lbr_dashboard_watch[k], 0);
-        }
-        n->cfg.on_frame     = dash_on_frame;
-        n->cfg.on_frame_ctx = s;
-    }
-    if (n->core == NULL) {
-        n->core = calloc(1, sizeof *n->core);
-    }
-    lbr_node_hal_t  hal  = k_node_hal;
-    lbr_node_boot_t boot = {
-        .reset_reason        = (lbr_reset_reason_t)n->reset_reason,
-        .boot_count          = n->boot_count,
-        .can_bitrate         = s->bus.bitrate,
-        .can_budget_permille = 150,
-    };
-    hal.ctx    = &s_ctx[i];
-    bool valid = lbr_node_core_init(n->core, &n->cfg, &hal, &boot);
-    if (n->plan->local_log) {
-        start_local_log(s, i);
-    }
-    lbr_node_core_start(n->core, true, false, n->plan->local_log ? n->local_log : NULL);
-
-    uint64_t l = sim_local_us(s, i);
-    if (valid) {
-        for (size_t k = 0; k < n->cfg.n_acq; k++) {
-            lbr_node_core_slot_start(n->core, k);
-            schedule_local(s, i, (int)k, l + period_us(n->cfg.acq[k].rate_hz), EV_ACQ);
-        }
-    }
-    schedule_local(s, i, SIM_MAX_SLOTS, l + n->cfg.health_period_ms * 1000u, EV_HEALTH);
-    if (n->local_log != NULL) {
-        schedule_local(s, i, PUMP_JOB, l + 20000u, EV_GW_PUMP); /* LOG_PUMP_MS on target */
+    switch (n->kind) {
+        case SIM_NODE_CENTRAL:
+            boot_gateway(s);
+            break;
+        case SIM_NODE_CORNER:
+            boot_corner(s, i);
+            break;
+        case SIM_NODE_DASH:
+            boot_dash(s, i);
+            break;
+        default:
+            boot_can_node(s, i);
+            break;
     }
 }
 
@@ -756,38 +1010,40 @@ static void power_off(sim_t *s, int i)
 /* ------------------------------------------------------------------------ */
 /* Bus callbacks                                                             */
 
-static void record_bus_sample(sim_t *s, const lbr_can_frame_t *f, uint64_t gw_local)
+/* What a log reader decodes from the bus (the Central's log holds exactly
+ * these frames): latest value per signal, events per node. */
+static void record_bus_frame(sim_t *s, const lbr_can_frame_t *f, uint64_t gw_shared)
 {
-    lbr_sample_t s2;
-    if (!lbr_can_decode_sample(f, gw_local, &s2) || s2.signal >= SIM_MAX_SIGNALS) {
-        return;
-    }
-    sim_value_t *v = &s->values[s2.signal];
-    v->seen        = true;
-    v->s           = s2;
-    v->rx_t        = s->now;
-    v->source      = s2.source;
-    if (s2.signal == LBR_SIG_EVENT || s2.signal == LBR_SIG_FAULT) {
-        uint16_t code = (uint16_t)(s2.v.u32 & 0xFFFFu);
-        uint16_t arg  = (uint16_t)(s2.v.u32 >> 16);
-        int      src  = -1;
-        for (int k = 0; k < s->n_nodes; k++) {
-            if (s->nodes[k].id == s2.source) {
-                src = k;
-            }
+    lbr_sample_t smp[LBR_FRAME_MAX_FIELDS];
+    size_t       n = lbr_bus_decode(&s->decoder, f, gw_shared, smp, LBR_FRAME_MAX_FIELDS);
+    for (size_t k = 0; k < n; k++) {
+        const lbr_sample_t *s2 = &smp[k];
+        if (s2->signal >= SIM_MAX_SIGNALS) {
+            continue;
         }
+        sim_value_t *v = &s->values[s2->signal];
+        v->seen        = true;
+        v->s           = *s2;
+        v->rx_t        = s->now;
+        v->source      = s2->source;
+        if (s2->signal != LBR_SIG_EVENT && s2->signal != LBR_SIG_FAULT) {
+            continue;
+        }
+        uint16_t code = (uint16_t)(s2->v.u32 & 0xFFFFu);
+        uint16_t arg  = (uint16_t)(s2->v.u32 >> 16);
+        int      src  = sim_node_by_id(s, s2->source);
         if (src >= 0) {
             s->event_counts[src][code & 0x7Fu]++;
         }
         const char *name = lbr_event_name((lbr_event_code_t)code);
         if (s->quiet) {
-            return;
+            continue;
         }
         fprintf(s->out,
                 "{\"ev\":\"event\",\"t\":%.6f,\"node\":\"%s\",\"name\":\"%s\",\"arg\":%u,"
                 "\"fault\":%s}\n",
-                t_s(s), lbr_node_name(s2.source), name != NULL ? name : "?", (unsigned)arg,
-                s2.signal == LBR_SIG_FAULT ? "true" : "false");
+                t_s(s), lbr_node_name(s2->source), name != NULL ? name : "?", (unsigned)arg,
+                s2->signal == LBR_SIG_FAULT ? "true" : "false");
     }
 }
 
@@ -800,9 +1056,9 @@ void sim_deliver(sim_t *s, int node, const lbr_can_frame_t *f, uint64_t t)
     }
     uint64_t local = sim_local_us(s, node);
     if (n->is_gateway) {
-        record_bus_sample(s, f, local);
+        record_bus_frame(s, f, h_l2s(&s_ctx[GW], local));
         lbr_gw_core_on_rx(s->gw.core, f, local);
-    } else {
+    } else if (n->core != NULL) {
         lbr_node_core_on_frame(n->core, f, local);
     }
 }
@@ -813,7 +1069,7 @@ void sim_tx_done(sim_t *s, int node, const lbr_can_frame_t *f, bool ok, uint64_t
     if (node != GW) {
         return;
     }
-    record_bus_sample(s, f, sim_local_us(s, GW));
+    record_bus_frame(s, f, h_now(&s_ctx[GW]));
     uint8_t  seq;
     uint16_t epoch;
     if (ok && s->gw.sync_pending && lbr_can_decode_time_sync(f, &seq, &epoch) &&
@@ -829,8 +1085,31 @@ void sim_tx_done(sim_t *s, int node, const lbr_can_frame_t *f, bool ok, uint64_t
 /* ------------------------------------------------------------------------ */
 /* Event dispatch                                                            */
 
+static void acq_tick(sim_t *s, int ni, size_t k)
+{
+    sim_node_t *n = &s->nodes[ni];
+    switch (n->kind) {
+        case SIM_NODE_CENTRAL:
+            lbr_gw_core_slot_tick(s->gw.core, k);
+            break;
+        case SIM_NODE_CORNER:
+            lbr_corner_core_slot_tick(n->corner, k);
+            break;
+        case SIM_NODE_DASH:
+            lbr_dash_core_slot_tick(n->dash, k);
+            break;
+        default:
+            lbr_node_core_slot_tick(n->core, k);
+            break;
+    }
+}
+
 static void handle(sim_t *s, const event_t *e)
 {
+    if (e->type == EV_WIFI) {
+        wifi_deliver(s, e->slot); /* frees the pool slot whatever the receiver's state */
+        return;
+    }
     if (e->node >= 0) {
         sim_node_t *n     = &s->nodes[e->node];
         bool        stale = e->gen != n->gen && e->type != EV_BOOT && e->type != EV_BUS_OFF_END;
@@ -848,21 +1127,20 @@ static void handle(sim_t *s, const event_t *e)
                 boot_node(s, ni);
             }
             break;
-        case EV_ACQ: {
-            lbr_node_core_slot_tick(n->core, (size_t)e->slot, 0);
-            uint64_t next = n->next_local[e->slot] + period_us(n->cfg.acq[e->slot].rate_hz);
-            schedule_local(s, ni, e->slot, next, EV_ACQ);
+        case EV_ACQ:
+            acq_tick(s, ni, (size_t)e->slot);
+            schedule_acq(s, ni, (size_t)e->slot);
             break;
-        }
         case EV_HEALTH:
             if (n->is_gateway) {
                 lbr_gw_core_heartbeat(g->core, &n->last_health);
-                schedule_local(s, ni, 4, n->next_local[4] + LBR_GW_HEALTH_PERIOD_MS * 1000u,
+                schedule_local(s, ni, SIM_JOB_HEALTH,
+                               n->next_local[SIM_JOB_HEALTH] + LBR_GW_HEALTH_PERIOD_MS * 1000u,
                                EV_HEALTH);
             } else {
                 lbr_node_core_heartbeat(n->core, &n->last_health);
-                schedule_local(s, ni, SIM_MAX_SLOTS,
-                               n->next_local[SIM_MAX_SLOTS] + n->cfg.health_period_ms * 1000u,
+                schedule_local(s, ni, SIM_JOB_HEALTH,
+                               n->next_local[SIM_JOB_HEALTH] + n->cfg.health_period_ms * 1000u,
                                EV_HEALTH);
             }
             break;
@@ -874,7 +1152,8 @@ static void handle(sim_t *s, const event_t *e)
                 g->sync_pending = true;
                 sim_schedule(s, s->now + SYNC_TIMEOUT, EV_GW_SYNC_TIMEOUT, GW, g->sync_seq);
             }
-            schedule_local(s, GW, 0, n->next_local[0] + 1000000u / LBR_TIME_SYNC_HZ, EV_GW_SYNC);
+            schedule_local(s, GW, SIM_JOB_SYNC,
+                           n->next_local[SIM_JOB_SYNC] + 1000000u / LBR_TIME_SYNC_HZ, EV_GW_SYNC);
             break;
         case EV_GW_SYNC_TIMEOUT:
             if (g->sync_pending && (uint8_t)e->slot == g->sync_seq) {
@@ -887,20 +1166,35 @@ static void handle(sim_t *s, const event_t *e)
             break;
         case EV_GW_STREAM:
             lbr_gw_core_stream_flush(g->core);
-            schedule_local(s, GW, 1, n->next_local[1] + g->cfg.stream_batch_ms * 1000u,
+            schedule_local(s, GW, SIM_JOB_STREAM,
+                           n->next_local[SIM_JOB_STREAM] + g->cfg.stream_batch_ms * 1000u,
                            EV_GW_STREAM);
             break;
         case EV_GW_LORA:
             lbr_gw_core_lora_tick(g->core);
-            schedule_local(s, GW, 2, n->next_local[2] + g->cfg.lora_period_ms * 1000u, EV_GW_LORA);
+            schedule_local(s, GW, SIM_JOB_LORA,
+                           n->next_local[SIM_JOB_LORA] + g->cfg.lora_period_ms * 1000u, EV_GW_LORA);
+            break;
+        case EV_GW_DASH:
+            lbr_gw_core_dash_tick(g->core);
+            schedule_local(s, GW, SIM_JOB_DASH,
+                           n->next_local[SIM_JOB_DASH] + g->cfg.dash_period_ms * 1000u, EV_GW_DASH);
             break;
         case EV_GW_PUMP:
             lbr_log_keeper_step(&n->keeper, sim_local_us(s, ni), h_now(&s_ctx[ni]));
-            if (n->is_gateway) {
-                schedule_local(s, GW, 3, n->next_local[3] + 20000u, EV_GW_PUMP);
-            } else {
-                schedule_local(s, ni, PUMP_JOB, n->next_local[PUMP_JOB] + 20000u, EV_GW_PUMP);
-            }
+            schedule_local(s, ni, SIM_JOB_PUMP, n->next_local[SIM_JOB_PUMP] + 20000u, EV_GW_PUMP);
+            break;
+        case EV_CORNER_CLOCK: {
+            uint32_t ms = lbr_corner_core_clock_tick(n->corner);
+            schedule_local(s, ni, SIM_JOB_AUX, n->next_local[SIM_JOB_AUX] + ms * 1000u,
+                           EV_CORNER_CLOCK);
+            break;
+        }
+        case EV_CORNER_RX:
+            lbr_corner_rx_service(n->corner_rx, n->core);
+            schedule_local(s, ni, SIM_JOB_AUX,
+                           n->next_local[SIM_JOB_AUX] + LBR_CORNER_SERVICE_MS * 1000u,
+                           EV_CORNER_RX);
             break;
         case EV_BUS:
             vbus_event(s, e->slot);
@@ -913,6 +1207,8 @@ static void handle(sim_t *s, const event_t *e)
         case EV_WORLD:
             world_step(s, WORLD_STEP_US / 1e6);
             sim_schedule(s, s->now + WORLD_STEP_US, EV_WORLD, -1, 0);
+            break;
+        case EV_WIFI:
             break;
     }
 }
@@ -933,7 +1229,10 @@ void sim_run_until(sim_t *s, uint64_t t_us)
 typedef struct {
     const char            *name;
     uint8_t                id;
+    sim_node_kind_t        kind;
     const lbr_node_plan_t *plan;
+    bool                   c5;     /* ESP32-C5 (else classic ESP32) */
+    size_t                 tx_cap; /* CONFIG_LBR_CAN_TX_QUEUE_LEN */
 } node_def_t;
 
 static void make_dir(const char *path)
@@ -964,25 +1263,32 @@ static void mkdir_p(const char *path)
 
 int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet)
 {
+    /* DAQ-WIRING.md: the Central first (index GW), the CAN controllers in
+     * their daisy-chain order, then the wireless nodes. */
     const node_def_t defs[] = {
-        {"gateway", LBR_NODE_GATEWAY, NULL},
-        {"imu_gps", LBR_NODE_IMU_GPS, &lbr_plan_imu_gps},
-        {"suspension", LBR_NODE_SUSPENSION, &lbr_plan_suspension},
-        {"driver_inputs", LBR_NODE_DRIVER_INPUTS, &lbr_plan_driver_inputs},
-        {"temperature", LBR_NODE_TEMPERATURE, &lbr_plan_temperature},
-        {"fuel_gauge", LBR_NODE_FUEL_GAUGE, &lbr_plan_fuel_gauge},
-        {"stress", LBR_NODE_STRESS, &lbr_plan_stress},
-        {"dashboard", LBR_NODE_DASHBOARD, &lbr_plan_dashboard},
+        {"central", LBR_NODE_CENTRAL, SIM_NODE_CENTRAL, &lbr_plan_central, true, 64},
+        {"imu", LBR_NODE_IMU, SIM_NODE_CAN, &lbr_plan_imu, true, 127},
+        {"powertrain", LBR_NODE_POWERTRAIN, SIM_NODE_CAN, &lbr_plan_powertrain, false, 64},
+        {"driver_input", LBR_NODE_DRIVER_INPUT, SIM_NODE_CAN, &lbr_plan_driver_input, false, 64},
+        {"temperature", LBR_NODE_TEMPERATURE, SIM_NODE_CAN, &lbr_plan_temperature, false, 64},
+        {"stress", LBR_NODE_STRESS, SIM_NODE_CAN, &lbr_plan_stress, false, 64},
+        {"dashboard", LBR_NODE_DASHBOARD, SIM_NODE_DASH, &lbr_plan_dashboard, true, 0},
+        {"corner_fl", LBR_NODE_CORNER_FL, SIM_NODE_CORNER, &lbr_plan_corner[0], true, 0},
+        {"corner_fr", LBR_NODE_CORNER_FR, SIM_NODE_CORNER, &lbr_plan_corner[1], true, 0},
+        {"corner_bl", LBR_NODE_CORNER_BL, SIM_NODE_CORNER, &lbr_plan_corner[2], true, 0},
+        {"corner_br", LBR_NODE_CORNER_BR, SIM_NODE_CORNER, &lbr_plan_corner[3], true, 0},
     };
     memset(s, 0, sizeof *s);
+    memset(s_wifi, 0, sizeof s_wifi);
     s->seed    = seed;
     s->rng     = seed * 0x9E3779B97F4A7C15ULL + 1u;
     s->out_dir = out_dir;
     s->out     = out;
     s->quiet   = quiet;
     s->n_nodes = (int)(sizeof defs / sizeof defs[0]);
-    vbus_init(s, 1000000u);
+    vbus_init(s, 500000u); /* CONFIG_LBR_CAN_BITRATE */
     world_init(&s->world);
+    lbr_bus_decoder_init(&s->decoder);
 
     mkdir_p(out_dir);
 
@@ -995,22 +1301,38 @@ int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet
         return -1;
     }
 
+    int imu = -1, dash = -1;
     for (int i = 0; i < s->n_nodes; i++) {
         sim_node_t *n    = &s->nodes[i];
         n->name          = defs[i].name;
         n->id            = defs[i].id;
+        n->kind          = defs[i].kind;
         n->plan          = defs[i].plan;
+        n->chip          = defs[i].c5 ? &lbr_io_chip_esp32c5 : &lbr_io_chip_esp32;
         n->is_gateway    = i == GW;
         n->powered       = true;
-        n->can.connected = true;
+        n->can.connected = defs[i].tx_cap > 0;
+        n->can.tx_cap    = defs[i].tx_cap;
         n->sd_inserted   = true;
         n->reset_reason  = LBR_RESET_POWER_ON;
+        n->peer          = -1;
+        n->wifi.up       = true;
+        imu              = n->id == LBR_NODE_IMU ? i : imu;
+        dash             = n->id == LBR_NODE_DASHBOARD ? i : dash;
         /* Real crystals: within +/- 40 ppm. */
         n->ppm = (sim_rand(s) - 0.5) * 80.0;
         /* Power comes up together; boot times differ a little. */
         uint64_t at = n->is_gateway ? 0 : 50000u + (uint64_t)(sim_rand(s) * 400000.0);
         sim_schedule(s, at, EV_BOOT, i, 0);
     }
+    /* WiFi pairs: corners talk to the IMU Controller, the dashboard to the Central. */
+    for (int i = 0; i < s->n_nodes; i++) {
+        if (s->nodes[i].kind == SIM_NODE_CORNER) {
+            s->nodes[i].peer = imu;
+        }
+    }
+    s->nodes[dash].peer = GW;
+    s->nodes[GW].peer   = dash;
     sim_schedule(s, 0, EV_WORLD, -1, 0);
     return 0;
 }
@@ -1033,6 +1355,9 @@ void sim_free(sim_t *s)
     for (int i = 0; i < s->n_nodes; i++) {
         free(s->nodes[i].core);
         free(s->nodes[i].local_log);
+        free(s->nodes[i].corner_rx);
+        free(s->nodes[i].corner);
+        free(s->nodes[i].dash);
     }
     free(s->gw.core);
     free(s->gw.log_queue);
@@ -1051,8 +1376,26 @@ static int64_t sync_error_us(sim_t *s, int i)
         return 0;
     }
     uint64_t est   = lbr_time_servo_map(&s->nodes[i].servo, sim_local_us(s, i));
-    uint64_t truth = sim_local_us(s, GW); /* shared time is the gateway's clock */
+    uint64_t truth = sim_local_us(s, GW); /* shared time is the Central's clock */
     return (int64_t)(est - truth);
+}
+
+static bool wireless(const sim_node_t *n)
+{
+    return n->kind == SIM_NODE_CORNER || n->kind == SIM_NODE_DASH;
+}
+
+/* A wireless node as its receiver sees it: up while its datagrams arrive. */
+static bool link_up(const sim_t *s, int i)
+{
+    const sim_node_t *n = &s->nodes[i];
+    if (n->kind == SIM_NODE_DASH) {
+        return s->gw.core != NULL && s->nodes[GW].booted && s->gw.core->dash.up;
+    }
+    int imu = n->peer;
+    int c   = lbr_node_corner_index(n->id);
+    return imu >= 0 && s->nodes[imu].booted && s->nodes[imu].corner_rx != NULL && c >= 0 &&
+           s->nodes[imu].corner_rx->peer[c].up;
 }
 
 static const char *state_of(const sim_t *s, int i)
@@ -1061,7 +1404,23 @@ static const char *state_of(const sim_t *s, int i)
     if (!n->powered) {
         return "OFF";
     }
-    if (!n->booted || n->last_health.node_id == 0) {
+    if (!n->booted) {
+        return "BOOT";
+    }
+    if (n->kind == SIM_NODE_CORNER) {
+        /* No heartbeat of its own: what the IMU Controller reports for it. */
+        if (!link_up(s, i)) {
+            return "LOST";
+        }
+        int     c     = lbr_node_corner_index(n->id);
+        uint8_t flags = s->nodes[n->peer].corner_rx->peer[c].flags;
+        return ((flags & LBR_WLINK_F_SENSOR_OK) && (flags & LBR_WLINK_F_SYNCED)) ? "RUN"
+                                                                                 : "DEGRADED";
+    }
+    if (n->kind == SIM_NODE_DASH) {
+        return link_up(s, i) ? "RUN" : "LOST";
+    }
+    if (n->last_health.node_id == 0) {
         return "BOOT";
     }
     return lbr_node_state_name(n->last_health.state);
@@ -1069,11 +1428,14 @@ static const char *state_of(const sim_t *s, int i)
 
 static double bus_load_pct(const sim_t *s)
 {
-    return (double)s->bus.busy_us_last / 10000.0;
+    return (double)s->bus.busy_us_last * 100.0 / 1e6;
 }
 
 static bool gw_sees(const sim_t *s, int i)
 {
+    if (wireless(&s->nodes[i])) {
+        return link_up(s, i);
+    }
     if (s->gw.core == NULL) {
         return false;
     }
@@ -1081,12 +1443,57 @@ static bool gw_sees(const sim_t *s, int i)
     return e != NULL && e->present;
 }
 
+static const lbr_corner_peer_t *corner_peer(const sim_t *s, int i)
+{
+    const sim_node_t *n = &s->nodes[i];
+    int               c = lbr_node_corner_index(n->id);
+    if (c < 0 || n->peer < 0 || s->nodes[n->peer].corner_rx == NULL) {
+        return NULL;
+    }
+    return &s->nodes[n->peer].corner_rx->peer[c];
+}
+
 /* ------------------------------------------------------------------------ */
 /* Snapshot                                                                  */
 
+static void snap_slots(FILE *o, sim_t *s, int i)
+{
+    sim_node_t *n = &s->nodes[i];
+    fprintf(o, ",\"slots\":[");
+    for (size_t k = 0; n->plan != NULL && k < n->plan->n_slots; k++) {
+        const lbr_slot_t     *sl   = &n->plan->slots[k];
+        const char           *kind = n->slots[k].kind == SIM_SLOT_IO         ? "io"
+                                     : n->slots[k].kind == SIM_SLOT_NMEA     ? "nmea"
+                                     : n->slots[k].kind == SIM_SLOT_FIRMWARE ? "firmware"
+                                                                             : "part";
+        const lbr_acq_slot_t *a    = NULL;
+        if (n->kind == SIM_NODE_CENTRAL && s->gw.core != NULL) {
+            a = &s->gw.core->slot[k].acq;
+        } else if (n->kind == SIM_NODE_CAN && n->core != NULL) {
+            a = &n->core->slot[k].acq;
+        } else if (n->kind == SIM_NODE_CORNER && n->corner != NULL) {
+            a = &n->corner->slot[k];
+        } else if (n->kind == SIM_NODE_DASH && n->dash != NULL) {
+            a = &n->dash->slot[k];
+        }
+        bool healthy = n->booted && a != NULL && atomic_load(&a->healthy);
+        fprintf(o,
+                "%s{\"name\":\"%s\",\"rate_hz\":%u,\"kind\":\"%s\",\"unplugged\":%s,"
+                "\"healthy\":%s,\"signals\":[",
+                k ? "," : "", sl->name, (unsigned)sl->rate_hz, kind,
+                n->slots[k].unplugged ? "true" : "false", healthy ? "true" : "false");
+        for (size_t c2 = 0; c2 < sl->n_signals; c2++) {
+            fprintf(o, "%s\"%s\"", c2 ? "," : "", lbr_signal_info(sl->signals[c2])->name);
+        }
+        fprintf(o, "]}");
+    }
+    fprintf(o, "]");
+}
+
 void sim_snapshot(sim_t *s)
 {
-    FILE *o = s->out;
+    static const char *kinds[] = {"central", "can", "corner", "dash"};
+    FILE              *o       = s->out;
     fprintf(o, "{\"ev\":\"snap\",\"t\":%.6f,\"seed\":%llu,", t_s(s), (unsigned long long)s->seed);
     fprintf(o,
             "\"bus\":{\"bitrate\":%lu,\"load\":%.2f,\"fps\":%u,\"frames\":%llu,\"errors\":%llu,"
@@ -1101,44 +1508,55 @@ void sim_snapshot(sim_t *s)
         const lbr_health_record_t *h = &n->last_health;
         const lbr_can_stats_t     *c = &n->can.st;
         fprintf(o,
-                "%s{\"name\":\"%s\",\"id\":%u,\"state\":\"%s\",\"powered\":%s,\"booted\":%s,"
-                "\"connected\":%s,\"traced\":%s,\"seen\":%s,\"synced\":%s,\"sync_err_us\":%lld,"
-                "\"ppm\":%.1f,\"boot_count\":%u,\"uptime_s\":%.1f,\"flags\":%u,"
-                "\"can\":{\"running\":%s,\"tec\":%u,\"rec\":%u,\"tx\":%u,\"rx\":%u,"
-                "\"tx_dropped\":%u,\"bus_off\":%u,\"errors\":%u,\"queue\":%u},"
-                "\"health\":{\"acquire_hz\":%u,\"publish_hz\":%u,\"log_hz\":%u,\"overflow\":%u,"
-                "\"sensor_status\":%lu,\"calibration\":%lu,\"steps\":%u}",
-                i ? "," : "", n->name, (unsigned)n->id, state_of(s, i),
+                "%s{\"name\":\"%s\",\"id\":%u,\"kind\":\"%s\",\"state\":\"%s\",\"powered\":%s,"
+                "\"booted\":%s,\"connected\":%s,\"traced\":%s,\"seen\":%s,\"synced\":%s,"
+                "\"sync_err_us\":%lld,\"ppm\":%.1f,\"boot_count\":%u,\"uptime_s\":%.1f,"
+                "\"flags\":%u,",
+                i ? "," : "", n->name, (unsigned)n->id, kinds[n->kind], state_of(s, i),
                 n->powered ? "true" : "false", n->booted ? "true" : "false",
                 n->can.connected ? "true" : "false", n->traced ? "true" : "false",
                 (i == GW || gw_sees(s, i)) ? "true" : "false", n->servo.synced ? "true" : "false",
                 (long long)sync_error_us(s, i), n->ppm, (unsigned)n->boot_count,
-                (double)sim_local_us(s, i) / 1e6, (unsigned)h->flags, c->running ? "true" : "false",
-                (unsigned)c->tec, (unsigned)c->rec, (unsigned)c->tx_frames, (unsigned)c->rx_frames,
-                (unsigned)c->tx_dropped, (unsigned)c->bus_off_count, (unsigned)c->bus_errors,
-                (unsigned)n->can.tx_len, (unsigned)h->acquire_hz, (unsigned)h->publish_hz,
-                (unsigned)h->log_hz, (unsigned)h->overflow_count, (unsigned long)h->sensor_status,
-                (unsigned long)h->calibration_state, (unsigned)h->time_step_count);
-        fprintf(o, ",\"slots\":[");
-        if (!n->is_gateway && n->plan != NULL) {
-            for (size_t k = 0; k < n->plan->n_slots; k++) {
-                const lbr_slot_t *sl   = &n->plan->slots[k];
-                const char       *kind = n->slots[k].kind == SIM_SLOT_IO     ? "io"
-                                         : n->slots[k].kind == SIM_SLOT_NMEA ? "nmea"
-                                                                             : "part";
-                bool healthy           = n->core != NULL && atomic_load(&n->core->slot[k].healthy);
+                (double)sim_local_us(s, i) / 1e6, (unsigned)h->flags);
+        if (wireless(n)) {
+            const lbr_corner_peer_t *p = corner_peer(s, i);
+            fprintf(o,
+                    "\"wifi\":{\"up\":%s,\"link\":%s,\"loss_permille\":%u,\"sent\":%u,"
+                    "\"delivered\":%u,\"dropped\":%u,\"forwarded\":%u,\"lost\":%u,\"gaps\":%u}",
+                    n->wifi.up ? "true" : "false", link_up(s, i) ? "true" : "false",
+                    (unsigned)n->wifi.loss_permille, (unsigned)n->wifi.sent,
+                    (unsigned)n->wifi.delivered, (unsigned)n->wifi.dropped,
+                    p != NULL ? (unsigned)p->forwarded : 0u, p != NULL ? (unsigned)p->lost : 0u,
+                    p != NULL ? (unsigned)p->packet_gaps
+                    : n->kind == SIM_NODE_DASH && s->gw.core != NULL
+                        ? (unsigned)s->gw.core->dash.packet_gaps
+                        : 0u);
+            if (n->corner != NULL) {
                 fprintf(o,
-                        "%s{\"name\":\"%s\",\"rate_hz\":%u,\"div\":%u,\"kind\":\"%s\","
-                        "\"unplugged\":%s,\"healthy\":%s,\"signals\":[",
-                        k ? "," : "", sl->name, (unsigned)sl->rate_hz, (unsigned)sl->publish_div,
-                        kind, n->slots[k].unplugged ? "true" : "false", healthy ? "true" : "false");
-                for (size_t c2 = 0; c2 < sl->n_signals; c2++) {
-                    fprintf(o, "%s\"%s\"", c2 ? "," : "", lbr_signal_info(sl->signals[c2])->name);
-                }
-                fprintf(o, "]}");
+                        ",\"corner\":{\"acquired\":%u,\"overruns\":%u,\"steps\":%u,"
+                        "\"clock_ok\":%u,\"clock_rejected\":%u,\"rtt_us\":%u}",
+                        (unsigned)atomic_load(&n->corner->acquired),
+                        (unsigned)atomic_load(&n->corner->overruns), (unsigned)n->servo.step_count,
+                        (unsigned)n->corner->clock.accepted, (unsigned)n->corner->clock.rejected,
+                        (unsigned)n->corner->clock.last_rtt_us);
             }
+        } else {
+            fprintf(o,
+                    "\"can\":{\"running\":%s,\"tec\":%u,\"rec\":%u,\"tx\":%u,\"rx\":%u,"
+                    "\"tx_dropped\":%u,\"bus_off\":%u,\"errors\":%u,\"queue\":%u},"
+                    "\"health\":{\"acquire_hz\":%u,\"publish_hz\":%u,\"log_hz\":%u,"
+                    "\"overflow\":%u,\"transport_errors\":%u,\"sensor_status\":%lu,"
+                    "\"calibration\":%lu,\"steps\":%u}",
+                    c->running ? "true" : "false", (unsigned)c->tec, (unsigned)c->rec,
+                    (unsigned)c->tx_frames, (unsigned)c->rx_frames, (unsigned)c->tx_dropped,
+                    (unsigned)c->bus_off_count, (unsigned)c->bus_errors, (unsigned)n->can.tx_len,
+                    (unsigned)h->acquire_hz, (unsigned)h->publish_hz, (unsigned)h->log_hz,
+                    (unsigned)h->overflow_count, (unsigned)h->transport_error_count,
+                    (unsigned long)h->sensor_status, (unsigned long)h->calibration_state,
+                    (unsigned)h->time_step_count);
         }
-        fprintf(o, "]}");
+        snap_slots(o, s, i);
+        fprintf(o, "}");
     }
     fprintf(o, "],");
 
@@ -1148,7 +1566,7 @@ void sim_snapshot(sim_t *s)
             "\"gw\":{\"epoch\":%u,\"sd\":%s,\"log_open\":%s,\"log_file\":\"%s\",\"log_bytes\":%llu,"
             "\"records\":%u,\"dropped\":%u,\"write_errors\":%u,\"queue_hw\":%u,"
             "\"usb_pkts\":%u,\"usb_bytes\":%u,\"wifi_pkts\":%u,\"lora_pkts\":%u,\"lora_bytes\":%u,"
-            "\"lora_records\":%u,\"sync_fail\":%u},",
+            "\"lora_records\":%u,\"dash_pkts\":%u,\"sync_fail\":%u},",
             (unsigned)s->gw.epoch, s->nodes[GW].sd_inserted ? "true" : "false",
             s->gw.log.open ? "true" : "false", s->nodes[GW].keeper.name,
             (unsigned long long)s->nodes[GW].log_bytes, (unsigned)ls.records_written,
@@ -1157,9 +1575,9 @@ void sim_snapshot(sim_t *s)
             (unsigned)s->gw.usb_st.packets_sent, (unsigned)s->gw.usb_st.bytes_sent,
             (unsigned)s->gw.wifi_st.packets_sent, (unsigned)s->gw.lora_st.packets_sent,
             (unsigned)s->gw.lora_st.bytes_sent, (unsigned)s->gw.last_lora_records,
-            (unsigned)s->gw.sync_timeouts);
+            (unsigned)s->gw.dash_st.packets_sent, (unsigned)s->gw.sync_timeouts);
 
-    /* Latest value of every signal seen on the bus (what the gateway logs). */
+    /* Latest value of every signal seen on the bus (what the Central logs). */
     fprintf(o, "\"signals\":{");
     bool first = true;
     for (size_t i = 0; i < lbr_signal_count(); i++) {
@@ -1168,9 +1586,9 @@ void sim_snapshot(sim_t *s)
         if (!v->seen || info->id == LBR_SIG_EVENT || info->id == LBR_SIG_FAULT) {
             continue;
         }
-        fprintf(o, "%s\"%s\":{\"src\":\"%s\",\"unit\":\"%s\",\"age_ms\":%llu,", first ? "" : ",",
-                info->name, lbr_node_name(v->source), lbr_unit_name(info->unit),
-                (unsigned long long)((s->now - v->rx_t) / 1000u));
+        fprintf(o, "%s\"%s\":{\"src\":\"%s\",\"unit\":\"%s\",\"age_ms\":%llu,\"synced\":%s,",
+                first ? "" : ",", info->name, lbr_node_name(v->source), lbr_unit_name(info->unit),
+                (unsigned long long)((s->now - v->rx_t) / 1000u), v->s.synced ? "true" : "false");
         first = false;
         if (!v->s.valid) {
             fprintf(o, "\"valid\":false,\"reason\":\"%s\"}",
@@ -1180,6 +1598,8 @@ void sim_snapshot(sim_t *s)
             fprintf(o, "\"valid\":true,\"v\":%.4g}", isfinite(d) ? d : 0.0);
         } else if (info->type == LBR_VAL_I32) {
             fprintf(o, "\"valid\":true,\"v\":%ld}", (long)v->s.v.i32);
+        } else if (info->type == LBR_VAL_BOOL) {
+            fprintf(o, "\"valid\":true,\"v\":%u}", v->s.v.b ? 1u : 0u);
         } else {
             fprintf(o, "\"valid\":true,\"v\":%lu}", (unsigned long)v->s.v.u32);
         }
@@ -1193,36 +1613,37 @@ void sim_snapshot(sim_t *s)
         if (w->t == 0 || s->now - w->t > 200000u) {
             continue;
         }
-        lbr_can_id_t id = lbr_can_id_parse(w->f.id);
-        char         d[48];
+        char d[48];
         fprintf(o,
                 "%s{\"t\":%.6f,\"src\":\"%s\",\"id\":%lu,\"prio\":%u,\"what\":\"%s\",\"error\":%s}",
-                shown++ ? "," : "", (double)w->t / 1e6, lbr_node_name(id.source),
-                (unsigned long)w->f.id, (unsigned)id.prio, frame_desc(&w->f, d, sizeof d),
+                shown++ ? "," : "", (double)w->t / 1e6, lbr_node_name(lbr_can_sender(w->f.id)),
+                (unsigned long)w->f.id, (unsigned)(w->f.id >> 8), frame_desc(&w->f, d, sizeof d),
                 w->error ? "true" : "false");
     }
     fprintf(o, "],");
 
-    /* What the cockpit display shows (the dashboard node's own tables). */
+    /* What the cockpit display shows: the dashboard core's own tables. */
     fprintf(o, "\"dash\":[");
-    for (size_t k = 0; k < lbr_dashboard_watch_count; k++) {
-        lbr_sample_t             smp;
-        const lbr_signal_info_t *info = lbr_signal_info(lbr_dashboard_watch[k]);
-        uint64_t                 dnow = s->nodes[s->n_nodes - 1].booted
-                                            ? lbr_time_servo_map(&s->nodes[s->n_nodes - 1].servo,
-                                                                 sim_local_us(s, s->n_nodes - 1))
-                                            : 0;
-        lbr_value_state_t        st =
-            lbr_value_table_get(&s->dash_values, lbr_dashboard_watch[k], dnow, &smp);
-        static const char *names[] = {"none", "stale", "invalid", "ok"};
-        fprintf(o, "%s{\"sig\":\"%s\",\"unit\":\"%s\",\"state\":\"%s\"", k ? "," : "", info->name,
-                lbr_unit_name(info->unit), names[st]);
-        if (st == LBR_VALUE_OK && info->type == LBR_VAL_F32) {
-            fprintf(o, ",\"v\":%.4g", (double)smp.v.f32);
-        } else if (st == LBR_VALUE_OK || st == LBR_VALUE_INVALID) {
-            fprintf(o, ",\"v\":%lu", (unsigned long)smp.v.u32);
+    int dash = sim_node_by_id(s, LBR_NODE_DASHBOARD);
+    if (dash >= 0 && s->nodes[dash].booted && s->nodes[dash].dash != NULL) {
+        static lbr_value_table_t values;
+        static lbr_dash_node_t   dnodes[LBR_DASH_MAX_NODES];
+        uint64_t                 dnow = sim_local_us(s, dash);
+        lbr_dash_core_snapshot(s->nodes[dash].dash, &values, dnodes);
+        for (size_t k = 0; k < lbr_dash_signal_count; k++) {
+            lbr_sample_t             smp;
+            const lbr_signal_info_t *info = lbr_signal_info(lbr_dash_signals[k]);
+            lbr_value_state_t  st = lbr_value_table_get(&values, lbr_dash_signals[k], dnow, &smp);
+            static const char *names[] = {"none", "stale", "invalid", "ok"};
+            fprintf(o, "%s{\"sig\":\"%s\",\"unit\":\"%s\",\"state\":\"%s\"", k ? "," : "",
+                    info->name, lbr_unit_name(info->unit), names[st]);
+            if (st == LBR_VALUE_OK && info->type == LBR_VAL_F32) {
+                fprintf(o, ",\"v\":%.4g", (double)smp.v.f32);
+            } else if (st == LBR_VALUE_OK || st == LBR_VALUE_INVALID) {
+                fprintf(o, ",\"v\":%lu", (unsigned long)smp.v.u32);
+            }
+            fprintf(o, "}");
         }
-        fprintf(o, "}");
     }
     fprintf(o, "],");
 
@@ -1335,11 +1756,25 @@ static void check_result(sim_t *s, bool ok, const char *what, const char *got)
 /* Numeric metric of one node; false if unknown. */
 static bool node_metric(sim_t *s, int i, const char *m, double *v)
 {
-    sim_node_t *n = &s->nodes[i];
+    sim_node_t              *n = &s->nodes[i];
+    const lbr_corner_peer_t *p = corner_peer(s, i);
     if (strcmp(m, "seen") == 0) {
         *v = (i == GW || gw_sees(s, i)) ? 1 : 0;
     } else if (strcmp(m, "synced") == 0) {
-        *v = n->servo.synced ? 1 : 0;
+        /* The dashboard keeps no shared clock: nothing to sync, reported 1. */
+        *v = (n->servo.synced || n->kind == SIM_NODE_DASH) ? 1 : 0;
+    } else if (strcmp(m, "link") == 0) {
+        *v = !wireless(n) || link_up(s, i) ? 1 : 0;
+    } else if (strcmp(m, "lost") == 0) {
+        *v = p != NULL ? p->lost : 0; /* corner samples that never reached CAN */
+    } else if (strcmp(m, "forwarded") == 0) {
+        *v = p != NULL ? p->forwarded : 0;
+    } else if (strcmp(m, "gaps") == 0) {
+        *v = p != NULL                                        ? p->packet_gaps
+             : n->kind == SIM_NODE_DASH && s->gw.core != NULL ? s->gw.core->dash.packet_gaps
+                                                              : 0;
+    } else if (strcmp(m, "transport_errors") == 0) {
+        *v = n->last_health.transport_error_count;
     } else if (strcmp(m, "sync_err_us") == 0) {
         *v = (double)llabs((long long)sync_error_us(s, i));
     } else if (strcmp(m, "tx_dropped") == 0) {
@@ -1409,22 +1844,52 @@ static bool log_metric(sim_t *s, const char *m, double *v)
     return true;
 }
 
+/* Group targets of expect: all (every node but the Central), can (the wired
+ * sensor controllers), corners, wireless (corners and the dashboard). */
+static int group_of(const char *target)
+{
+    static const char *const groups[] = {"all", "can", "corners", "wireless"};
+    for (int g = 0; g < 4; g++) {
+        if (strcmp(target, groups[g]) == 0) {
+            return g;
+        }
+    }
+    return -1;
+}
+
+static bool in_group(const sim_t *s, int g, int i)
+{
+    const sim_node_t *n = &s->nodes[i];
+    switch (g) {
+        case 0:
+            return i != GW;
+        case 1:
+            return n->kind == SIM_NODE_CAN;
+        case 2:
+            return n->kind == SIM_NODE_CORNER;
+        default:
+            return wireless(n);
+    }
+}
+
 static int cmd_expect(sim_t *s, char **tok, int nt, const char *line)
 {
     /* expect <target> <metric> <op> <value> */
     if (nt < 5) {
-        return err(s, "usage: expect <node|all|bus|gateway|log> <metric> <op> <value>");
+        return err(s, "usage: expect <node|all|bus|central|log> <metric> <op> <value>");
     }
     const char *target = tok[1], *metric = tok[2], *op = tok[3], *want = tok[4];
     char        got[64];
     const char *what = line + strlen("expect ");
 
+    int group = group_of(target);
     if (strcmp(metric, "state") == 0) {
-        bool all = strcmp(target, "all") == 0;
+        bool all = group >= 0;
         bool ok  = true;
         got[0]   = '\0';
         for (int i = 0; i < s->n_nodes; i++) {
-            if ((all && i == GW) || (!all && strcmp(s->nodes[i].name, target) != 0)) {
+            if ((all && !in_group(s, group, i)) ||
+                (!all && strcmp(s->nodes[i].name, target) != 0)) {
                 continue;
             }
             bool eq = strcmp(state_of(s, i), want) == 0;
@@ -1480,13 +1945,14 @@ static int cmd_expect(sim_t *s, char **tok, int nt, const char *line)
         } else {
             return err(s, "unknown bus metric '%s'", metric);
         }
-    } else if (strcmp(target, "gateway") == 0 && strcmp(metric, "frames_logged") != 0 &&
+    } else if (strcmp(target, "central") == 0 && strcmp(metric, "frames_logged") != 0 &&
                strcmp(metric, "log_dropped") != 0 && strcmp(metric, "lora_pkts") != 0 &&
-               strcmp(metric, "usb_pkts") != 0 && strcmp(metric, "sync_fail") != 0) {
+               strcmp(metric, "usb_pkts") != 0 && strcmp(metric, "sync_fail") != 0 &&
+               strcmp(metric, "dash_pkts") != 0) {
         if (!node_metric(s, GW, metric, &v)) {
-            return err(s, "unknown gateway metric '%s'", metric);
+            return err(s, "unknown central metric '%s'", metric);
         }
-    } else if (strcmp(target, "gateway") == 0) {
+    } else if (strcmp(target, "central") == 0) {
         lbr_log_stats_t ls = {0};
         lbr_log_get_stats(&s->gw.log, &ls);
         if (strcmp(metric, "frames_logged") == 0) {
@@ -1497,6 +1963,8 @@ static int cmd_expect(sim_t *s, char **tok, int nt, const char *line)
             v = s->gw.lora_st.packets_sent;
         } else if (strcmp(metric, "usb_pkts") == 0) {
             v = s->gw.usb_st.packets_sent;
+        } else if (strcmp(metric, "dash_pkts") == 0) {
+            v = s->gw.dash_st.packets_sent;
         } else {
             v = s->gw.sync_timeouts;
         }
@@ -1504,13 +1972,16 @@ static int cmd_expect(sim_t *s, char **tok, int nt, const char *line)
         if (!log_metric(s, metric, &v)) {
             return err(s, "unknown log metric '%s'", metric);
         }
-    } else if (strcmp(target, "all") == 0) {
-        /* Worst case across the sensor nodes. */
+    } else if (group >= 0) {
+        /* Worst case across the group. */
         bool   any   = false;
         double worst = 0;
         bool   ok    = true;
-        for (int i = 1; i < s->n_nodes; i++) {
+        for (int i = 0; i < s->n_nodes; i++) {
             double x;
+            if (!in_group(s, group, i)) {
+                continue;
+            }
             if (!node_metric(s, i, metric, &x)) {
                 return err(s, "unknown node metric '%s'", metric);
             }
@@ -1626,20 +2097,33 @@ int sim_command(sim_t *s, const char *line)
             o->set   = true;
             o->value = (float)atof(tok[2]);
         }
-    } else if (strcmp(c, "press") == 0 || strcmp(c, "release") == 0) {
-        int bit = nt > 1 ? atoi(tok[1]) : -1;
-        if (bit < 0 || bit > 31) {
-            return err(s, "usage: %s <button 0..31>", c);
+    } else if (strcmp(c, "wifi") == 0) {
+        /* wifi <node> up|down|loss <permille>: a corner's or the dashboard's link. */
+        int i =
+            nt > 2 ? need_node(s, tok[1]) : err(s, "usage: wifi <node> up|down|loss <permille>");
+        if (i < 0) {
+            return -1;
         }
-        if (c[0] == 'p') {
-            s->world.buttons |= 1u << bit;
+        sim_node_t *n = &s->nodes[i];
+        if (!wireless(n)) {
+            return err(s, "%s has no WiFi link (corner nodes and the dashboard do)", n->name);
+        }
+        if (strcmp(tok[2], "up") == 0 || strcmp(tok[2], "down") == 0) {
+            n->wifi.up = tok[2][0] == 'u';
+            sim_note(s, "%s WiFi %s", n->name, n->wifi.up ? "back in range" : "out of range");
+        } else if (strcmp(tok[2], "loss") == 0 && nt > 3 && atoi(tok[3]) >= 0 &&
+                   atoi(tok[3]) <= 1000) {
+            n->wifi.loss_permille = (uint32_t)atoi(tok[3]);
         } else {
-            s->world.buttons &= ~(1u << bit);
+            return err(s, "usage: wifi <node> up|down|loss <0..1000 permille>");
         }
     } else if (strcmp(c, "disconnect") == 0 || strcmp(c, "connect") == 0) {
         int i = need_node(s, nt > 1 ? tok[1] : NULL);
         if (i < 0) {
             return -1;
+        }
+        if (wireless(&s->nodes[i])) {
+            return err(s, "%s is not on CAN (use: wifi %s down)", tok[1], tok[1]);
         }
         s->nodes[i].can.connected = c[0] == 'c';
         if (c[0] == 'c') {
@@ -1651,6 +2135,9 @@ int sim_command(sim_t *s, const char *line)
         int i = need_node(s, nt > 1 ? tok[1] : NULL);
         if (i < 0) {
             return -1;
+        }
+        if (wireless(&s->nodes[i])) {
+            return err(s, "%s is not on CAN", tok[1]);
         }
         s->nodes[i].can.st.tec = 255;
         vbus_bus_off(s, i);
@@ -1690,7 +2177,7 @@ int sim_command(sim_t *s, const char *line)
                  : on                     ? "powered on"
                                           : "powered off");
     } else if (strcmp(c, "sd") == 0) {
-        /* sd [node] remove|insert|fail <writes>; the node defaults to the gateway. */
+        /* sd [node] remove|insert|fail <writes>; the node defaults to the Central. */
         int k = 1, i = GW;
         if (nt > 2 && sim_node_index(s, tok[1]) >= 0) {
             i = sim_node_index(s, tok[1]);

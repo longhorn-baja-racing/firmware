@@ -103,6 +103,9 @@ static lbr_sd_err_t lbr_sd_mount_locked(void)
             .max_transfer_sz = 16 * 1024,
         };
         err = spi_bus_initialize(host.slot, &bus, SPI_DMA_CH_AUTO);
+        if (err == ESP_ERR_INVALID_STATE) {
+            err = ESP_OK; /* bus shared with the LoRa radio (ESP32-C5), already up */
+        }
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "spi_bus_initialize: %s", esp_err_to_name(err));
             return LBR_SD_ERR_MOUNT;

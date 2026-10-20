@@ -1,102 +1,104 @@
 /*
  * Signal catalog: the single source of truth for signal identity and metadata.
  *
- * LBR_SIGNAL(NAME, ID, TYPE, UNIT, CAN_PRIO, "description")
+ * LBR_SIGNAL(NAME, ID, TYPE, UNIT, "description")
  *
- *   NAME      enum suffix: LBR_SIG_<NAME>
- *   ID        stable 16-bit id. APPEND ONLY: never renumber or reuse an id.
- *   TYPE      lbr_value_type_t suffix (F32, I32, U32, BOOL, STATUS)
- *   UNIT      lbr_unit_t suffix (canonical SI-style units, see protocol.h)
- *   CAN_PRIO  0 (highest) .. 7 (lowest) arbitration priority on the CAN bus
+ *   NAME  enum suffix: LBR_SIG_<NAME>
+ *   ID    stable 16-bit id. Never renumber or reuse an id once a log exists.
+ *   TYPE  lbr_value_type_t suffix (F32, I32, U32, BOOL, STATUS)
+ *   UNIT  lbr_unit_t suffix (canonical SI-style units, see protocol.h)
  *
- * The high byte groups signals by subsystem. Values are sensor-frame: per-node
- * mounting transforms are session metadata applied by the dashboard. Any edit
- * here changes lbr_catalog_hash() and must be mirrored in lbr-dashboard via the
- * exported catalog fixture (dev/tests/fixtures/catalog.json).
+ * The high byte groups signals like the CAN id map (DAQ-WIRING.md section 7):
+ * 0x01 driver inputs, 0x02 powertrain, 0x03 IMU, 0x04 stress, 0x05
+ * temperature, 0x06 Central (GPS, dashboard link), 0x07 events. Where and how
+ * each signal travels on CAN is the frame table (frames.c), not this file.
+ * Values are sensor-frame: per-node mounting transforms are session metadata
+ * applied by the dashboard. Any edit here changes lbr_catalog_hash() and must
+ * be mirrored in lbr-dashboard via the exported catalog fixture
+ * (dev/tests/fixtures/catalog.json).
  *
  * Intentionally no include guard: this file is expanded several times.
  */
 
-/* 0x01xx IMU / inertial (owner: imu_gps) */
-LBR_SIGNAL(ACCEL_X,         0x0100, F32,    M_PER_S2,   4, "Acceleration, sensor X axis")
-LBR_SIGNAL(ACCEL_Y,         0x0101, F32,    M_PER_S2,   4, "Acceleration, sensor Y axis")
-LBR_SIGNAL(ACCEL_Z,         0x0102, F32,    M_PER_S2,   4, "Acceleration, sensor Z axis")
-LBR_SIGNAL(GYRO_X,          0x0103, F32,    RAD_PER_S,  4, "Angular rate, sensor X axis")
-LBR_SIGNAL(GYRO_Y,          0x0104, F32,    RAD_PER_S,  4, "Angular rate, sensor Y axis")
-LBR_SIGNAL(GYRO_Z,          0x0105, F32,    RAD_PER_S,  4, "Angular rate, sensor Z axis")
-LBR_SIGNAL(ORIENT_QUAT_W,   0x0106, F32,    NONE,       5, "Orientation quaternion W (sensor frame)")
-LBR_SIGNAL(ORIENT_QUAT_X,   0x0107, F32,    NONE,       5, "Orientation quaternion X (sensor frame)")
-LBR_SIGNAL(ORIENT_QUAT_Y,   0x0108, F32,    NONE,       5, "Orientation quaternion Y (sensor frame)")
-LBR_SIGNAL(ORIENT_QUAT_Z,   0x0109, F32,    NONE,       5, "Orientation quaternion Z (sensor frame)")
-LBR_SIGNAL(IMU_TEMP,        0x010A, F32,    DEG_C,      6, "IMU die temperature")
-LBR_SIGNAL(IMU_CALIB_STATE, 0x010B, STATUS, NONE,       6, "IMU calibration state code")
-LBR_SIGNAL(MAG_X,           0x010C, F32,    MICROTESLA, 5, "Magnetic field, sensor X axis")
-LBR_SIGNAL(MAG_Y,           0x010D, F32,    MICROTESLA, 5, "Magnetic field, sensor Y axis")
-LBR_SIGNAL(MAG_Z,           0x010E, F32,    MICROTESLA, 5, "Magnetic field, sensor Z axis")
+/* 0x01xx Driver inputs (driver_input). Scaling TBD until parts are chosen. */
+LBR_SIGNAL(BRAKE_PEDAL,       0x0100, F32,    PERCENT,     "Brake pedal compression")
+LBR_SIGNAL(GAS_PEDAL,         0x0101, F32,    PERCENT,     "Gas pedal compression")
+LBR_SIGNAL(STEERING_ANGLE,    0x0102, F32,    DEGREE,      "Steering angle")
 
-/* 0x02xx Powertrain / speed (owner: unassigned in the 2026 node set) */
-LBR_SIGNAL(ENGINE_RPM,      0x0200, F32,    RPM,        4, "Engine speed")
-LBR_SIGNAL(VEHICLE_SPEED,   0x0201, F32,    M_PER_S,    4, "Vehicle speed")
-LBR_SIGNAL(WHEEL_SPEED_FL,  0x0202, F32,    M_PER_S,    4, "Wheel speed, front left")
-LBR_SIGNAL(WHEEL_SPEED_FR,  0x0203, F32,    M_PER_S,    4, "Wheel speed, front right")
-LBR_SIGNAL(WHEEL_SPEED_RL,  0x0204, F32,    M_PER_S,    4, "Wheel speed, rear left")
-LBR_SIGNAL(WHEEL_SPEED_RR,  0x0205, F32,    M_PER_S,    4, "Wheel speed, rear right")
-LBR_SIGNAL(FUEL_LEVEL,      0x0206, F32,    PERCENT,    5, "Fuel level, percent of usable tank (owner: fuel_gauge)")
-LBR_SIGNAL(FUEL_VOLUME,     0x0207, F32,    LITER,      5, "Fuel remaining (owner: fuel_gauge)")
+/* 0x02xx Powertrain (powertrain) */
+LBR_SIGNAL(ENGINE_RPM,        0x0200, F32,    RPM,         "Engine speed")
+LBR_SIGNAL(CVT_RPM,           0x0201, F32,    RPM,         "CVT speed")
+LBR_SIGNAL(FUEL_LEVEL,        0x0202, F32,    PERCENT,     "Fuel level, percent of usable tank")
 
-/* 0x03xx Temperatures (owner: temperature) */
-LBR_SIGNAL(TEMP_ENGINE,     0x0300, F32,    DEG_C,      5, "Engine temperature")
-LBR_SIGNAL(TEMP_CVT,        0x0301, F32,    DEG_C,      5, "CVT temperature")
-LBR_SIGNAL(TEMP_BRAKE_FRONT,0x0302, F32,    DEG_C,      5, "Front brake temperature")
-LBR_SIGNAL(TEMP_BRAKE_REAR, 0x0303, F32,    DEG_C,      5, "Rear brake temperature")
-LBR_SIGNAL(TEMP_AMBIENT,    0x0304, F32,    DEG_C,      6, "Ambient air temperature")
-LBR_SIGNAL(TEMP_GEARBOX,    0x0305, F32,    DEG_C,      5, "Gearbox temperature")
-LBR_SIGNAL(TEMP_AUX_1,      0x0306, F32,    DEG_C,      6, "Auxiliary temperature 1 (location in session config)")
-LBR_SIGNAL(TEMP_AUX_2,      0x0307, F32,    DEG_C,      6, "Auxiliary temperature 2 (location in session config)")
-LBR_SIGNAL(TEMP_AUX_3,      0x0308, F32,    DEG_C,      6, "Auxiliary temperature 3 (location in session config)")
-LBR_SIGNAL(TEMP_AUX_4,      0x0309, F32,    DEG_C,      6, "Auxiliary temperature 4 (location in session config)")
+/* 0x03xx IMUs (imu). FL/FR/BL/BR are sampled by the corner nodes and
+ * forwarded by the IMU Controller; CHASSIS is wired to the IMU Controller. */
+LBR_SIGNAL(IMU_FL_ACCEL_X,    0x0300, F32,    M_PER_S2,    "FL suspension IMU acceleration, sensor X")
+LBR_SIGNAL(IMU_FL_ACCEL_Y,    0x0301, F32,    M_PER_S2,    "FL suspension IMU acceleration, sensor Y")
+LBR_SIGNAL(IMU_FL_ACCEL_Z,    0x0302, F32,    M_PER_S2,    "FL suspension IMU acceleration, sensor Z")
+LBR_SIGNAL(IMU_FL_GYRO_X,     0x0303, F32,    RAD_PER_S,   "FL suspension IMU angular rate, sensor X")
+LBR_SIGNAL(IMU_FL_GYRO_Y,     0x0304, F32,    RAD_PER_S,   "FL suspension IMU angular rate, sensor Y")
+LBR_SIGNAL(IMU_FL_GYRO_Z,     0x0305, F32,    RAD_PER_S,   "FL suspension IMU angular rate, sensor Z")
+LBR_SIGNAL(IMU_FR_ACCEL_X,    0x0306, F32,    M_PER_S2,    "FR suspension IMU acceleration, sensor X")
+LBR_SIGNAL(IMU_FR_ACCEL_Y,    0x0307, F32,    M_PER_S2,    "FR suspension IMU acceleration, sensor Y")
+LBR_SIGNAL(IMU_FR_ACCEL_Z,    0x0308, F32,    M_PER_S2,    "FR suspension IMU acceleration, sensor Z")
+LBR_SIGNAL(IMU_FR_GYRO_X,     0x0309, F32,    RAD_PER_S,   "FR suspension IMU angular rate, sensor X")
+LBR_SIGNAL(IMU_FR_GYRO_Y,     0x030A, F32,    RAD_PER_S,   "FR suspension IMU angular rate, sensor Y")
+LBR_SIGNAL(IMU_FR_GYRO_Z,     0x030B, F32,    RAD_PER_S,   "FR suspension IMU angular rate, sensor Z")
+LBR_SIGNAL(IMU_BL_ACCEL_X,    0x030C, F32,    M_PER_S2,    "BL suspension IMU acceleration, sensor X")
+LBR_SIGNAL(IMU_BL_ACCEL_Y,    0x030D, F32,    M_PER_S2,    "BL suspension IMU acceleration, sensor Y")
+LBR_SIGNAL(IMU_BL_ACCEL_Z,    0x030E, F32,    M_PER_S2,    "BL suspension IMU acceleration, sensor Z")
+LBR_SIGNAL(IMU_BL_GYRO_X,     0x030F, F32,    RAD_PER_S,   "BL suspension IMU angular rate, sensor X")
+LBR_SIGNAL(IMU_BL_GYRO_Y,     0x0310, F32,    RAD_PER_S,   "BL suspension IMU angular rate, sensor Y")
+LBR_SIGNAL(IMU_BL_GYRO_Z,     0x0311, F32,    RAD_PER_S,   "BL suspension IMU angular rate, sensor Z")
+LBR_SIGNAL(IMU_BR_ACCEL_X,    0x0312, F32,    M_PER_S2,    "BR suspension IMU acceleration, sensor X")
+LBR_SIGNAL(IMU_BR_ACCEL_Y,    0x0313, F32,    M_PER_S2,    "BR suspension IMU acceleration, sensor Y")
+LBR_SIGNAL(IMU_BR_ACCEL_Z,    0x0314, F32,    M_PER_S2,    "BR suspension IMU acceleration, sensor Z")
+LBR_SIGNAL(IMU_BR_GYRO_X,     0x0315, F32,    RAD_PER_S,   "BR suspension IMU angular rate, sensor X")
+LBR_SIGNAL(IMU_BR_GYRO_Y,     0x0316, F32,    RAD_PER_S,   "BR suspension IMU angular rate, sensor Y")
+LBR_SIGNAL(IMU_BR_GYRO_Z,     0x0317, F32,    RAD_PER_S,   "BR suspension IMU angular rate, sensor Z")
+LBR_SIGNAL(IMU_CH_ACCEL_X,    0x0318, F32,    M_PER_S2,    "Chassis IMU acceleration, sensor X")
+LBR_SIGNAL(IMU_CH_ACCEL_Y,    0x0319, F32,    M_PER_S2,    "Chassis IMU acceleration, sensor Y")
+LBR_SIGNAL(IMU_CH_ACCEL_Z,    0x031A, F32,    M_PER_S2,    "Chassis IMU acceleration, sensor Z")
+LBR_SIGNAL(IMU_CH_GYRO_X,     0x031B, F32,    RAD_PER_S,   "Chassis IMU angular rate, sensor X")
+LBR_SIGNAL(IMU_CH_GYRO_Y,     0x031C, F32,    RAD_PER_S,   "Chassis IMU angular rate, sensor Y")
+LBR_SIGNAL(IMU_CH_GYRO_Z,     0x031D, F32,    RAD_PER_S,   "Chassis IMU angular rate, sensor Z")
+LBR_SIGNAL(CORNER_FL_BATTERY, 0x0320, F32,    PERCENT,     "FL corner node battery")
+LBR_SIGNAL(CORNER_FR_BATTERY, 0x0321, F32,    PERCENT,     "FR corner node battery")
+LBR_SIGNAL(CORNER_BL_BATTERY, 0x0322, F32,    PERCENT,     "BL corner node battery")
+LBR_SIGNAL(CORNER_BR_BATTERY, 0x0323, F32,    PERCENT,     "BR corner node battery")
+LBR_SIGNAL(CORNER_LINK,       0x0324, U32,    BITMASK,     "Corner WiFi link OK: bit0 FL, bit1 FR, bit2 BL, bit3 BR")
+LBR_SIGNAL(CORNER_SYNCED,     0x0325, U32,    BITMASK,     "Corner clock synced: bit0 FL, bit1 FR, bit2 BL, bit3 BR")
 
-/* 0x04xx Electrical */
-LBR_SIGNAL(BATT_VOLTAGE,    0x0400, F32,    VOLT,       5, "Battery voltage")
-LBR_SIGNAL(BATT_CURRENT,    0x0401, F32,    AMP,        5, "Battery current")
+/* 0x04xx Stress sensors (stress). Location of each in the session config. */
+LBR_SIGNAL(STRESS_1,          0x0400, F32,    MICROSTRAIN, "Stress sensor 1")
+LBR_SIGNAL(STRESS_2,          0x0401, F32,    MICROSTRAIN, "Stress sensor 2")
+LBR_SIGNAL(STRESS_3,          0x0402, F32,    MICROSTRAIN, "Stress sensor 3")
+LBR_SIGNAL(STRESS_4,          0x0403, F32,    MICROSTRAIN, "Stress sensor 4")
+LBR_SIGNAL(STRESS_5,          0x0404, F32,    MICROSTRAIN, "Stress sensor 5")
+LBR_SIGNAL(STRESS_6,          0x0405, F32,    MICROSTRAIN, "Stress sensor 6")
+LBR_SIGNAL(STRESS_7,          0x0406, F32,    MICROSTRAIN, "Stress sensor 7")
+LBR_SIGNAL(STRESS_8,          0x0407, F32,    MICROSTRAIN, "Stress sensor 8")
 
-/* 0x05xx GPS (owner: imu_gps). Position is WGS84. */
-LBR_SIGNAL(GPS_LATITUDE,    0x0500, I32,    DEG_E7,     5, "Latitude, 1e-7 degree")
-LBR_SIGNAL(GPS_LONGITUDE,   0x0501, I32,    DEG_E7,     5, "Longitude, 1e-7 degree")
-LBR_SIGNAL(GPS_ALTITUDE,    0x0502, F32,    METER,      6, "Altitude above mean sea level")
-LBR_SIGNAL(GPS_SPEED,       0x0503, F32,    M_PER_S,    5, "Ground speed")
-LBR_SIGNAL(GPS_COURSE,      0x0504, F32,    DEGREE,     5, "Course over ground, true north")
-LBR_SIGNAL(GPS_FIX,         0x0505, STATUS, NONE,       6, "Fix type: 0 none, 1 dead reckoning, 2 2D, 3 3D")
-LBR_SIGNAL(GPS_SATELLITES,  0x0506, U32,    COUNT,      6, "Satellites used in fix")
-LBR_SIGNAL(GPS_HDOP,        0x0507, F32,    NONE,       6, "Horizontal dilution of precision")
-LBR_SIGNAL(GPS_UTC,         0x0508, U32,    UNIX_S,     6, "UTC time of fix, Unix seconds (wall-clock anchor only)")
+/* 0x05xx Temperatures (temperature) */
+LBR_SIGNAL(TEMP_BRAKE_FL,     0x0500, F32,    DEG_C,       "FL brake temperature")
+LBR_SIGNAL(TEMP_BRAKE_FR,     0x0501, F32,    DEG_C,       "FR brake temperature")
+LBR_SIGNAL(TEMP_BRAKE_BL,     0x0502, F32,    DEG_C,       "BL brake temperature")
+LBR_SIGNAL(TEMP_BRAKE_BR,     0x0503, F32,    DEG_C,       "BR brake temperature")
+LBR_SIGNAL(TEMP_CVT,          0x0504, F32,    DEG_C,       "CVT temperature")
 
-/* 0x06xx Suspension (owner: suspension) */
-LBR_SIGNAL(SUSP_TRAVEL_FL,  0x0600, F32,    MM,         4, "Suspension travel, front left")
-LBR_SIGNAL(SUSP_TRAVEL_FR,  0x0601, F32,    MM,         4, "Suspension travel, front right")
-LBR_SIGNAL(SUSP_TRAVEL_RL,  0x0602, F32,    MM,         4, "Suspension travel, rear left")
-LBR_SIGNAL(SUSP_TRAVEL_RR,  0x0603, F32,    MM,         4, "Suspension travel, rear right")
+/* 0x06xx Central Controller: GPS (WGS84) and the dashboard link */
+LBR_SIGNAL(GPS_LATITUDE,      0x0600, I32,    DEG_E7,      "Latitude, 1e-7 degree")
+LBR_SIGNAL(GPS_LONGITUDE,     0x0601, I32,    DEG_E7,      "Longitude, 1e-7 degree")
+LBR_SIGNAL(GPS_ALTITUDE,      0x0602, F32,    METER,       "Altitude above mean sea level")
+LBR_SIGNAL(GPS_SPEED,         0x0603, F32,    M_PER_S,     "Ground speed")
+LBR_SIGNAL(GPS_COURSE,        0x0604, F32,    DEGREE,      "Course over ground, true north")
+LBR_SIGNAL(GPS_FIX,           0x0605, STATUS, NONE,        "Fix type: 0 none, 1 dead reckoning, 2 2D, 3 3D")
+LBR_SIGNAL(GPS_SATELLITES,    0x0606, U32,    COUNT,       "Satellites used in fix")
+LBR_SIGNAL(GPS_HDOP,          0x0607, F32,    NONE,        "Horizontal dilution of precision")
+LBR_SIGNAL(GPS_UTC,           0x0608, U32,    UNIX_S,      "UTC time of fix, Unix seconds (wall-clock anchor only)")
+LBR_SIGNAL(DASH_BATTERY,      0x0610, F32,    PERCENT,     "Dashboard battery")
+LBR_SIGNAL(DASH_LINK,         0x0611, BOOL,   NONE,        "Dashboard WiFi link OK")
 
 /* 0x07xx Events / faults (any node). Value: code in bits 0..15, argument in bits 16..31. */
-LBR_SIGNAL(EVENT,           0x0700, STATUS, NONE,       2, "Event code (see lbr_event_code_t)")
-LBR_SIGNAL(FAULT,           0x0701, STATUS, NONE,       0, "Fault/alarm code (see lbr_event_code_t)")
-
-/* 0x08xx Driver inputs (owner: driver_inputs) */
-LBR_SIGNAL(THROTTLE_POS,    0x0800, F32,    PERCENT,    3, "Throttle position")
-LBR_SIGNAL(BRAKE_PRESS_FRONT,0x0801,F32,    KPA,        3, "Brake line pressure, front circuit")
-LBR_SIGNAL(BRAKE_PRESS_REAR,0x0802, F32,    KPA,        3, "Brake line pressure, rear circuit")
-LBR_SIGNAL(STEERING_ANGLE,  0x0803, F32,    DEGREE,     3, "Steering wheel angle")
-LBR_SIGNAL(BRAKE_SWITCH,    0x0804, BOOL,   NONE,       3, "Brake light switch")
-
-/* 0x09xx Structural strain (owner: stress) */
-LBR_SIGNAL(STRAIN_1,        0x0900, F32,    MICROSTRAIN,4, "Strain gauge 1 (location in session config)")
-LBR_SIGNAL(STRAIN_2,        0x0901, F32,    MICROSTRAIN,4, "Strain gauge 2 (location in session config)")
-LBR_SIGNAL(STRAIN_3,        0x0902, F32,    MICROSTRAIN,4, "Strain gauge 3 (location in session config)")
-LBR_SIGNAL(STRAIN_4,        0x0903, F32,    MICROSTRAIN,4, "Strain gauge 4 (location in session config)")
-LBR_SIGNAL(STRAIN_5,        0x0904, F32,    MICROSTRAIN,4, "Strain gauge 5 (location in session config)")
-LBR_SIGNAL(STRAIN_6,        0x0905, F32,    MICROSTRAIN,4, "Strain gauge 6 (location in session config)")
-LBR_SIGNAL(STRAIN_7,        0x0906, F32,    MICROSTRAIN,4, "Strain gauge 7 (location in session config)")
-LBR_SIGNAL(STRAIN_8,        0x0907, F32,    MICROSTRAIN,4, "Strain gauge 8 (location in session config)")
-
-/* 0x0Axx Cockpit dashboard (owner: dashboard) */
-LBR_SIGNAL(DASH_BUTTONS,    0x0A00, U32,    BITMASK,    3, "Dashboard button state (bit meaning in session config)")
+LBR_SIGNAL(EVENT,             0x0700, STATUS, NONE,        "Event code (see lbr_event_code_t)")
+LBR_SIGNAL(FAULT,             0x0701, STATUS, NONE,        "Fault/alarm code (see lbr_event_code_t)")

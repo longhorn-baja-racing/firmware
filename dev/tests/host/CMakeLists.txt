@@ -20,6 +20,7 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/util/cobs.c"
     "${LBR_COMPONENTS}/util/ringbuf.c"
     "${LBR_COMPONENTS}/protocol/protocol.c"
+    "${LBR_COMPONENTS}/protocol/frames.c"
     "${LBR_COMPONENTS}/health/health.c"
     "${LBR_COMPONENTS}/can/can.c"
     "${LBR_COMPONENTS}/timebase/timebase.c"
@@ -29,11 +30,17 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/sensors/sensor_sim.c"
     "${LBR_COMPONENTS}/sensors/sensor_io.c"
     "${LBR_COMPONENTS}/sensors/nmea.c"
+    "${LBR_COMPONENTS}/node/acq.c"
     "${LBR_COMPONENTS}/node/node_config.c"
     "${LBR_COMPONENTS}/node/node_core.c"
     "${LBR_COMPONENTS}/node/node_table.c"
     "${LBR_COMPONENTS}/transport/packet.c"
     "${LBR_COMPONENTS}/transport/lora_policy.c"
+    "${LBR_COMPONENTS}/wlink/wlink.c"
+    "${LBR_COMPONENTS}/wlink/corner_core.c"
+    "${LBR_COMPONENTS}/wlink/corner_rx.c"
+    "${LBR_COMPONENTS}/wlink/dash_link.c"
+    "${LBR_COMPONENTS}/wlink/dash_core.c"
     "${LBR_COMPONENTS}/gateway/gw_core.c"
     "${LBR_COMPONENTS}/gateway/gw_config.c"
     "${LBR_COMPONENTS}/gateway/status.c"
@@ -49,6 +56,7 @@ target_include_directories(lbr_core PUBLIC
     "${LBR_COMPONENTS}/sensors/include"
     "${LBR_COMPONENTS}/node/include"
     "${LBR_COMPONENTS}/transport/include"
+    "${LBR_COMPONENTS}/wlink/include"
     "${LBR_COMPONENTS}/gateway/include"
     "${CMAKE_CURRENT_LIST_DIR}"
 )
@@ -63,9 +71,9 @@ endif()
 
 target_sources(lbr_core PRIVATE "${LBR_COMPONENTS}/node/value_table.c")
 
-# Every sensor node's plan (pure data) is compiled in, so per-node and
-# system-wide CAN budgets are checked against the real configurations.
-set(LBR_NODE_PLANS imu_gps suspension driver_inputs temperature fuel_gauge stress dashboard)
+# Every node's plan (pure data) is compiled in, so the frame-table rules and
+# the system-wide CAN budget are checked against the real configurations.
+set(LBR_NODE_PLANS imu powertrain driver_input temperature stress central dashboard corner)
 add_library(lbr_plans STATIC)
 foreach(node IN LISTS LBR_NODE_PLANS)
     target_sources(lbr_plans PRIVATE "${LBR_ROOT}/car/nodes/${node}/main/${node}_plan.c")
@@ -74,7 +82,7 @@ endforeach()
 target_link_libraries(lbr_plans PUBLIC lbr_core)
 lbr_apply_warnings(lbr_plans)
 
-set(LBR_TESTS util protocol health can timebase logging sensors node plans transport gateway cores)
+set(LBR_TESTS util protocol health can timebase logging sensors node plans transport gateway wlink cores)
 foreach(name IN LISTS LBR_TESTS)
     add_executable(test_${name} test_${name}.c)
     target_link_libraries(test_${name} PRIVATE lbr_core lbr_plans)

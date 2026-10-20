@@ -21,7 +21,7 @@ static const char *TAG = "lbr_can";
  * callback, so outgoing frames live in a fixed slot pool. Free slot indexes
  * travel through a FreeRTOS queue: taken by senders, returned from the ISR.
  */
-#define MAX_TX_SLOTS 64
+#define MAX_TX_SLOTS 128
 
 typedef struct {
     twai_frame_t frame;
@@ -73,8 +73,8 @@ static bool IRAM_ATTR on_rx_done(twai_node_handle_t handle, const twai_rx_done_e
     if (twai_node_receive_from_isr(handle, &frm) != ESP_OK) {
         return false;
     }
-    if (!frm.header.ide || frm.header.rtr) {
-        /* Not an LBR frame (LBR uses extended data frames only); counted. */
+    if (frm.header.ide || frm.header.rtr) {
+        /* Not an LBR frame (LBR uses standard-id data frames only); counted. */
         atomic_fetch_add(&s_rx_foreign, 1);
         return false;
     }
@@ -107,7 +107,7 @@ static bool IRAM_ATTR on_tx_done(twai_node_handle_t handle, const twai_tx_done_e
          * a long time (no ACK) must not be paired with a later FOLLOW_UP. */
         portENTER_CRITICAL_ISR(&s_sync_mux);
         s_sync_tx_us  = (uint64_t)esp_timer_get_time();
-        s_sync_tx_seq = done->buffer_len > 0 ? done->buffer[0] : 0;
+        s_sync_tx_seq = done->buffer_len > 4 ? done->buffer[4] : 0; /* TIME_SYNC byte 4 */
         portEXIT_CRITICAL_ISR(&s_sync_mux);
         if (s_sync_waiter != NULL) {
             vTaskNotifyGiveFromISR(s_sync_waiter, &woken);
@@ -183,8 +183,7 @@ lbr_can_err_t lbr_can_bus_start(const lbr_can_bus_config_t *cfg)
         uint8_t idx = (uint8_t)i;
         xQueueSend(s_free_slots, &idx, 0);
     }
-    s_sync_id = lbr_can_id_make(LBR_CAN_PRIO_TIME, LBR_CAN_KIND_SYSTEM, LBR_NODE_GATEWAY,
-                                LBR_SYS_TIME_SYNC);
+    s_sync_id = LBR_CAN_ID_TIME_SYNC;
 
     if (xTaskCreate(recover_task, "lbr_can_rcv", 3072, NULL, 10, &s_recover_task) != pdPASS) {
         return LBR_CAN_ERR_NO_MEM;
@@ -209,11 +208,11 @@ lbr_can_err_t lbr_can_bus_start(const lbr_can_bus_config_t *cfg)
     }
 
     if (!cfg->accept_all) {
-        /* Only system frames from the gateway (time sync). */
+        /* Only ids 0x000..0x01F: the Central's TIME_SYNC, FOLLOW_UP, COMMAND. */
         twai_mask_filter_config_t filt = {
-            .id     = ((uint32_t)LBR_CAN_KIND_SYSTEM << 24) | ((uint32_t)LBR_NODE_GATEWAY << 16),
-            .mask   = (0x3u << 24) | (0xFFu << 16),
-            .is_ext = true,
+            .id     = 0x000,
+            .mask   = 0x7E0,
+            .is_ext = false,
         };
         if (twai_node_config_mask_filter(s_node, 0, &filt) != ESP_OK) {
             ESP_LOGE(TAG, "filter config failed");
@@ -249,7 +248,7 @@ bool lbr_can_bus_send(const lbr_can_frame_t *f)
     tx_slot_t *slot = &s_slots[idx];
     memcpy(slot->data, f->data, f->dlc);
     slot->frame = (twai_frame_t){
-        .header     = {.id = f->id, .ide = 1, .dlc = f->dlc},
+        .header     = {.id = f->id, .ide = 0, .dlc = f->dlc},
         .buffer     = slot->data,
         .buffer_len = f->dlc,
     };

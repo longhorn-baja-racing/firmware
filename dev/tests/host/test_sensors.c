@@ -10,7 +10,7 @@
 static const lbr_signal_id_t k_signals[] = {
     LBR_SIG_TEMP_CVT,
     LBR_SIG_GPS_LATITUDE,
-    LBR_SIG_BRAKE_SWITCH,
+    LBR_SIG_DASH_LINK,
     LBR_SIG_GPS_SATELLITES,
 };
 #define N (sizeof k_signals / sizeof k_signals[0])
@@ -49,16 +49,16 @@ static void test_sim_is_marked_and_plausible(void)
 /* ---- part-independent inputs: spec parsing ------------------------------ */
 
 static const lbr_signal_id_t k_pedals[] = {
-    LBR_SIG_THROTTLE_POS,
-    LBR_SIG_BRAKE_PRESS_FRONT,
-    LBR_SIG_BRAKE_SWITCH,
+    LBR_SIG_GAS_PEDAL,
+    LBR_SIG_BRAKE_PEDAL,
+    LBR_SIG_DASH_LINK,
     LBR_SIG_ENGINE_RPM,
 };
 #define NP (sizeof k_pedals / sizeof k_pedals[0])
 
 static int parse_pedals(const char *spec, lbr_io_chan_t *c, char *err, size_t err_len)
 {
-    return lbr_io_parse(spec, k_pedals, NP, c, err, err_len);
+    return lbr_io_parse(spec, k_pedals, NP, c, &lbr_io_chip_esp32, err, err_len);
 }
 
 static void test_io_parse_valid(void)
@@ -93,18 +93,19 @@ static void test_io_parse_valid(void)
     CHECK(c[3].u.pulse.scale == 60.0f);
 
     /* Not-fitted channels and a NTC curve. */
-    static const lbr_signal_id_t temps[] = {LBR_SIG_TEMP_CVT, LBR_SIG_TEMP_ENGINE};
+    static const lbr_signal_id_t temps[] = {LBR_SIG_TEMP_CVT, LBR_SIG_TEMP_BRAKE_FL};
     lbr_io_chan_t                t[2];
     CHECK_EQ_I(lbr_io_parse("- ; adc gpio=36 curve=ntc r25=10000 beta=3950 rpull=10000 vsup=3300",
-                            temps, 2, t, err, sizeof err),
+                            temps, 2, t, &lbr_io_chip_esp32, err, sizeof err),
                0);
     CHECK_EQ_U(t[0].kind, LBR_IO_NONE);
     CHECK(t[1].u.adc.ntc);
 
     /* Button bitmask on a u32 signal. */
-    static const lbr_signal_id_t btn[] = {LBR_SIG_DASH_BUTTONS};
+    static const lbr_signal_id_t btn[] = {LBR_SIG_CORNER_LINK};
     lbr_io_chan_t                b;
-    CHECK_EQ_I(lbr_io_parse("din gpio=4,5,18,19", btn, 1, &b, err, sizeof err), 0);
+    CHECK_EQ_I(lbr_io_parse("din gpio=4,5,18,19", btn, 1, &b, &lbr_io_chip_esp32, err, sizeof err),
+               0);
     CHECK_EQ_U(b.u.din.n_gpio, 4);
     CHECK_EQ_I(b.u.din.gpio[2], 18);
 }
@@ -150,7 +151,28 @@ static void test_io_parse_rejects(void)
         }
     }
     lbr_io_chan_t c[NP];
-    CHECK(lbr_io_parse(NULL, k_pedals, NP, c, NULL, 0) < 0);
+    CHECK(lbr_io_parse(NULL, k_pedals, NP, c, &lbr_io_chip_esp32, NULL, 0) < 0);
+}
+
+/* The same spec means different pins on the ESP32-C5 (IMU, Central, corner,
+ * and dashboard nodes): ADC1 is GPIO 1..6 and 15..22 belong to flash. */
+static void test_io_parse_chip_rules(void)
+{
+    static const lbr_signal_id_t batt[] = {LBR_SIG_CORNER_FL_BATTERY};
+    lbr_io_chan_t                c;
+    char                         err[96] = "";
+    CHECK_EQ_I(lbr_io_parse("adc gpio=3 mv0=0 v0=0 mv1=3000 v1=100", batt, 1, &c,
+                            &lbr_io_chip_esp32c5, err, sizeof err),
+               0);
+    CHECK(lbr_io_parse("adc gpio=3 mv0=0 v0=0 mv1=3000 v1=100", batt, 1, &c, &lbr_io_chip_esp32,
+                       err, sizeof err) < 0);
+    CHECK(lbr_io_parse("adc gpio=34 mv0=0 v0=0 mv1=3000 v1=100", batt, 1, &c, &lbr_io_chip_esp32c5,
+                       err, sizeof err) < 0);
+    CHECK(strstr(err, "esp32c5") != NULL);
+    static const lbr_signal_id_t link[] = {LBR_SIG_DASH_LINK};
+    CHECK(lbr_io_parse("din gpio=18", link, 1, &c, &lbr_io_chip_esp32c5, err, sizeof err) < 0);
+    CHECK_EQ_I(
+        lbr_io_parse("din gpio=10 pull=up", link, 1, &c, &lbr_io_chip_esp32c5, err, sizeof err), 0);
 }
 
 /* ---- conversions ---------------------------------------------------------- */
@@ -161,7 +183,7 @@ static void test_io_adc_convert(void)
     char          err[96];
     CHECK_EQ_I(lbr_io_parse("adc gpio=34 mv0=500 v0=0 mv1=2500 v1=100 lo=200 hi=2800 min=-5 "
                             "max=105",
-                            k_pedals, 1, &c, err, sizeof err),
+                            k_pedals, 1, &c, &lbr_io_chip_esp32, err, sizeof err),
                0);
     lbr_reading_t r;
     lbr_io_adc_convert(&c, 1500.0f, &r);
@@ -181,7 +203,7 @@ static void test_io_adc_convert(void)
 
     static const lbr_signal_id_t t[] = {LBR_SIG_TEMP_CVT};
     CHECK_EQ_I(lbr_io_parse("adc gpio=39 curve=ntc r25=10000 beta=3950 rpull=10000 vsup=3300", t, 1,
-                            &c, err, sizeof err),
+                            &c, &lbr_io_chip_esp32, err, sizeof err),
                0);
     lbr_io_adc_convert(&c, 1650.0f, &r); /* R = r25 */
     CHECK(r.valid && fabsf(r.v.f32 - 25.0f) < 0.01f);
@@ -256,9 +278,9 @@ static void test_config_text_records_params(void)
     lbr_sensor_t      s;
     lbr_sensor_unconfigured(&s, "fuel", k_pedals, 1);
     s.params              = spec;
-    lbr_acq_t         acq = {.sensor = &s, .rate_hz = 5, .publish_div = 1};
+    lbr_acq_t         acq = {.sensor = &s, .rate_hz = 5};
     lbr_node_config_t cfg = {
-        .node_id = LBR_NODE_FUEL_GAUGE, .acq = &acq, .n_acq = 1, .health_period_ms = 1000};
+        .node_id = LBR_NODE_POWERTRAIN, .acq = &acq, .n_acq = 1, .health_period_ms = 1000};
     char text[LBR_NODE_CONFIG_TEXT_MAX];
     lbr_node_config_text(&cfg, text, sizeof text);
     CHECK(strstr(text, "sensor.0.params=adc gpio=36 mv0=100 v0=0 mv1=3000 v1=100\n") != NULL);
@@ -383,6 +405,7 @@ int main(void)
     RUN(test_sim_is_marked_and_plausible);
     RUN(test_io_parse_valid);
     RUN(test_io_parse_rejects);
+    RUN(test_io_parse_chip_rules);
     RUN(test_io_adc_convert);
     RUN(test_io_pulse_rate);
     RUN(test_io_din_debounce);

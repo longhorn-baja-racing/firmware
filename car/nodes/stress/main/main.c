@@ -3,8 +3,8 @@
 #include "sdkconfig.h"
 
 /*
- * stress node app. Everything except driver binding lives in the shared node
- * runtime (car/components/node).
+ * Stress Controller (ESP32, CAN node 5) app. Everything except driver binding lives in the shared
+ * node runtime (car/components/node).
  */
 
 static lbr_sensor_t      s_sensors[STRESS_SLOT_COUNT];
@@ -27,7 +27,7 @@ void app_main(void)
      *
      * A bound driver must produce exactly the slot's signals, in order.
      */
-    lbr_node_bind_io(&lbr_plan_stress, STRESS_SLOT_STRAIN, s_sensors, CONFIG_LBR_IO_STRAIN);
+    lbr_node_bind_io(&lbr_plan_stress, STRESS_SLOT_STRESS, s_sensors, CONFIG_LBR_IO_STRESS);
 
     lbr_node_run(&s_cfg);
 }

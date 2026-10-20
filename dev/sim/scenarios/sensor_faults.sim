@@ -1,41 +1,58 @@
 # A sensor that stops responding is reported, retried, and recovers; an open
-# circuit on one channel is reported on that channel only; nothing is ever
-# published as a fake zero.
-at 3.0  unplug suspension travel
-at 3.5  expect suspension state == DEGRADED
-at 3.5  expect suspension event:SENSOR_INIT_FAIL >= 1
-at 3.5  expect SUSP_TRAVEL_FL valid == 0
-at 3.5  expect SUSP_TRAVEL_FL reason == SENSOR_FAULT
-at 3.5  expect driver_inputs state == RUN
-at 5.0  plug suspension travel
-at 8.0  expect suspension event:SENSOR_RECOVERED >= 1
-at 8.0  expect suspension state == RUN
-at 8.0  expect SUSP_TRAVEL_FL valid == 1
+# circuit on one channel is reported on that channel only; a value that does
+# not fit its CAN field is OUT_OF_RANGE; nothing is ever published as a fake
+# zero.
+at 3.0  unplug imu chassis
+at 3.5  expect imu state == DEGRADED
+at 3.5  expect imu event:SENSOR_INIT_FAIL >= 1
+at 3.5  expect IMU_CH_ACCEL_X valid == 0
+at 3.5  expect IMU_CH_ACCEL_X reason == SENSOR_FAULT
+at 3.5  expect IMU_FL_ACCEL_X valid == 1
+at 3.5  expect driver_input state == RUN
+at 5.0  plug imu chassis
+at 8.0  expect imu event:SENSOR_RECOVERED >= 1
+at 8.0  expect imu state == RUN
+at 8.0  expect IMU_CH_ACCEL_X valid == 1
 
-# Broken wire on the front brake transducer: ADC reads ~0 mV, below the
-# input spec's window.
-at 9.0  open BRAKE_PRESS_FRONT
-at 9.5  expect BRAKE_PRESS_FRONT reason == SENSOR_FAULT
-at 9.5  expect BRAKE_PRESS_REAR valid == 1
-at 9.5  expect driver_inputs state == RUN
-at 10.0 close BRAKE_PRESS_FRONT
-at 10.5 expect BRAKE_PRESS_FRONT valid == 1
+# Broken wire on the brake pedal pot: ADC reads ~0 mV, below the input
+# spec's window.
+at 9.0  open BRAKE_PEDAL
+at 9.5  expect BRAKE_PEDAL reason == SENSOR_FAULT
+at 9.5  expect GAS_PEDAL valid == 1
+at 9.5  expect driver_input state == RUN
+at 10.0 close BRAKE_PEDAL
+at 10.5 expect BRAKE_PEDAL valid == 1
 
-# Beyond the throttle spec's physical range (max=105) but inside its electrical
-# window (hi=2450 mV); 112 % would read 2540 mV and be a SENSOR_FAULT instead.
-at 11.0 set THROTTLE_POS 107
-at 11.5 expect THROTTLE_POS reason == OUT_OF_RANGE
-at 12.0 auto THROTTLE_POS
-at 12.5 expect THROTTLE_POS valid == 1
+# Beyond the gas pedal spec's physical range (max=105) but inside its
+# electrical window (hi=2450 mV).
+at 11.0 set GAS_PEDAL 107
+at 11.5 expect GAS_PEDAL reason == OUT_OF_RANGE
+at 12.0 auto GAS_PEDAL
+at 12.5 expect GAS_PEDAL valid == 1
 
-# The GPS receiver goes quiet: NO_DATA after the parser's 2 s staleness.
-at 13.0 unplug imu_gps gps
+# A reading the CAN field cannot carry (gyro field: +/-32.7 rad/s).
+at 12.5 set IMU_CH_GYRO_Z 40
+at 13.0 expect IMU_CH_GYRO_Z reason == OUT_OF_RANGE
+at 13.0 auto IMU_CH_GYRO_Z
+
+# The GPS receiver on the Central goes quiet: NO_DATA after the parser's 2 s.
+at 13.0 unplug central gps
 at 15.5 expect GPS_LATITUDE reason == NO_DATA
 at 15.5 expect GPS_FIX reason == NO_DATA
-at 16.0 plug imu_gps gps
+at 16.0 plug central gps
 at 17.0 expect GPS_LATITUDE valid == 1
 at 17.0 expect GPS_FIX value == 3
 
-at 17.0 expect all tx_dropped == 0
-at 17.0 expect log intact == 1
-end 17.0
+# A corner's IMU stops responding: its forwarded frames say SENSOR_FAULT and
+# the IMU Controller raises SENSOR in its heartbeat.
+at 17.0 unplug corner_fr imu
+at 17.5 expect IMU_FR_ACCEL_Z reason == SENSOR_FAULT
+at 17.5 expect corner_fr state == DEGRADED
+at 17.5 expect imu state == DEGRADED
+at 18.0 plug corner_fr imu
+at 21.0 expect IMU_FR_ACCEL_Z valid == 1
+at 21.0 expect corner_fr state == RUN
+
+at 21.0 expect can tx_dropped == 0
+at 21.0 expect log intact == 1
+end 21.0

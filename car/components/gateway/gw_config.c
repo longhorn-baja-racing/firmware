@@ -26,6 +26,8 @@ static const field_t k_fields[] = {
     F_U16(lora_duty_permille, 1, 1000),
     F_U16(stream_batch_ms, 10, 1000),
     F_U16(node_timeout_ms, 500, 30000),
+    F_BOOL(dash_enable),
+    F_U16(dash_period_ms, 50, 1000),
 };
 #define N_FIELDS (sizeof k_fields / sizeof k_fields[0])
 
@@ -40,6 +42,8 @@ void lbr_gw_config_defaults(lbr_gw_config_t *c)
         .lora_duty_permille = 100,
         .stream_batch_ms    = 50,
         .node_timeout_ms    = 3000,
+        .dash_enable        = true,
+        .dash_period_ms     = 100,
     };
 }
 

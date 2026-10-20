@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 /*
- * Gateway runtime configuration: settings the pit crew may change without
+ * Central (gateway) runtime configuration: settings the pit crew may change without
  * reflashing (pushed over WiFi, stored in NVS). Text form, one "key=value"
  * per line; '#' starts a comment. A pushed config is validated in full
  * before it is stored, and only takes effect at the next session start, so
@@ -22,6 +22,8 @@ typedef struct {
     uint16_t lora_duty_permille; /* long-run airtime ceiling */
     uint16_t stream_batch_ms;    /* USB/WiFi packet batching window */
     uint16_t node_timeout_ms;    /* silent this long => NODE_LOST */
+    bool     dash_enable;        /* push display data to the cockpit dashboard */
+    uint16_t dash_period_ms;     /* one dashboard datagram this often (10-20 Hz) */
 } lbr_gw_config_t;
 
 void lbr_gw_config_defaults(lbr_gw_config_t *c);
