@@ -1,0 +1,25 @@
+menu "LBR temperature inputs"
+
+    config LBR_IO_BRAKES
+        string "Slot 'brakes' input spec"
+        default ""
+        help
+            Channels, in order: TEMP_BRAKE_FL, TEMP_BRAKE_FR, TEMP_BRAKE_BL, TEMP_BRAKE_BR (frame 0x500).
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+
+    config LBR_IO_CVT
+        string "Slot 'cvt' input spec"
+        default ""
+        help
+            Channels, in order: TEMP_CVT (frame 0x501).
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+
+endmenu

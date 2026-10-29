@@ -1,0 +1,14 @@
+menu "LBR driver_input inputs"
+
+    config LBR_IO_INPUTS
+        string "Slot 'inputs' input spec"
+        default ""
+        help
+            Channels, in order: BRAKE_PEDAL, GAS_PEDAL, STEERING_ANGLE (frame 0x100; typically adc inputs (potentiometers)).
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            car/components/sensors/include/lbr/sensor_io.h and docs/sensors.md.
+            The spec is the calibration and is recorded in every session.
+
+endmenu

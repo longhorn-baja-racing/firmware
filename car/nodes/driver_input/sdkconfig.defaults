@@ -1,0 +1,3 @@
+# driver_input node (Driver Input Controller (ESP32, CAN node 3)). Shared settings: car/nodes/sdkconfig.common.
+# Generated sdkconfig is gitignored.
+CONFIG_IDF_TARGET="esp32"

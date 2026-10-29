@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LBR Car Simulator</title>
+<style>
+:root {
+  --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #30363d; --text: #e6edf3;
+  --muted: #8b949e; --ok: #3fb950; --warn: #d29922; --bad: #f85149; --off: #6e7681;
+  --accent: #58a6ff; --bus: #a371f7;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, select, input { font: inherit; color: var(--text); background: var(--panel2);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.on { background: #1f6feb33; border-color: var(--accent); }
+button.danger:hover { border-color: var(--bad); }
+input[type=number] { width: 78px; }
+.app { display: grid; height: 100vh; grid-template-rows: auto 1fr 270px;
+  grid-template-columns: 1fr 380px; grid-template-areas: "top top" "car side" "bottom side"; }
+header { grid-area: top; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+  padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .3px; }
+header .grp { display: flex; gap: 6px; align-items: center; }
+.clock { font-family: var(--mono); font-size: 15px; min-width: 120px; }
+.meter { width: 120px; height: 8px; border-radius: 4px; background: var(--panel2);
+  border: 1px solid var(--line); overflow: hidden; }
+.meter > div { height: 100%; background: var(--bus); width: 0; transition: width .2s; }
+.muted { color: var(--muted); }
+#car { grid-area: car; min-height: 0; position: relative; }
+#car svg { width: 100%; height: 100%; display: block; }
+aside { grid-area: side; border-left: 1px solid var(--line); background: var(--panel);
+  overflow: auto; padding: 12px 14px; }
+aside h2 { font-size: 15px; margin: 0 0 6px; display: flex; gap: 8px; align-items: center; }
+aside h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
+  margin: 14px 0 6px; }
+.pill { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid; }
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 2px 10px; font-family: var(--mono);
+  font-size: 12px; }
+.kv div:nth-child(odd) { color: var(--muted); font-family: inherit; }
+.btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; }
+td, th { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line);
+  vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+.bottom { grid-area: bottom; display: flex; flex-direction: column; min-height: 0;
+  border-top: 1px solid var(--line); background: var(--panel); }
+.tabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--line); }
+.tabs button { border-radius: 6px 6px 0 0; border-bottom: none; }
+.tabs .spacer { flex: 1; }
+.pane { flex: 1; overflow: auto; padding: 6px 10px; font-family: var(--mono); font-size: 12px;
+  display: none; }
+.pane.show { display: block; }
+.row { white-space: pre-wrap; word-break: break-word; padding: 1px 0; }
+.row .t { color: var(--muted); display: inline-block; min-width: 82px; }
+.row .n { color: var(--accent); display: inline-block; min-width: 108px; }
+.row .c { color: #d2a8ff; display: inline-block; min-width: 110px; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+#console-in { width: 100%; font-family: var(--mono); margin-top: 6px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px;
+  font-family: system-ui, sans-serif; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel2); }
+.tile .v { font-size: 22px; font-family: var(--mono); }
+.tile .l { color: var(--muted); font-size: 11px; }
+svg text { font-family: system-ui, sans-serif; }
+.node { cursor: pointer; }
+.node rect { stroke-width: 2; }
+.node.sel rect { stroke-width: 3.5; }
+.sensor { cursor: pointer; }
+.sensor.sel circle { stroke: #fff; stroke-width: 2.5; }
+.link { cursor: pointer; }
+.help { font-family: system-ui, sans-serif; color: var(--muted); }
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 60vh auto 320px;
+    grid-template-areas: "top" "car" "side" "bottom"; height: auto; }
+  aside { border-left: none; border-top: 1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>LBR Car Simulator</h1>
+    <span class="clock" id="clock">t = 0.000 s</span>
+    <div class="grp">
+      <button id="pause">Pause</button>
+      <button id="step" title="Advance 100 ms of simulated time">Step 100 ms</button>
+      <select id="speed" title="Simulated seconds per real second">
+        <option>0.05</option><option>0.1</option><option>0.25</option><option>0.5</option>
+        <option selected>1</option><option>2</option><option>5</option><option>10</option>
+        <option>20</option>
+      </select><span class="muted">x</span>
+    </div>
+    <div class="grp">
+      <select id="scenario"></select><button id="play">Play scenario</button>
+    </div>
+    <div class="grp">
+      <span class="muted">seed</span><input id="seed" type="number" value="1" min="0">
+      <button id="restart">Restart</button>
+    </div>
+    <div class="grp">
+      <button id="drive-race" class="on">Race</button><button id="drive-idle">Pit (idle)</button>
+    </div>
+    <div class="grp" title="CAN bus load over the last second">
+      <span class="muted">CAN</span><div class="meter"><div id="busbar"></div></div>
+      <span id="bustext" class="muted">-</span>
+    </div>
+  </header>
+
+  <div id="car"></div>
+
+  <aside id="side"></aside>
+
+  <div class="bottom">
+    <div class="tabs">
+      <button data-pane="cmds" class="on">Commands</button>
+      <button data-pane="events">Events</button>
+      <button data-pane="cockpit">Cockpit</button>
+      <button data-pane="console">Console</button>
+      <span class="spacer"></span>
+      <label class="muted" style="font-size:12px"><input type="checkbox" id="showlogs"> firmware log lines</label>
+      <button id="clear">Clear</button>
+    </div>
+    <div class="pane show" id="pane-cmds"><div class="help">Pick a node (click it, then
+      "Trace commands") to see every hardware call its firmware makes: CAN sends, ADC and
+      GPIO reads, UART bytes, SD writes, time-sync updates, WiFi packets.</div></div>
+    <div class="pane" id="pane-events"></div>
+    <div class="pane" id="pane-cockpit"><div class="tiles" id="tiles"></div>
+      <p class="help">What the cockpit dashboard shows, from its own value table (the
+      firmware's), fed by central over 5 GHz WiFi; stale and unavailable values included.</p></div>
+    <div class="pane" id="pane-console">
+      <div id="console-out"></div>
+      <input id="console-in" placeholder="command, e.g.  unplug corner_fl imu   |   wifi corner_br down   |   expect can synced == 1   |   help" autocomplete="off">
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Layout: top-down view, front of the car at the top.
+// The CAN bus is one daisy-chained trunk (DAQ-WIRING.md section 5): imu at one
+// terminated end, central at the other. Each CAN node sits on the trunk at its
+// tap (an index into TRUNK). Wireless nodes reach their peer over 5 GHz WiFi.
+const TRUNK = [[340, 418], [340, 470], [340, 720], [470, 720], [470, 110], [320, 110],
+               [200, 110], [200, 480], [200, 640], [200, 820], [200, 868]];
+const NODES = {
+  imu:          {x: 340, y: 470, tap: 1, label: "imu", where: "IMU controller, under the seat, CAN end 1"},
+  powertrain:   {x: 340, y: 720, tap: 2, label: "powertrain", where: "engine bay, CAN node 2"},
+  driver_input: {x: 320, y: 110, tap: 5, label: "driver_input", where: "ahead of the pedal box, CAN node 3"},
+  temperature:  {x: 200, y: 480, tap: 7, label: "temperature", where: "left side member, CAN node 4"},
+  stress:       {x: 200, y: 640, tap: 8, label: "stress", where: "frame, CAN node 5"},
+  central:      {x: 200, y: 820, tap: 9, label: "central", where: "logger, time master, LoRa, GPS; CAN end 6"},
+  corner_fl:    {x: 95,  y: 120, peer: "imu", label: "corner_fl", where: "FL upright, own battery"},
+  corner_fr:    {x: 545, y: 120, peer: "imu", label: "corner_fr", where: "FR upright, own battery"},
+  corner_bl:    {x: 95,  y: 895, peer: "imu", label: "corner_bl", where: "BL upright, own battery"},
+  corner_br:    {x: 545, y: 895, peer: "imu", label: "corner_br", where: "BR upright, own battery"},
+  dashboard:    {x: 320, y: 262, peer: "central", label: "dashboard", where: "cockpit display, own battery"},
+};
+// Sensors: position, owning node, and the signals they carry.
+const SENSORS = [
+  {id: "gas", x: 296, y: 178, node: "driver_input", sigs: ["GAS_PEDAL"], label: "gas pedal"},
+  {id: "brake", x: 344, y: 178, node: "driver_input", sigs: ["BRAKE_PEDAL"], label: "brake pedal"},
+  {id: "steer", x: 360, y: 330, node: "driver_input", sigs: ["STEERING_ANGLE"], label: "steering angle"},
+  {id: "fuel", x: 330, y: 645, node: "powertrain", sigs: ["FUEL_LEVEL"], label: "fuel level"},
+  {id: "rpm_eng", x: 300, y: 778, node: "powertrain", sigs: ["ENGINE_RPM"], label: "engine speed"},
+  {id: "rpm_cvt", x: 427, y: 760, node: "powertrain", sigs: ["CVT_RPM"], label: "CVT speed"},
+  {id: "t_fl", x: 150, y: 290, node: "temperature", sigs: ["TEMP_BRAKE_FL"], label: "brake temp FL"},
+  {id: "t_fr", x: 490, y: 290, node: "temperature", sigs: ["TEMP_BRAKE_FR"], label: "brake temp FR"},
+  {id: "t_bl", x: 148, y: 738, node: "temperature", sigs: ["TEMP_BRAKE_BL"], label: "brake temp BL"},
+  {id: "t_br", x: 492, y: 738, node: "temperature", sigs: ["TEMP_BRAKE_BR"], label: "brake temp BR"},
+  {id: "t_cvt", x: 427, y: 810, node: "temperature", sigs: ["TEMP_CVT"], label: "CVT temp"},
+  {id: "sg1", x: 240, y: 180, node: "stress", sigs: ["STRESS_1"], label: "stress 1"},
+  {id: "sg2", x: 400, y: 180, node: "stress", sigs: ["STRESS_2"], label: "stress 2"},
+  {id: "sg3", x: 230, y: 400, node: "stress", sigs: ["STRESS_3"], label: "stress 3"},
+  {id: "sg4", x: 430, y: 400, node: "stress", sigs: ["STRESS_4"], label: "stress 4"},
+  {id: "sg5", x: 232, y: 600, node: "stress", sigs: ["STRESS_5"], label: "stress 5"},
+  {id: "sg6", x: 410, y: 600, node: "stress", sigs: ["STRESS_6"], label: "stress 6"},
+  {id: "sg7", x: 240, y: 895, node: "stress", sigs: ["STRESS_7"], label: "stress 7"},
+  {id: "sg8", x: 400, y: 895, node: "stress", sigs: ["STRESS_8"], label: "stress 8"},
+  {id: "imu_ch", x: 295, y: 530, node: "imu", label: "chassis IMU",
+   sigs: ["IMU_CH_ACCEL_X","IMU_CH_ACCEL_Y","IMU_CH_ACCEL_Z","IMU_CH_GYRO_X","IMU_CH_GYRO_Y","IMU_CH_GYRO_Z"]},
+  {id: "corner_st", x: 395, y: 530, node: "imu", label: "corner status",
+   sigs: ["CORNER_LINK","CORNER_SYNCED","CORNER_FL_BATTERY","CORNER_FR_BATTERY","CORNER_BL_BATTERY",
+          "CORNER_BR_BATTERY"]},
+  {id: "gps", x: 120, y: 575, node: "central", label: "GPS",
+   sigs: ["GPS_LATITUDE","GPS_LONGITUDE","GPS_ALTITUDE","GPS_SPEED","GPS_COURSE","GPS_FIX",
+          "GPS_SATELLITES","GPS_HDOP","GPS_UTC"]},
+  {id: "dash_st", x: 255, y: 862, node: "central", sigs: ["DASH_LINK","DASH_BATTERY"], label: "dashboard status"},
+  {id: "dash_bat", x: 392, y: 262, node: "dashboard", sigs: ["DASH_BATTERY"], label: "dashboard battery"},
+];
+for (const c of ["FL", "FR", "BL", "BR"]) {
+  const n = NODES["corner_" + c.toLowerCase()], front = c[0] === "F", left = c[1] === "L";
+  SENSORS.push({id: "imu_" + c, x: n.x, y: front ? 235 : 795, node: "corner_" + c.toLowerCase(),
+    label: "IMU " + c, sigs: ["ACCEL_X", "ACCEL_Y", "ACCEL_Z", "GYRO_X", "GYRO_Y", "GYRO_Z"].map((a) => "IMU_" + c + "_" + a)});
+  SENSORS.push({id: "bat_" + c, x: left ? 26 : 614, y: n.y, node: "corner_" + c.toLowerCase(),
+    sigs: ["CORNER_" + c + "_BATTERY"], label: "battery " + c});
+}
+const STATE_COLOR = {RUN: "var(--ok)", DEGRADED: "var(--warn)", FAULT: "var(--bad)", LOST: "var(--bad)",
+  BADCONFIG: "var(--bad)", CONFIG_INVALID: "var(--bad)", BOOT: "var(--accent)", OFF: "var(--off)"};
+const PRIO_COLOR = ["#f85149", "#ffa657", "#d2a8ff", "#79c0ff", "#56d364", "#e3b341", "#8b949e", "#8b949e"];
+const CORNER_BITS = ["FL", "FR", "BL", "BR"];
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const wireless = (n) => n.kind === "corner" || n.kind === "dash";
+let snap = null, ui = {}, selected = {kind: "node", id: "central"};
+const seenWire = new Set();
+
+function send(cmd) {
+  fetch("/cmd", {method: "POST", body: cmd}).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Drawing the car
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent, text) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+const svg = el("svg", {viewBox: "0 0 640 960", preserveAspectRatio: "xMidYMid meet"}, $("car"));
+const gCar = el("g", {}, svg), gLinks = el("g", {}, svg), gWires = el("g", {}, svg), gBus = el("g", {}, svg),
+      gSensors = el("g", {}, svg), gNodes = el("g", {}, svg), gDots = el("g", {}, svg);
+
+(function drawCar() {
+  const body = {fill: "none", stroke: "#3d444d", "stroke-width": 3};
+  const part = {rx: 8, fill: "#161b22", stroke: "#30363d"};
+  const label = (x, y, text, anchor) =>
+    el("text", {x, y, "text-anchor": anchor || "middle", fill: "#484f58", "font-size": 11}, gCar, text);
+  for (const [x, y] of [[60, 160], [510, 160], [60, 720], [510, 720]]) {
+    el("rect", {x, y, width: 70, height: 150, rx: 18, fill: "#21262d", stroke: "#3d444d", "stroke-width": 2}, gCar);
+  }
+  el("polygon", {points: "230,50 410,50 470,250 485,700 440,905 200,905 155,700 170,250", ...body}, gCar);
+  for (const [a, b] of [[[170, 210], [130, 225]], [[170, 260], [130, 260]], [[470, 210], [510, 225]],
+                        [[470, 260], [510, 260]], [[160, 760], [130, 790]], [[480, 760], [510, 790]]]) {
+    el("line", {x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: "#3d444d", "stroke-width": 4}, gCar);
+  }
+  el("rect", {x: 262, y: 140, width: 116, height: 70, ...part, rx: 6}, gCar);
+  label(320, 228, "pedal box");
+  el("circle", {cx: 320, cy: 330, r: 34, fill: "none", stroke: "#484f58", "stroke-width": 5}, gCar);
+  el("rect", {x: 255, y: 420, width: 130, height: 150, ...part, rx: 18}, gCar);
+  label(320, 588, "seat");
+  el("line", {x1: 160, y1: 600, x2: 480, y2: 600, stroke: "#30363d", "stroke-dasharray": "6 5"}, gCar);
+  el("rect", {x: 270, y: 615, width: 120, height: 60, ...part}, gCar);
+  label(385, 690, "fuel tank", "end");
+  el("rect", {x: 270, y: 700, width: 120, height: 110, ...part}, gCar);
+  label(280, 802, "engine", "start");
+  el("rect", {x: 400, y: 700, width: 55, height: 140, ...part}, gCar);
+  label(427, 855, "CVT");
+  el("rect", {x: 270, y: 830, width: 100, height: 50, ...part}, gCar);
+  label(320, 860, "gearbox");
+  el("text", {x: 15, y: 30, fill: "#484f58", "font-size": 12}, gCar, "FRONT");
+  // Legend
+  el("line", {x1: 15, y1: 944, x2: 45, y2: 944, stroke: "var(--bus)", "stroke-width": 4}, gCar);
+  el("text", {x: 52, y: 948, fill: "var(--muted)", "font-size": 11}, gCar, "CAN (daisy chain)");
+  el("line", {x1: 170, y1: 944, x2: 200, y2: 944, stroke: "var(--ok)", "stroke-width": 2, "stroke-dasharray": "7 6"}, gCar);
+  el("text", {x: 207, y: 948, fill: "var(--muted)", "font-size": 11}, gCar, "5 GHz WiFi");
+  el("line", {x1: 290, y1: 944, x2: 320, y2: 944, stroke: "#30363d", "stroke-dasharray": "3 4"}, gCar);
+  el("text", {x: 327, y: 948, fill: "var(--muted)", "font-size": 11}, gCar, "sensor wiring");
+})();
+
+(function drawBus() {
+  const bus = {stroke: "var(--bus)", "stroke-width": 4, "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0.85};
+  const trunk = el("polyline", {points: TRUNK.map((p) => p.join(",")).join(" "), fill: "none", ...bus}, gBus);
+  for (const [x, y] of [TRUNK[0], TRUNK[TRUNK.length - 1]]) {
+    el("rect", {x: x - 9, y: y - 6, width: 18, height: 12, rx: 2, fill: "#2d1f4a", stroke: "var(--bus)"}, gBus);
+    el("text", {x: x + 14, y: y + 4, fill: "var(--bus)", "font-size": 10}, gBus, "120 ohm");
+  }
+  trunk.style.cursor = "pointer";
+  trunk.addEventListener("click", () => select("bus", "bus"));
+})();
+
+const nodeEls = {}, sensorEls = {}, linkEls = {};
+for (const [name, n] of Object.entries(NODES)) {
+  if (!n.peer) continue;
+  const p = NODES[n.peer];
+  const g = el("g", {class: "link"}, gLinks);
+  const line = el("line", {x1: n.x, y1: n.y, x2: p.x, y2: p.y, stroke: "var(--off)", "stroke-width": 2,
+                           "stroke-dasharray": "7 6", opacity: 0.8}, g);
+  el("line", {x1: n.x, y1: n.y, x2: p.x, y2: p.y, stroke: "transparent", "stroke-width": 12}, g);
+  el("title", {}, g, "5 GHz WiFi: " + name + " to " + n.peer);
+  g.addEventListener("click", () => select("node", name));
+  linkEls[name] = line;
+}
+for (const s of SENSORS) {
+  const n = NODES[s.node];
+  el("line", {x1: s.x, y1: s.y, x2: n.x, y2: n.y, stroke: "#30363d", "stroke-dasharray": "3 4"}, gWires);
+  const g = el("g", {class: "sensor"}, gSensors);
+  const big = s.sigs.length > 4;
+  const c = el("circle", {cx: s.x, cy: s.y, r: big ? 11 : 8, fill: "var(--off)", stroke: "#0d1117", "stroke-width": 2}, g);
+  el("title", {}, g, s.label);
+  if (big) el("text", {x: s.x, y: s.y + 25, "text-anchor": "middle", fill: "var(--muted)", "font-size": 10}, g, s.label);
+  g.addEventListener("click", (e) => { e.stopPropagation(); select("sensor", s.id); });
+  sensorEls[s.id] = {g, c};
+}
+for (const [name, n] of Object.entries(NODES)) {
+  const g = el("g", {class: "node"}, gNodes);
+  const w = n.peer ? 108 : 124;
+  const r = el("rect", {x: n.x - w / 2, y: n.y - 22, width: w, height: 44, rx: 9, fill: "#161b22", stroke: "var(--off)"}, g);
+  if (n.peer) r.setAttribute("stroke-dasharray", "5 3");
+  el("text", {x: n.x, y: n.y - 3, "text-anchor": "middle", fill: "var(--text)", "font-size": 13, "font-weight": 600}, g, n.label);
+  const sub = el("text", {x: n.x, y: n.y + 13, "text-anchor": "middle", fill: "var(--muted)", "font-size": 10}, g, "booting");
+  g.addEventListener("click", () => select("node", name));
+  nodeEls[name] = {g, r, sub};
+}
+
+// ---------------------------------------------------------------------------
+// Frames on the wire: a dot from the sender's tap along the trunk to central
+// (or from central's tap to the far, imu end for its own frames). WiFi packets
+// run along their dashed link.
+const dots = [];
+function pathFor(src) {
+  const a = NODES[src], end = NODES.central.tap;
+  if (!a || a.tap === undefined) return null;
+  if (src === "central") return TRUNK.slice(NODES.imu.tap, end + 1).reverse();
+  return TRUNK.slice(a.tap, end + 1);
+}
+function lengthOf(pts) {
+  let total = 0;
+  for (let k = 1; k < pts.length; k++) total += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
+  return total;
+}
+function addDot(pts, r, fill, dur) {
+  if (dots.length > 70 || pts.length < 2) return;
+  const c = el("circle", {r, fill, cx: pts[0][0], cy: pts[0][1]}, gDots);
+  dots.push({c, pts, t0: performance.now(), dur});
+}
+function spawnDot(w) {
+  const pts = pathFor(w.src);
+  if (!pts) return;
+  addDot(pts, w.error ? 6 : 4, w.error ? "var(--bad)" : PRIO_COLOR[w.prio] || "#fff", 250 + lengthOf(pts) * 0.45);
+}
+function spawnWifiDot(name) {
+  const n = NODES[name], p = NODES[n.peer];
+  // Corners send to imu; central sends to the dashboard.
+  const pts = n.peer === "imu" ? [[n.x, n.y], [p.x, p.y]] : [[p.x, p.y], [n.x, n.y]];
+  addDot(pts, 3.5, "var(--accent)", 500);
+}
+function animate(now) {
+  for (let i = dots.length - 1; i >= 0; i--) {
+    const d = dots[i], f = (now - d.t0) / d.dur;
+    if (f >= 1) { d.c.remove(); dots.splice(i, 1); continue; }
+    let total = 0; const seg = [];
+    for (let k = 1; k < d.pts.length; k++) {
+      const l = Math.hypot(d.pts[k][0] - d.pts[k - 1][0], d.pts[k][1] - d.pts[k - 1][1]);
+      seg.push(l); total += l;
+    }
+    let dist = f * total, k = 0;
+    while (k < seg.length - 1 && dist > seg[k]) { dist -= seg[k]; k++; }
+    const a = d.pts[k], b = d.pts[k + 1], u = seg[k] ? dist / seg[k] : 0;
+    d.c.setAttribute("cx", a[0] + (b[0] - a[0]) * u);
+    d.c.setAttribute("cy", a[1] + (b[1] - a[1]) * u);
+  }
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+
+// ---------------------------------------------------------------------------
+// Rendering a snapshot
+const node = (name) => snap && snap.nodes.find((n) => n.name === name);
+function sigClass(sig) {
+  const v = snap && snap.signals[sig];
+  if (!v) return {color: "var(--off)", text: "never seen"};
+  if (v.age_ms > 2500) return {color: "var(--warn)", text: "stale"};
+  if (v.valid) return {color: "var(--ok)", text: "ok"};
+  if (v.reason === "NOT_FITTED") return {color: "var(--off)", text: "not fitted"};
+  if (v.reason === "NO_DATA") return {color: "var(--warn)", text: "no data"};
+  return {color: "var(--bad)", text: v.reason};
+}
+function cornerBits(v) {
+  const s = CORNER_BITS.filter((c, i) => (v >> i) & 1).join(" ");
+  return s || "none";
+}
+function fmtVal(sig) {
+  const v = snap && snap.signals[sig];
+  if (!v) return "-";
+  if (!v.valid) return v.reason;
+  if (v.unit === "bitmask" && sig.startsWith("CORNER_")) return cornerBits(v.v) + " (0x" + v.v.toString(16) + ")";
+  const x = typeof v.v === "number" && !Number.isInteger(v.v) ? v.v.toFixed(Math.abs(v.v) < 10 ? 3 : 1) : v.v;
+  return x + (v.unit ? " " + v.unit : "");
+}
+function linkColor(n) {
+  const w = n.wifi;
+  if (!n.powered) return "var(--off)";
+  if (!w.up) return "var(--bad)";
+  if (!w.link) return "var(--warn)";
+  return w.loss_permille > 0 ? "var(--warn)" : "var(--ok)";
+}
+const lastDelivered = {};
+
+function render() {
+  if (!snap) return;
+  $("clock").textContent = "t = " + snap.t.toFixed(3) + " s";
+  $("busbar").style.width = Math.min(100, snap.bus.load) + "%";
+  $("busbar").style.background = snap.bus.load > 60 ? "var(--bad)" : "var(--bus)";
+  $("bustext").textContent = snap.bus.load.toFixed(1) + "%  " + snap.bus.fps + " fps  " +
+    snap.bus.errors + " err";
+  $("drive-race").classList.toggle("on", snap.world.mode === "race");
+  $("drive-idle").classList.toggle("on", snap.world.mode === "idle");
+
+  for (const n of snap.nodes) {
+    const e = nodeEls[n.name];
+    if (!e) continue;
+    const wl = wireless(n);
+    const col = STATE_COLOR[n.state] || "var(--off)";
+    e.r.setAttribute("stroke", col);
+    e.r.setAttribute("fill", (wl ? n.wifi.up : n.connected) ? "#161b22" : "#2a1215");
+    e.g.classList.toggle("sel", selected.kind === "node" && selected.id === n.name);
+    let sub = n.state;
+    if (!n.powered) sub = "power off";
+    else if (!wl && !n.connected) sub = "CAN unplugged";
+    else if (wl && !n.wifi.up) sub = "out of WiFi range";
+    else if (n.kind === "central") sub = n.state + "  master";
+    else if (n.kind === "dash") sub = n.state + "  " + (n.wifi.link ? "linked" : "no link");
+    else if (n.synced) sub = n.state + "  " + n.sync_err_us + " us";
+    if (n.traced) sub += "  [trace]";
+    e.sub.textContent = sub;
+    if (wl && linkEls[n.name]) {
+      linkEls[n.name].setAttribute("stroke", linkColor(n));
+      const prev = lastDelivered[n.name];
+      if (prev !== undefined && n.wifi.delivered > prev) spawnWifiDot(n.name);
+      lastDelivered[n.name] = n.wifi.delivered;
+    }
+  }
+  for (const s of SENSORS) {
+    const e = sensorEls[s.id];
+    const order = ["var(--bad)", "var(--warn)", "var(--ok)", "var(--off)"];
+    let worst = "var(--off)", rank = 9;
+    for (const sig of s.sigs) {
+      const c = sigClass(sig).color, r = order.indexOf(c);
+      if (r < rank) { rank = r; worst = c; }
+    }
+    e.c.setAttribute("fill", worst);
+    e.g.classList.toggle("sel", selected.kind === "sensor" && selected.id === s.id);
+  }
+  for (const w of snap.wire) {
+    const key = w.t + ":" + w.id;
+    if (seenWire.has(key)) continue;
+    seenWire.add(key);
+    spawnDot(w);
+  }
+  if (seenWire.size > 4000) seenWire.clear();
+  renderSide();
+  renderCockpit();
+}
+
+function select(kind, id) {
+  selected = {kind, id};
+  render();
+}
+
+function btn(label, cmd, cls) {
+  return '<button class="' + (cls || "") + '" data-cmd="' + esc(cmd) + '">' + esc(label) + "</button>";
+}
+const count = (v) => (v ? '<span class="bad">' + v + "</span>" : 0);
+
+function renderSide() {
+  const side = $("side");
+  if (document.activeElement && side.contains(document.activeElement) &&
+      document.activeElement.tagName === "INPUT") return; // do not clobber typing
+  let h = "";
+  if (selected.kind === "bus") {
+    const b = snap.bus;
+    h += '<h2>CAN bus</h2><div class="kv">' +
+      "<div>bit rate</div><div>" + b.bitrate / 1000 + " kbit/s</div>" +
+      "<div>load (1 s)</div><div>" + b.load.toFixed(2) + " %</div>" +
+      "<div>frames/s</div><div>" + b.fps + "</div>" +
+      "<div>frames total</div><div>" + b.frames + "</div>" +
+      "<div>error frames</div><div>" + b.errors + "</div>" +
+      "<div>noise</div><div>" + b.noise_permille + " permille</div></div>" +
+      "<h3>Inject</h3><div class=\"btns\">" + btn("Noise off", "noise 0") + btn("1%", "noise 10") +
+      btn("5%", "noise 50") + btn("20%", "noise 200", "danger") + "</div>" +
+      '<p class="help">One daisy-chained trunk, imu to central, 120 ohm at both ends. Every frame ' +
+      "is timed bit for bit (bit stuffing included), arbitrated by identifier (priority = id &gt;&gt; 8, " +
+      "lower wins), and counted in each controller's TEC/REC like the real TWAI.</p>";
+  } else if (selected.kind === "sensor") {
+    const s = SENSORS.find((x) => x.id === selected.id);
+    const nn = node(s.node);
+    const slot = nn && nn.slots.find((sl) => sl.signals.includes(s.sigs[0]));
+    h += "<h2>" + esc(s.label) + ' <span class="muted" style="font-size:12px">on ' + s.node + "</span></h2>";
+    h += "<table><tr><th>signal</th><th>value</th><th></th></tr>";
+    for (const sig of s.sigs) {
+      const c = sigClass(sig), v = snap.signals[sig];
+      h += "<tr><td>" + sig + '</td><td style="color:' + c.color + '">' + esc(fmtVal(sig)) +
+        '</td><td class="muted">' + (v ? v.age_ms + " ms" + (v.synced ? "" : ", unsynced") : "") + "</td></tr>";
+    }
+    h += "</table>";
+    if (slot && slot.kind === "firmware") {
+      h += '<p class="help">Computed by ' + s.node + "'s firmware from its WiFi peers, not wired to a " +
+        "pin: change it with the WiFi buttons on the peer node.</p>";
+    } else {
+      h += "<h3>Drive the sensor</h3>";
+      for (const sig of s.sigs.slice(0, 4)) {
+        h += '<div class="btns"><span class="muted" style="min-width:140px">' + sig + "</span>" +
+          '<input type="number" step="any" data-set="' + sig + '" placeholder="value">' +
+          btn("Set", "") .replace('data-cmd=""', 'data-setbtn="' + sig + '"') +
+          btn("Auto", "auto " + sig) + btn("Open circuit", "open " + sig, "danger") +
+          btn("Repair", "close " + sig) + "</div>";
+      }
+    }
+    if (slot) {
+      h += "<h3>Part</h3><div class=\"kv\"><div>slot</div><div>" + slot.name + " (" + slot.kind + ")</div>" +
+        "<div>rate</div><div>" + slot.rate_hz + " Hz</div>" +
+        "<div>responding</div><div>" + (slot.unplugged ? '<span class="bad">unplugged</span>' : "yes") + "</div></div>" +
+        '<div class="btns">' + (slot.unplugged ? btn("Plug in", "plug " + s.node + " " + slot.name)
+                                                : btn("Unplug part", "unplug " + s.node + " " + slot.name, "danger")) + "</div>";
+    }
+    h += '<p class="help">On-chip inputs go through the firmware\'s own input-spec conversion ' +
+      "(window, range, NTC curve); the GPS through its NMEA parser. Corner IMUs reach CAN through " +
+      "imu over 5 GHz WiFi. Open circuit puts the pin at 0 mV.</p>";
+  } else {
+    const n = node(selected.id);
+    if (!n) { side.innerHTML = ""; return; }
+    const wl = wireless(n), central = n.kind === "central";
+    const col = STATE_COLOR[n.state] || "var(--off)";
+    const c = n.can, hl = n.health, w = n.wifi, cr = n.corner, meta = NODES[n.name] || {};
+    h += "<h2>" + n.name + ' <span class="pill" style="color:' + col + ";border-color:" + col + '">' + n.state + "</span></h2>";
+    h += '<div class="muted">' + (meta.where || "") + ", node id 0x" + n.id.toString(16).padStart(2, "0") + "</div>";
+    h += '<div class="btns">' +
+      btn(n.traced ? "Tracing commands" : "Trace commands", n.traced ? "trace none" : "trace " + n.name, n.traced ? "on" : "");
+    if (wl) {
+      h += w.up ? btn("Out of WiFi range", "wifi " + n.name + " down", "danger") : btn("Back in range", "wifi " + n.name + " up");
+    } else {
+      h += (n.connected ? btn("Unplug CAN", "disconnect " + n.name, "danger") : btn("Plug CAN in", "connect " + n.name)) +
+        btn("Force bus-off", "busoff " + n.name, "danger");
+    }
+    h += btn("Reboot", "reboot " + n.name) +
+      (n.powered ? btn("Power off", "power " + n.name + " off", "danger") : btn("Power on", "power " + n.name + " on")) +
+      "</div>";
+    const steps = hl ? hl.steps : cr ? cr.steps : "-";
+    h += "<h3>Time</h3><div class=\"kv\">" +
+      "<div>synced</div><div>" + (central ? "time master (epoch " + snap.gw.epoch + ")"
+                                   : n.kind === "dash" ? "no shared clock (display only)"
+                                   : n.synced ? "yes" : '<span class="warn">no</span>') + "</div>" +
+      "<div>sync error</div><div>" + (central || n.kind === "dash" ? "-" : n.sync_err_us + " us") + "</div>" +
+      "<div>time steps</div><div>" + steps + "</div>" +
+      "<div>crystal</div><div>" + n.ppm.toFixed(1) + " ppm</div>" +
+      "<div>uptime</div><div>" + n.uptime_s.toFixed(1) + " s, boot " + n.boot_count + "</div></div>" +
+      '<div class="btns"><input type="number" data-drift="' + n.name + '" placeholder="ppm">' +
+      '<button data-driftbtn="' + n.name + '">Set drift</button></div>';
+    if (c) {
+      h += "<h3>CAN controller</h3><div class=\"kv\">" +
+        "<div>state</div><div>" + (c.running ? (c.tec >= 128 ? "error passive" : "error active") : '<span class="bad">bus-off</span>') + "</div>" +
+        "<div>TEC / REC</div><div>" + c.tec + " / " + c.rec + "</div>" +
+        "<div>tx / rx</div><div>" + c.tx + " / " + c.rx + "</div>" +
+        "<div>tx dropped</div><div>" + count(c.tx_dropped) + "</div>" +
+        "<div>bus-off count</div><div>" + c.bus_off + "</div>" +
+        "<div>TX queue</div><div>" + c.queue + " frames</div></div>";
+    }
+    if (hl) {
+      h += "<h3>Heartbeat</h3><div class=\"kv\">" +
+        "<div>acquire / publish</div><div>" + hl.acquire_hz + " / " + hl.publish_hz + " Hz</div>" +
+        "<div>logged</div><div>" + hl.log_hz + " /s</div>" +
+        "<div>overflow</div><div>" + count(hl.overflow) + "</div>" +
+        "<div>transport errors</div><div>" + count(hl.transport_errors) + "</div>" +
+        "<div>seen by central</div><div>" + (n.seen ? "yes" : '<span class="bad">no</span>') + "</div></div>";
+    }
+    if (w) {
+      const lc = linkColor(n);
+      h += "<h3>5 GHz WiFi to " + meta.peer + "</h3><div class=\"kv\">" +
+        '<div>link</div><div style="color:' + lc + '">' + (!w.up ? "out of range" : w.link ? "up" : "down (reconnecting)") + "</div>" +
+        "<div>injected loss</div><div>" + w.loss_permille + " permille</div>" +
+        "<div>sent / delivered</div><div>" + w.sent + " / " + w.delivered + "</div>" +
+        "<div>dropped (queue)</div><div>" + count(w.dropped) + "</div>" +
+        "<div>sequence gaps</div><div>" + count(w.gaps) + "</div>" +
+        (n.kind === "corner" ? "<div>forwarded to CAN</div><div>" + w.forwarded + " samples</div>" +
+                               "<div>lost before CAN</div><div>" + count(w.lost) + "</div>" : "") +
+        "<div>seen by central</div><div>" + (n.seen ? "yes" : '<span class="bad">no</span>') + "</div></div>" +
+        '<div class="btns"><span class="muted">loss</span>' + btn("0", "wifi " + n.name + " loss 0") +
+        btn("5%", "wifi " + n.name + " loss 50") + btn("20%", "wifi " + n.name + " loss 200", "danger") +
+        btn("50%", "wifi " + n.name + " loss 500", "danger") + "</div>";
+    }
+    if (cr) {
+      h += "<h3>Corner sampler</h3><div class=\"kv\">" +
+        "<div>acquired</div><div>" + cr.acquired + " samples</div>" +
+        "<div>overruns</div><div>" + count(cr.overruns) + "</div>" +
+        "<div>clock updates</div><div>" + cr.clock_ok + " ok, " + cr.clock_rejected + " rejected</div>" +
+        "<div>round trip</div><div>" + cr.rtt_us + " us</div></div>";
+    }
+    const peers = snap.nodes.filter((p) => NODES[p.name] && NODES[p.name].peer === n.name);
+    if (peers.length) {
+      h += "<h3>WiFi peers</h3><table><tr><th>node</th><th>state</th><th>delivered</th><th>lost</th><th>gaps</th></tr>";
+      for (const p of peers) {
+        const pc = STATE_COLOR[p.state] || "var(--off)";
+        h += '<tr><td><button data-select="' + p.name + '">' + p.name + '</button></td><td style="color:' + pc + '">' +
+          p.state + "</td><td>" + p.wifi.delivered + "</td><td>" + count(p.wifi.lost) + "</td><td>" + count(p.wifi.gaps) + "</td></tr>";
+      }
+      h += "</table>";
+    }
+    if (n.slots.length) {
+      h += "<h3>Slots</h3><table><tr><th>slot</th><th>part</th><th>rate</th><th></th></tr>";
+      for (const sl of n.slots) {
+        h += "<tr><td>" + sl.name + '</td><td class="' + (sl.healthy ? "ok" : "bad") + '">' +
+          sl.kind + (sl.healthy ? "" : " (fault)") + "</td><td>" + sl.rate_hz + " Hz</td><td>" +
+          (sl.unplugged ? btn("Plug in", "plug " + n.name + " " + sl.name) : btn("Unplug", "unplug " + n.name + " " + sl.name, "danger")) +
+          "</td></tr>";
+      }
+      h += "</table>";
+    }
+    if (central) {
+      const g = snap.gw;
+      h += "<h3>SD card</h3>" +
+        '<div class="kv"><div>session</div><div>' + (g.log_open ? g.log_file : '<span class="bad">none</span>') + "</div>" +
+        "<div>written</div><div>" + g.records + " records, " + (g.log_bytes / 1048576).toFixed(2) + " MiB</div>" +
+        "<div>dropped</div><div>" + count(g.dropped) + "</div>" +
+        "<div>write errors</div><div>" + count(g.write_errors) + "</div>" +
+        "<div>queue high-water</div><div>" + (g.queue_hw / 100).toFixed(1) + " %</div></div>" +
+        '<div class="btns">' + btn("Remove card", "sd remove", "danger") + btn("Insert card", "sd insert") +
+        btn("Fail 3 writes", "sd fail 3", "danger") + "</div>";
+      h += "<h3>Live links</h3><div class=\"kv\">" +
+        "<div>USB</div><div>" + g.usb_pkts + " packets, " + (g.usb_bytes / 1048576).toFixed(2) + " MiB</div>" +
+        "<div>WiFi (pit)</div><div>" + g.wifi_pkts + " packets</div>" +
+        "<div>dashboard</div><div>" + g.dash_pkts + " packets</div>" +
+        "<div>LoRa</div><div>" + g.lora_pkts + " packets (" + g.lora_records + " records last)</div>" +
+        "<div>sync not sent</div><div>" + g.sync_fail + "</div></div>" +
+        '<p class="help">The SD log and the USB stream are real files in the simulator\'s output folder: ' +
+        "decode them with dev/tools/lbr_decode.py.</p>";
+    }
+  }
+  side.innerHTML = h;
+}
+
+function renderCockpit() {
+  if (!$("pane-cockpit").classList.contains("show")) return;
+  let h = "";
+  for (const d of snap.dash) {
+    const col = d.state === "ok" ? "var(--text)" : d.state === "invalid" ? "var(--bad)" : "var(--off)";
+    let v = d.state === "invalid" ? "n/a" : d.state, unit = d.unit;
+    if (d.state === "ok" && d.unit === "bitmask") { v = cornerBits(d.v); unit = ""; }
+    else if (d.state === "ok") v = Number.isInteger(d.v) ? d.v : d.v.toFixed(1);
+    h += '<div class="tile"><div class="l">' + d.sig + '</div><div class="v" style="color:' + col + '">' +
+      esc(v) + ' <span class="l">' + esc(unit) + "</span></div></div>";
+  }
+  $("tiles").innerHTML = h;
+}
+
+$("side").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.cmd) send(b.dataset.cmd);
+  if (b.dataset.select) select("node", b.dataset.select);
+  if (b.dataset.setbtn) {
+    const inp = document.querySelector('input[data-set="' + b.dataset.setbtn + '"]');
+    if (inp && inp.value !== "") send("set " + b.dataset.setbtn + " " + inp.value);
+  }
+  if (b.dataset.driftbtn) {
+    const inp = document.querySelector('input[data-drift="' + b.dataset.driftbtn + '"]');
+    if (inp && inp.value !== "") send("drift " + b.dataset.driftbtn + " " + inp.value);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Bottom panes
+const MAX_ROWS = 600;
+function addRow(pane, html) {
+  const p = $(pane);
+  const stick = p.scrollTop + p.clientHeight >= p.scrollHeight - 30;
+  const d = document.createElement("div");
+  d.className = "row";
+  d.innerHTML = html;
+  p.appendChild(d);
+  while (p.children.length > MAX_ROWS) p.removeChild(p.firstChild);
+  if (stick) p.scrollTop = p.scrollHeight;
+}
+const ts = (t) => '<span class="t">' + t.toFixed(4) + "</span>";
+function consoleLine(html) { addRow("console-out", html); $("pane-console").scrollTop = 1e9; }
+
+function handle(msg) {
+  switch (msg.ev) {
+    case "snap": snap = msg; break;
+    case "ui_state":
+      ui = msg;
+      $("pause").textContent = msg.paused ? "Resume" : "Pause";
+      $("speed").value = String(msg.speed);
+      $("seed").value = msg.seed;
+      if ($("scenario").options.length !== msg.scenarios.length) {
+        $("scenario").innerHTML = msg.scenarios.map((s) => "<option>" + esc(s) + "</option>").join("");
+      }
+      break;
+    case "cmd":
+      addRow("pane-cmds", ts(msg.t) + '<span class="n">' + esc(msg.node) + '</span><span class="c">' +
+        esc(msg.cmd) + "</span>" + esc(msg.args));
+      break;
+    case "event":
+      addRow("pane-events", ts(msg.t) + '<span class="n">' + esc(msg.node) + "</span>" +
+        '<span class="' + (msg.fault ? "bad" : "ok") + '">' + (msg.fault ? "FAULT " : "event ") +
+        esc(msg.name) + "</span> arg " + msg.arg);
+      break;
+    case "log":
+      if ($("showlogs").checked)
+        addRow("pane-events", ts(msg.t) + '<span class="n">' + esc(msg.node) + '</span><span class="muted">' +
+          esc(msg.level + " " + msg.text) + "</span>");
+      break;
+    case "note":
+      addRow("pane-events", ts(msg.t) + '<span class="warn">' + esc(msg.text) + "</span>");
+      break;
+    case "check": {
+      const line = ts(msg.t) + '<span class="' + (msg.ok ? "ok" : "bad") + '">' + (msg.ok ? "PASS " : "FAIL ") +
+        "</span>" + esc(msg.what) + ' <span class="muted">(got ' + esc(msg.got) + ")</span>";
+      addRow("pane-events", line); consoleLine(line);
+      break;
+    }
+    case "error":
+      consoleLine('<span class="bad">' + esc(msg.msg) + "</span>");
+      addRow("pane-events", '<span class="bad">' + esc(msg.msg) + "</span>");
+      break;
+    case "ok": consoleLine('<span class="muted">ok: ' + esc(msg.cmd) + "</span>"); break;
+    case "ui": addRow("pane-events", '<span class="muted">-- ' + esc(msg.msg) + "</span>"); break;
+  }
+}
+
+let pending = false;
+const es = new EventSource("/events");
+es.onmessage = (e) => {
+  for (const m of JSON.parse(e.data)) handle(m);
+  if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; render(); }); }
+};
+es.onerror = () => { $("clock").textContent = "disconnected"; };
+
+// ---------------------------------------------------------------------------
+// Controls
+$("pause").onclick = () => send(ui.paused ? "ui resume" : "ui pause");
+$("step").onclick = () => send("ui step 100");
+$("speed").onchange = (e) => send("ui speed " + e.target.value);
+$("restart").onclick = () => { seenWire.clear(); send("ui restart " + ($("seed").value || 1)); };
+$("play").onclick = () => { if ($("scenario").value) send("ui scenario " + $("scenario").value); };
+$("drive-race").onclick = () => send("drive race");
+$("drive-idle").onclick = () => send("drive idle");
+$("clear").onclick = () => {
+  const p = document.querySelector(".pane.show");
+  if (p.id === "pane-console") $("console-out").innerHTML = ""; else p.innerHTML = "";
+};
+for (const b of document.querySelectorAll(".tabs button[data-pane]")) {
+  b.onclick = () => {
+    for (const x of document.querySelectorAll(".tabs button[data-pane]")) x.classList.toggle("on", x === b);
+    for (const p of document.querySelectorAll(".pane")) p.classList.toggle("show", p.id === "pane-" + b.dataset.pane);
+    render();
+  };
+}
+
+const HELP = [
+  "run <ms>                      advance simulated time",
+  "trace <node|all|none>         show a node's hardware commands",
+  "unplug|plug <node> <slot>     a part stops / starts responding",
+  "open|close <SIGNAL>           open circuit on one input / repair it",
+  "set <SIGNAL> <value> | auto <SIGNAL>   override the vehicle model",
+  "wifi <node> up|down           corner_* or dashboard in / out of range",
+  "wifi <node> loss <permille>   drop that share of its WiFi packets",
+  "disconnect|connect <node>     CAN cable (CAN nodes only)",
+  "busoff <node>                 force the controller bus-off (CAN nodes only)",
+  "noise <permille>              corrupt that share of CAN frames",
+  "drift <node> <ppm>            crystal error",
+  "reboot <node> | power <node> on|off",
+  "sd remove|insert|fail <n>     the central's SD card",
+  "drive race|idle",
+  "expect <node|all|can|corners|wireless|bus|central|log|SIGNAL> <metric> <op> <value>",
+  "   metrics: state seen synced link sync_err_us tx_dropped bus_off tec overflow steps",
+  "            boot_count transport_errors lost forwarded gaps event:<NAME>;",
+  "            bus: load errors; log: intact frames;",
+  "            central: frames_logged log_dropped usb_pkts lora_pkts dash_pkts sync_fail;",
+  "            SIGNAL: valid value age_ms reason",
+  "slots: imu chassis corner_status | powertrain speeds fuel | driver_input inputs |",
+  "       temperature brakes cvt | stress stress | central gps dash_status |",
+  "       corner_* imu battery | dashboard battery",
+];
+const hist = []; let hpos = 0;
+$("console-in").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const v = e.target.value.trim();
+    if (!v) return;
+    hist.push(v); hpos = hist.length;
+    consoleLine('<span style="color:var(--accent)">&gt; ' + esc(v) + "</span>");
+    if (v === "help") HELP.forEach((l) => consoleLine('<span class="muted">' + esc(l) + "</span>"));
+    else send(v);
+    e.target.value = "";
+  } else if (e.key === "ArrowUp" && hpos > 0) {
+    e.target.value = hist[--hpos];
+  } else if (e.key === "ArrowDown" && hpos < hist.length) {
+    e.target.value = hist[++hpos] || "";
+  }
+});
+</script>
+</body>
+</html>

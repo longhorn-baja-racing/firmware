@@ -1,0 +1,22 @@
+# Clock discipline at the edge of the crystal spec, over CAN and over WiFi,
+# and a Central reboot starting a new timeline (epoch).
+at 0.0  drift imu 400
+at 0.0  drift stress 250
+at 0.0  drift corner_fr -400
+at 0.0  drift dashboard 300
+at 10.0 expect can sync_err_us < 50
+at 10.0 expect can synced == 1
+at 10.0 expect corners sync_err_us < 1000
+at 10.0 expect corners synced == 1
+
+at 12.0 reboot central
+at 16.0 expect can event:TIME_SYNCED >= 2
+at 20.0 expect can sync_err_us < 50
+at 20.0 expect corners sync_err_us < 1000
+at 20.0 expect central boot_count == 2
+at 20.0 expect all state == RUN
+# Corner samples keep flowing on the new timeline (no stale grid indices).
+at 20.0 expect IMU_FL_ACCEL_X age_ms < 100
+at 20.0 expect IMU_FR_ACCEL_X age_ms < 100
+at 20.0 expect corners lost == 0
+end 20.0

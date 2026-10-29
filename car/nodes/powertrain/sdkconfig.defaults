@@ -1,0 +1,3 @@
+# powertrain node (Powertrain Controller (ESP32, CAN node 2)). Shared settings: car/nodes/sdkconfig.common.
+# Generated sdkconfig is gitignored.
+CONFIG_IDF_TARGET="esp32"

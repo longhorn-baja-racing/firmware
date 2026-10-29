@@ -1,0 +1,11 @@
+# imu node (IMU Controller, ESP32-C5, CAN node 1). Shared settings:
+# car/nodes/sdkconfig.common. Generated sdkconfig is gitignored.
+CONFIG_IDF_TARGET="esp32c5"
+
+# Forwarding four corners' batches can queue ~100 frames at once
+# (checked by dev/tests/host/test_plans.c).
+CONFIG_LBR_CAN_TX_QUEUE_LEN=127
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# WiFi + lwIP make the app close to 1 MB; use the 1.5 MB single-app table.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
