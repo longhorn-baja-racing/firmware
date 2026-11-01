@@ -307,7 +307,7 @@ static void test_node_boot_and_acquire(void)
     CHECK_EQ_U(lbr_can_decode_heartbeat(&r.fake.tx[from], &state, &flags), LBR_NODE_POWERTRAIN);
     CHECK_EQ_U(state, LBR_NODE_RUN);
     CHECK_EQ_U(flags, 0u);
-    CHECK_EQ_U(r.fake.tx[from + 1].id, 0x780u + 16u * LBR_NODE_POWERTRAIN);
+    CHECK_EQ_U(r.fake.tx[from + 1].id, 0x700u + 16u * LBR_NODE_POWERTRAIN);
     CHECK_EQ_U(h.state, LBR_NODE_RUN);
     CHECK((h.flags & LBR_HF_TIME_SYNCED) != 0);
     CHECK_EQ_U(h.sensor_status, 1);
@@ -429,23 +429,6 @@ static void test_node_app_hooks(void)
     f.id = 0x300;
     lbr_node_core_on_frame(&r.core, &f, r.fake.mono);
     CHECK_EQ_I(s_app_frames, 1);
-
-    /* Forwarded frames count as published; app flags and losses reach the
-     * heartbeat. */
-    unsigned pub = r.core.published;
-    CHECK(lbr_node_core_send(&r.core, &f));
-    CHECK_EQ_U(r.core.published, pub + 1u);
-    lbr_node_core_set_app_flags(&r.core, LBR_HB_ERR_LINK);
-    lbr_node_core_count_loss(&r.core, 5);
-    lbr_health_record_t h;
-    size_t              from = r.fake.n_tx;
-    lbr_node_core_heartbeat(&r.core, &h);
-    uint8_t state, flags;
-    lbr_can_decode_heartbeat(&r.fake.tx[from], &state, &flags);
-    CHECK((flags & LBR_HB_ERR_LINK) != 0);
-    CHECK((flags & LBR_HB_ERR_LOSS) != 0);
-    CHECK_EQ_U(h.transport_error_count, 5u);
-    CHECK_EQ_U(h.state, LBR_NODE_DEGRADED);
 }
 
 /* ------------------------------------------------------------------------ */

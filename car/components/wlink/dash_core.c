@@ -94,14 +94,14 @@ void lbr_dash_core_on_packet(lbr_dash_core_t *c, const uint8_t *buf, size_t len,
         return;
     }
     lock(c);
+    uint32_t gaps = 0;
     if (c->seq.have && rx_us > c->last_rx_us && rx_us - c->last_rx_us > LBR_WLINK_LINK_TIMEOUT_US) {
-        c->seq.have = false; /* back after an outage, maybe rebooted: seq restarts */
+        lbr_seq_window_restart(&c->seq, &gaps); /* back after an outage, maybe rebooted */
     }
-    uint32_t         gaps = 0;
-    lbr_seq_result_t sr   = lbr_seq_window_take(&c->seq, hdr.seq, &gaps);
+    lbr_seq_result_t sr = lbr_seq_window_take(&c->seq, hdr.seq, &gaps);
     if (sr == LBR_SEQ_OLD) {
-        c->seq.have = false; /* the Central restarted its count */
-        sr          = lbr_seq_window_take(&c->seq, hdr.seq, &gaps);
+        lbr_seq_window_restart(&c->seq, &gaps); /* the Central restarted its count */
+        sr = lbr_seq_window_take(&c->seq, hdr.seq, &gaps);
     }
     atomic_fetch_add(&c->packet_gaps, gaps);
     if (sr != LBR_SEQ_NEW) {

@@ -118,8 +118,6 @@ typedef struct lbr_node_core {
     atomic_ullong last_sample_us;
     atomic_uint   sync_unmatched;
     atomic_uint   commands;
-    atomic_uint   app_loss;  /* losses the app counted (lbr_node_core_count_loss) */
-    atomic_uint   app_flags; /* LBR_HB_ERR_* the app raises (lbr_node_core_set_app_flags) */
 
     /* Heartbeat caller only. */
     uint32_t prev_acquired, prev_published, prev_logged;
@@ -161,14 +159,3 @@ void lbr_node_core_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg
 
 /* Callback shape for lbr_log_service on_event, routed to a core. */
 void lbr_node_core_on_log_event(lbr_node_core_t *c, uint16_t code, bool fault);
-
-/* Send a frame the app built (the IMU Controller forwarding corner data);
- * counted as published. False if it was not queued (counted by the
- * controller). */
-bool lbr_node_core_send(lbr_node_core_t *c, const lbr_can_frame_t *f);
-
-/* App-level heartbeat error flags (e.g. LBR_HB_ERR_LINK), and losses the app
- * detected (e.g. corner samples that never arrived), reported in
- * transport_error_count. */
-void lbr_node_core_set_app_flags(lbr_node_core_t *c, uint8_t flags);
-void lbr_node_core_count_loss(lbr_node_core_t *c, uint32_t n);

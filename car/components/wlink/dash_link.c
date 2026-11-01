@@ -13,8 +13,7 @@
 const lbr_signal_id_t lbr_dash_signals[] = {
     LBR_SIG_ENGINE_RPM,    LBR_SIG_CVT_RPM,       LBR_SIG_GPS_SPEED,     LBR_SIG_FUEL_LEVEL,
     LBR_SIG_TEMP_CVT,      LBR_SIG_TEMP_BRAKE_FL, LBR_SIG_TEMP_BRAKE_FR, LBR_SIG_TEMP_BRAKE_BL,
-    LBR_SIG_TEMP_BRAKE_BR, LBR_SIG_CORNER_LINK,   LBR_SIG_BRAKE_PEDAL,   LBR_SIG_GAS_PEDAL,
-    LBR_SIG_FAULT,
+    LBR_SIG_TEMP_BRAKE_BR, LBR_SIG_BRAKE_PEDAL,   LBR_SIG_GAS_PEDAL,     LBR_SIG_FAULT,
 };
 const size_t lbr_dash_signal_count = sizeof lbr_dash_signals / sizeof lbr_dash_signals[0];
 
@@ -49,12 +48,12 @@ void lbr_dash_link_on_packet(lbr_dash_link_t *d, const uint8_t *buf, size_t len,
         return;
     }
     if (d->seq.have && rx_us > d->last_rx_us && rx_us - d->last_rx_us > LBR_WLINK_DASH_TIMEOUT_US) {
-        d->seq.have = false; /* back after an outage, maybe rebooted: seq restarts */
+        lbr_seq_window_restart(&d->seq, &d->packet_gaps); /* back after an outage */
     }
     lbr_seq_result_t sr = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
     if (sr == LBR_SEQ_OLD) {
-        d->seq.have = false; /* the dashboard restarted its count */
-        sr          = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
+        lbr_seq_window_restart(&d->seq, &d->packet_gaps); /* the dashboard restarted its count */
+        sr = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
     }
     if (sr != LBR_SEQ_NEW) {
         d->rejected += sr == LBR_SEQ_DUPLICATE ? 1u : 0u; /* older than what we have */

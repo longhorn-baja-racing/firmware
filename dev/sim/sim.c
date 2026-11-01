@@ -356,33 +356,7 @@ static void h_gw_lock(void *ctx, lbr_gw_lock_t which)
 static bool h_wifi_send(void *ctx, const uint8_t *pkt, size_t len)
 {
     hal_ctx_t *c = ctx;
-    return wifi_send(c->s, c->n, c->s->nodes[c->n].peer, pkt, len);
-}
-
-/* IMU Controller: its corner receiver's platform. */
-static uint16_t h_epoch(void *ctx)
-{
-    hal_ctx_t *c = ctx;
-    return c->s->nodes[c->n].servo.epoch;
-}
-
-static bool h_rx_send_frame(void *ctx, const lbr_can_frame_t *f)
-{
-    hal_ctx_t *c = ctx;
-    return lbr_node_core_send(c->s->nodes[c->n].core, f);
-}
-
-static bool h_rx_reply(void *ctx, uint8_t node, const uint8_t *pkt, size_t len)
-{
-    hal_ctx_t *c  = ctx;
-    int        to = sim_node_by_id(c->s, node);
-    return to >= 0 && wifi_send(c->s, c->n, to, pkt, len);
-}
-
-static void h_rx_event(void *ctx, lbr_event_code_t code, uint16_t arg, bool fault)
-{
-    hal_ctx_t *c = ctx;
-    lbr_node_core_event(c->s->nodes[c->n].core, code, arg, fault);
+    return wifi_send(c->s, c->n, GW, pkt, len);
 }
 
 static const lbr_node_hal_t k_node_hal = {
@@ -398,28 +372,10 @@ static const lbr_node_hal_t k_node_hal = {
     .log             = h_log,
 };
 
-static const lbr_corner_hal_t k_corner_hal = {
-    .mono_us    = h_mono,
-    .now_us     = h_now,
-    .time_servo = h_servo,
-    .time_apply = h_apply,
-    .send       = h_wifi_send,
-    .log        = h_log,
-};
-
 static const lbr_dash_hal_t k_dash_hal = {
     .mono_us = h_mono,
     .send    = h_wifi_send,
     .log     = h_log,
-};
-
-static const lbr_corner_rx_hal_t k_rx_hal = {
-    .now_us     = h_now,
-    .synced     = h_synced,
-    .epoch      = h_epoch,
-    .send_frame = h_rx_send_frame,
-    .reply      = h_rx_reply,
-    .event      = h_rx_event,
 };
 
 static const lbr_gw_hal_t k_gw_hal = {
@@ -662,14 +618,11 @@ typedef struct {
 
 static wifi_dgram_t s_wifi[WIFI_POOL];
 
-/* The wireless end of a pair owns the link (range, loss). */
+/* The wireless end of a pair (the dashboard) owns the link (range, loss). */
 static sim_wifi_t *link_of(sim_t *s, int a, int b)
 {
     sim_node_t *na = &s->nodes[a], *nb = &s->nodes[b];
-    if (na->kind == SIM_NODE_CORNER || na->kind == SIM_NODE_DASH) {
-        return &na->wifi;
-    }
-    return &nb->wifi;
+    return na->kind == SIM_NODE_DASH ? &na->wifi : &nb->wifi;
 }
 
 bool wifi_send(sim_t *s, int from, int to, const uint8_t *buf, size_t len)
@@ -713,17 +666,11 @@ static void wifi_deliver(sim_t *s, int slot)
         case SIM_NODE_CENTRAL:
             lbr_gw_core_on_dash_packet(s->gw.core, d->data, d->len, local);
             break;
-        case SIM_NODE_CAN:
-            if (n->corner_rx != NULL) {
-                lbr_corner_rx_on_packet(n->corner_rx, d->data, d->len, h_now(&s_ctx[d->to]));
-            }
-            break;
-        case SIM_NODE_CORNER:
-            lbr_corner_core_on_packet(n->corner, d->data, d->len, local);
-            break;
         case SIM_NODE_DASH:
             lbr_dash_core_on_packet(n->dash, d->data, d->len, local);
             break;
+        case SIM_NODE_CAN:
+            break; /* no WiFi */
     }
 }
 
@@ -751,10 +698,6 @@ static void schedule_acq(sim_t *s, int ni, size_t k)
         case SIM_NODE_CENTRAL:
             now = h_now(&s_ctx[ni]);
             due = lbr_gw_core_slot_next_due(s->gw.core, k);
-            break;
-        case SIM_NODE_CORNER:
-            now = h_now(&s_ctx[ni]);
-            due = lbr_corner_core_slot_next_due(n->corner, k);
             break;
         case SIM_NODE_DASH:
             now = local; /* the dashboard keeps no shared clock */
@@ -887,18 +830,6 @@ static void boot_can_node(sim_t *s, int i)
     sim_node_t *n = &s->nodes[i];
     reset_can(n, n->plan->listen_all);
     world_bind_sensors(s, i);
-    if (n->id == LBR_NODE_IMU) {
-        /* As the IMU Controller app: the corner receiver feeds a slot. */
-        if (n->corner_rx == NULL) {
-            n->corner_rx = calloc(1, sizeof *n->corner_rx);
-        }
-        lbr_corner_rx_hal_t rh = k_rx_hal;
-        rh.ctx                 = &s_ctx[i];
-        lbr_corner_rx_init(n->corner_rx, &rh);
-        const lbr_slot_t *st = &n->plan->slots[IMU_SLOT_CORNER_STATUS];
-        lbr_sensor_corner_status(&n->sensors[IMU_SLOT_CORNER_STATUS], st->name, st->signals,
-                                 st->n_signals, n->corner_rx);
-    }
     if (n->core == NULL) {
         n->core = calloc(1, sizeof *n->core);
     }
@@ -926,29 +857,6 @@ static void boot_can_node(sim_t *s, int i)
     if (n->local_log != NULL) {
         schedule_local(s, i, SIM_JOB_PUMP, l + 20000u, EV_GW_PUMP); /* LOG_PUMP_MS on target */
     }
-    if (n->corner_rx != NULL) {
-        schedule_local(s, i, SIM_JOB_AUX, l + LBR_CORNER_SERVICE_MS * 1000u, EV_CORNER_RX);
-    }
-}
-
-static void boot_corner(sim_t *s, int i)
-{
-    sim_node_t *n = &s->nodes[i];
-    world_bind_sensors(s, i);
-    if (n->corner == NULL) {
-        n->corner = calloc(1, sizeof *n->corner);
-    }
-    lbr_corner_hal_t hal = k_corner_hal;
-    hal.ctx              = &s_ctx[i];
-    if (!lbr_corner_core_init(n->corner, &n->cfg, &hal, LBR_CORNER_DEFAULT_BATCH)) {
-        return;
-    }
-    uint64_t l = sim_local_us(s, i);
-    for (size_t k = 0; k < n->cfg.n_acq; k++) {
-        lbr_corner_core_slot_start(n->corner, k);
-        schedule_acq(s, i, k);
-    }
-    schedule_local(s, i, SIM_JOB_AUX, l + 100000u, EV_CORNER_CLOCK);
 }
 
 static void boot_dash(sim_t *s, int i)
@@ -980,9 +888,6 @@ static void boot_node(sim_t *s, int i)
     switch (n->kind) {
         case SIM_NODE_CENTRAL:
             boot_gateway(s);
-            break;
-        case SIM_NODE_CORNER:
-            boot_corner(s, i);
             break;
         case SIM_NODE_DASH:
             boot_dash(s, i);
@@ -1094,9 +999,6 @@ static void acq_tick(sim_t *s, int ni, size_t k)
         case SIM_NODE_CENTRAL:
             lbr_gw_core_slot_tick(s->gw.core, k);
             break;
-        case SIM_NODE_CORNER:
-            lbr_corner_core_slot_tick(n->corner, k);
-            break;
         case SIM_NODE_DASH:
             lbr_dash_core_slot_tick(n->dash, k);
             break;
@@ -1186,18 +1088,6 @@ static void handle(sim_t *s, const event_t *e)
             lbr_log_keeper_step(&n->keeper, sim_local_us(s, ni), h_now(&s_ctx[ni]));
             schedule_local(s, ni, SIM_JOB_PUMP, n->next_local[SIM_JOB_PUMP] + 20000u, EV_GW_PUMP);
             break;
-        case EV_CORNER_CLOCK: {
-            uint32_t ms = lbr_corner_core_clock_tick(n->corner);
-            schedule_local(s, ni, SIM_JOB_AUX, n->next_local[SIM_JOB_AUX] + ms * 1000u,
-                           EV_CORNER_CLOCK);
-            break;
-        }
-        case EV_CORNER_RX:
-            lbr_corner_rx_service(n->corner_rx, n->core);
-            schedule_local(s, ni, SIM_JOB_AUX,
-                           n->next_local[SIM_JOB_AUX] + LBR_CORNER_SERVICE_MS * 1000u,
-                           EV_CORNER_RX);
-            break;
         case EV_BUS:
             vbus_event(s, e->slot);
             break;
@@ -1267,20 +1157,20 @@ static void mkdir_p(const char *path)
 
 int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet)
 {
-    /* DAQ-WIRING.md: the Central first (index GW), the CAN controllers in
-     * their daisy-chain order, then the wireless nodes. */
+    /* DAQ-WIRING.md: the Central first (index GW), the other CAN nodes, then
+     * the dashboard (WiFi only). */
     const node_def_t defs[] = {
         {"central", LBR_NODE_CENTRAL, SIM_NODE_CENTRAL, &lbr_plan_central, true, 64},
-        {"imu", LBR_NODE_IMU, SIM_NODE_CAN, &lbr_plan_imu, true, 127},
+        {"imu", LBR_NODE_IMU, SIM_NODE_CAN, &lbr_plan_imu, true, 64},
         {"powertrain", LBR_NODE_POWERTRAIN, SIM_NODE_CAN, &lbr_plan_powertrain, false, 64},
         {"driver_input", LBR_NODE_DRIVER_INPUT, SIM_NODE_CAN, &lbr_plan_driver_input, false, 64},
         {"temperature", LBR_NODE_TEMPERATURE, SIM_NODE_CAN, &lbr_plan_temperature, false, 64},
         {"stress", LBR_NODE_STRESS, SIM_NODE_CAN, &lbr_plan_stress, false, 64},
+        {"corner_fl", LBR_NODE_CORNER_FL, SIM_NODE_CAN, &lbr_plan_corner[0], true, 64},
+        {"corner_fr", LBR_NODE_CORNER_FR, SIM_NODE_CAN, &lbr_plan_corner[1], true, 64},
+        {"corner_bl", LBR_NODE_CORNER_BL, SIM_NODE_CAN, &lbr_plan_corner[2], true, 64},
+        {"corner_br", LBR_NODE_CORNER_BR, SIM_NODE_CAN, &lbr_plan_corner[3], true, 64},
         {"dashboard", LBR_NODE_DASHBOARD, SIM_NODE_DASH, &lbr_plan_dashboard, true, 0},
-        {"corner_fl", LBR_NODE_CORNER_FL, SIM_NODE_CORNER, &lbr_plan_corner[0], true, 0},
-        {"corner_fr", LBR_NODE_CORNER_FR, SIM_NODE_CORNER, &lbr_plan_corner[1], true, 0},
-        {"corner_bl", LBR_NODE_CORNER_BL, SIM_NODE_CORNER, &lbr_plan_corner[2], true, 0},
-        {"corner_br", LBR_NODE_CORNER_BR, SIM_NODE_CORNER, &lbr_plan_corner[3], true, 0},
     };
     memset(s, 0, sizeof *s);
     memset(s_wifi, 0, sizeof s_wifi);
@@ -1305,7 +1195,7 @@ int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet
         return -1;
     }
 
-    int imu = -1, dash = -1;
+    int dash = -1;
     for (int i = 0; i < s->n_nodes; i++) {
         sim_node_t *n    = &s->nodes[i];
         n->name          = defs[i].name;
@@ -1321,7 +1211,6 @@ int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet
         n->reset_reason  = LBR_RESET_POWER_ON;
         n->peer          = -1;
         n->wifi.up       = true;
-        imu              = n->id == LBR_NODE_IMU ? i : imu;
         dash             = n->id == LBR_NODE_DASHBOARD ? i : dash;
         /* Real crystals: within +/- 40 ppm. */
         n->ppm = (sim_rand(s) - 0.5) * 80.0;
@@ -1329,12 +1218,7 @@ int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet
         uint64_t at = n->is_gateway ? 0 : 50000u + (uint64_t)(sim_rand(s) * 400000.0);
         sim_schedule(s, at, EV_BOOT, i, 0);
     }
-    /* WiFi pairs: corners talk to the IMU Controller, the dashboard to the Central. */
-    for (int i = 0; i < s->n_nodes; i++) {
-        if (s->nodes[i].kind == SIM_NODE_CORNER) {
-            s->nodes[i].peer = imu;
-        }
-    }
+    /* The one WiFi pair: the dashboard and the Central. */
     s->nodes[dash].peer = GW;
     s->nodes[GW].peer   = dash;
     sim_schedule(s, 0, EV_WORLD, -1, 0);
@@ -1359,8 +1243,6 @@ void sim_free(sim_t *s)
     for (int i = 0; i < s->n_nodes; i++) {
         free(s->nodes[i].core);
         free(s->nodes[i].local_log);
-        free(s->nodes[i].corner_rx);
-        free(s->nodes[i].corner);
         free(s->nodes[i].dash);
     }
     free(s->gw.core);
@@ -1389,20 +1271,14 @@ static int64_t sync_error_us(sim_t *s, int i)
 
 static bool wireless(const sim_node_t *n)
 {
-    return n->kind == SIM_NODE_CORNER || n->kind == SIM_NODE_DASH;
+    return n->kind == SIM_NODE_DASH;
 }
 
-/* A wireless node as its receiver sees it: up while its datagrams arrive. */
+/* The dashboard as the Central sees it: up while its datagrams arrive. */
 static bool link_up(const sim_t *s, int i)
 {
-    const sim_node_t *n = &s->nodes[i];
-    if (n->kind == SIM_NODE_DASH) {
-        return s->gw.core != NULL && s->nodes[GW].booted && s->gw.core->dash.up;
-    }
-    int imu = n->peer;
-    int c   = lbr_node_corner_index(n->id);
-    return imu >= 0 && s->nodes[imu].booted && s->nodes[imu].corner_rx != NULL && c >= 0 &&
-           s->nodes[imu].corner_rx->peer[c].up;
+    return s->nodes[i].kind == SIM_NODE_DASH && s->gw.core != NULL && s->nodes[GW].booted &&
+           s->gw.core->dash.up;
 }
 
 static const char *state_of(const sim_t *s, int i)
@@ -1413,16 +1289,6 @@ static const char *state_of(const sim_t *s, int i)
     }
     if (!n->booted) {
         return "BOOT";
-    }
-    if (n->kind == SIM_NODE_CORNER) {
-        /* No heartbeat of its own: what the IMU Controller reports for it. */
-        if (!link_up(s, i)) {
-            return "LOST";
-        }
-        int     c     = lbr_node_corner_index(n->id);
-        uint8_t flags = s->nodes[n->peer].corner_rx->peer[c].flags;
-        return ((flags & LBR_WLINK_F_SENSOR_OK) && (flags & LBR_WLINK_F_SYNCED)) ? "RUN"
-                                                                                 : "DEGRADED";
     }
     if (n->kind == SIM_NODE_DASH) {
         return link_up(s, i) ? "RUN" : "LOST";
@@ -1450,16 +1316,6 @@ static bool gw_sees(const sim_t *s, int i)
     return e != NULL && e->present;
 }
 
-static const lbr_corner_peer_t *corner_peer(const sim_t *s, int i)
-{
-    const sim_node_t *n = &s->nodes[i];
-    int               c = lbr_node_corner_index(n->id);
-    if (c < 0 || n->peer < 0 || s->nodes[n->peer].corner_rx == NULL) {
-        return NULL;
-    }
-    return &s->nodes[n->peer].corner_rx->peer[c];
-}
-
 /* ------------------------------------------------------------------------ */
 /* Snapshot                                                                  */
 
@@ -1478,8 +1334,6 @@ static void snap_slots(FILE *o, sim_t *s, int i)
             a = &s->gw.core->slot[k].acq;
         } else if (n->kind == SIM_NODE_CAN && n->core != NULL) {
             a = &n->core->slot[k].acq;
-        } else if (n->kind == SIM_NODE_CORNER && n->corner != NULL) {
-            a = &n->corner->slot[k];
         } else if (n->kind == SIM_NODE_DASH && n->dash != NULL) {
             a = &n->dash->slot[k];
         }
@@ -1499,7 +1353,7 @@ static void snap_slots(FILE *o, sim_t *s, int i)
 
 void sim_snapshot(sim_t *s)
 {
-    static const char *kinds[] = {"central", "can", "corner", "dash"};
+    static const char *kinds[] = {"central", "can", "dash"};
     FILE              *o       = s->out;
     fprintf(o, "{\"ev\":\"snap\",\"t\":%.6f,\"seed\":%llu,", t_s(s), (unsigned long long)s->seed);
     fprintf(o,
@@ -1526,27 +1380,13 @@ void sim_snapshot(sim_t *s)
                 (long long)sync_error_us(s, i), n->ppm, (unsigned)n->boot_count,
                 n->booted ? (double)sim_local_us(s, i) / 1e6 : 0.0, (unsigned)h->flags);
         if (wireless(n)) {
-            const lbr_corner_peer_t *p = corner_peer(s, i);
             fprintf(o,
                     "\"wifi\":{\"up\":%s,\"link\":%s,\"loss_permille\":%u,\"sent\":%u,"
-                    "\"delivered\":%u,\"dropped\":%u,\"forwarded\":%u,\"lost\":%u,\"gaps\":%u}",
+                    "\"delivered\":%u,\"dropped\":%u,\"gaps\":%u}",
                     n->wifi.up ? "true" : "false", link_up(s, i) ? "true" : "false",
                     (unsigned)n->wifi.loss_permille, (unsigned)n->wifi.sent,
                     (unsigned)n->wifi.delivered, (unsigned)n->wifi.dropped,
-                    p != NULL ? (unsigned)p->forwarded : 0u, p != NULL ? (unsigned)p->lost : 0u,
-                    p != NULL ? (unsigned)p->packet_gaps
-                    : n->kind == SIM_NODE_DASH && s->gw.core != NULL
-                        ? (unsigned)s->gw.core->dash.packet_gaps
-                        : 0u);
-            if (n->corner != NULL) {
-                fprintf(o,
-                        ",\"corner\":{\"acquired\":%u,\"overruns\":%u,\"steps\":%u,"
-                        "\"clock_ok\":%u,\"clock_rejected\":%u,\"rtt_us\":%u}",
-                        (unsigned)atomic_load(&n->corner->acquired),
-                        (unsigned)atomic_load(&n->corner->overruns), (unsigned)n->servo.step_count,
-                        (unsigned)n->corner->clock.accepted, (unsigned)n->corner->clock.rejected,
-                        (unsigned)n->corner->clock.last_rtt_us);
-            }
+                    n->dash != NULL ? (unsigned)atomic_load(&n->dash->packet_gaps) : 0u);
         } else {
             fprintf(o,
                     "\"can\":{\"running\":%s,\"tec\":%u,\"rec\":%u,\"tx\":%u,\"rx\":%u,"
@@ -1781,8 +1621,7 @@ static void check_result(sim_t *s, bool ok, const char *what, const char *got)
 /* Numeric metric of one node; false if unknown. */
 static bool node_metric(sim_t *s, int i, const char *m, double *v)
 {
-    sim_node_t              *n = &s->nodes[i];
-    const lbr_corner_peer_t *p = corner_peer(s, i);
+    sim_node_t *n = &s->nodes[i];
     if (strcmp(m, "seen") == 0) {
         *v = (i == GW || gw_sees(s, i)) ? 1 : 0;
     } else if (strcmp(m, "synced") == 0) {
@@ -1790,14 +1629,9 @@ static bool node_metric(sim_t *s, int i, const char *m, double *v)
         *v = (n->servo.synced || n->kind == SIM_NODE_DASH) ? 1 : 0;
     } else if (strcmp(m, "link") == 0) {
         *v = !wireless(n) || link_up(s, i) ? 1 : 0;
-    } else if (strcmp(m, "lost") == 0) {
-        *v = p != NULL ? p->lost : 0; /* corner samples that never reached CAN */
-    } else if (strcmp(m, "forwarded") == 0) {
-        *v = p != NULL ? p->forwarded : 0;
     } else if (strcmp(m, "gaps") == 0) {
-        *v = p != NULL                                        ? p->packet_gaps
-             : n->kind == SIM_NODE_DASH && s->gw.core != NULL ? s->gw.core->dash.packet_gaps
-                                                              : 0;
+        /* Datagrams from the Central that never reached the dashboard. */
+        *v = n->kind == SIM_NODE_DASH && n->dash != NULL ? atomic_load(&n->dash->packet_gaps) : 0;
     } else if (strcmp(m, "transport_errors") == 0) {
         *v = n->last_health.transport_error_count;
     } else if (strcmp(m, "sync_err_us") == 0) {
@@ -1872,8 +1706,9 @@ static bool log_metric(sim_t *s, const char *m, double *v)
     return true;
 }
 
-/* Group targets of expect: all (every node but the Central), can (the wired
- * sensor controllers), corners, wireless (corners and the dashboard). */
+/* Group targets of expect: all (every node but the Central), can (the CAN
+ * sensor nodes, corners included), corners (the four wheel hub nodes),
+ * wireless (the dashboard). */
 static int group_of(const char *target)
 {
     static const char *const groups[] = {"all", "can", "corners", "wireless"};
@@ -1894,7 +1729,7 @@ static bool in_group(const sim_t *s, int g, int i)
         case 1:
             return n->kind == SIM_NODE_CAN;
         case 2:
-            return n->kind == SIM_NODE_CORNER;
+            return n->id >= LBR_NODE_CORNER_FL && n->id <= LBR_NODE_CORNER_BR;
         default:
             return wireless(n);
     }
@@ -2143,7 +1978,7 @@ int sim_command(sim_t *s, const char *line)
             o->value = (float)atof(tok[2]);
         }
     } else if (strcmp(c, "wifi") == 0) {
-        /* wifi <node> up|down|loss <permille>: a corner's or the dashboard's link. */
+        /* wifi <node> up|down|loss <permille>: the dashboard's link. */
         int i =
             nt > 2 ? need_node(s, tok[1]) : err(s, "usage: wifi <node> up|down|loss <permille>");
         if (i < 0) {
@@ -2151,7 +1986,7 @@ int sim_command(sim_t *s, const char *line)
         }
         sim_node_t *n = &s->nodes[i];
         if (!wireless(n)) {
-            return err(s, "%s has no WiFi link (corner nodes and the dashboard do)", n->name);
+            return err(s, "%s has no WiFi link (only the dashboard does)", n->name);
         }
         if (strcmp(tok[2], "up") == 0 || strcmp(tok[2], "down") == 0) {
             n->wifi.up = tok[2][0] == 'u';

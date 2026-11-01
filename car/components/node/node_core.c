@@ -51,15 +51,6 @@ static void send_frame(lbr_node_core_t *c, const lbr_can_frame_t *f)
     /* A failed send is counted by the CAN controller (tx_dropped). */
 }
 
-bool lbr_node_core_send(lbr_node_core_t *c, const lbr_can_frame_t *f)
-{
-    if (!c->can_up || !c->hal.can_send(c->hal.ctx, f)) {
-        return false;
-    }
-    atomic_fetch_add(&c->published, 1);
-    return true;
-}
-
 static void log_sample(lbr_node_core_t *c, const lbr_sample_t *s)
 {
     if (c->log != NULL && lbr_log_append_sample(c->log, s) == 0) {
@@ -121,16 +112,6 @@ void lbr_node_core_on_log_event(lbr_node_core_t *c, uint16_t code, bool fault)
 static void acq_event(void *ctx, lbr_event_code_t code, uint16_t arg, bool fault)
 {
     lbr_node_core_event(ctx, code, arg, fault);
-}
-
-void lbr_node_core_set_app_flags(lbr_node_core_t *c, uint8_t flags)
-{
-    atomic_store(&c->app_flags, flags);
-}
-
-void lbr_node_core_count_loss(lbr_node_core_t *c, uint32_t n)
-{
-    atomic_fetch_add(&c->app_loss, n);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -336,7 +317,6 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h, uint8_t *er
         calibrated |= atomic_load(&c->slot[i].acq.calibrated) ? (1u << i) : 0u;
     }
     uint32_t all_sensors = (1u << n_acq) - 1u;
-    uint8_t  app_flags   = (uint8_t)atomic_load(&c->app_flags);
 
     uint16_t flags = 0;
     flags |= ts.synced ? LBR_HF_TIME_SYNCED : 0;
@@ -352,8 +332,7 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h, uint8_t *er
     } else if (!c->can_up) {
         state = LBR_NODE_FAULT;
     } else if (sensor_ok != all_sensors || !ts.synced || !cs.running ||
-               (cfg->local_log && !log_open) ||
-               (app_flags & (LBR_HB_ERR_LINK | LBR_HB_ERR_SENSOR))) {
+               (cfg->local_log && !log_open)) {
         state = LBR_NODE_DEGRADED;
     }
 
@@ -378,7 +357,7 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h, uint8_t *er
         .rejected_count =
             cs.rx_foreign + atomic_load(&c->sync_unmatched) + atomic_load(&c->out_of_range),
         .write_error_count     = ls.write_errors + ls.sync_errors,
-        .transport_error_count = cs.tx_failed + atomic_load(&c->app_loss),
+        .transport_error_count = cs.tx_failed,
         .can_tec               = cs.tec,
         .can_rec               = cs.rec,
         .can_bus_off_count     = cs.bus_off_count,
@@ -396,8 +375,7 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h, uint8_t *er
     /* Anything lost since the last heartbeat raises LOSS for this period. */
     uint32_t loss = h->overflow_count + h->can_tx_dropped + h->can_rx_dropped +
                     h->transport_error_count + ls.records_rejected_closed;
-    uint8_t  e    = app_flags;
-    e |= ts.synced ? 0u : LBR_HB_ERR_NOT_SYNCED;
+    uint8_t  e    = ts.synced ? 0u : LBR_HB_ERR_NOT_SYNCED;
     e |= (sensor_ok != all_sensors || (calibrated & all_sensors) != all_sensors) ? LBR_HB_ERR_SENSOR
                                                                                  : 0u;
     e |= (cs.tec >= 128 || cs.rec >= 128 || !cs.running || cs.bus_off_count != c->last_bus_off)

@@ -51,7 +51,7 @@ static void test_rejects(void)
 
     cfg.node_id = LBR_NODE_CENTRAL;
     CHECK(lbr_node_config_validate(&cfg, err, sizeof err) < 0);
-    cfg.node_id = LBR_NODE_CORNER_FL;
+    cfg.node_id = LBR_NODE_DASHBOARD;
     CHECK(lbr_node_config_validate(&cfg, err, sizeof err) < 0);
     cfg = base_config(acq);
 

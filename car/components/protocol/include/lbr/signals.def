@@ -30,8 +30,9 @@ LBR_SIGNAL(ENGINE_RPM,        0x0200, F32,    RPM,         "Engine speed")
 LBR_SIGNAL(CVT_RPM,           0x0201, F32,    RPM,         "CVT speed")
 LBR_SIGNAL(FUEL_LEVEL,        0x0202, F32,    PERCENT,     "Fuel level, percent of usable tank")
 
-/* 0x03xx IMUs (imu). FL/FR/BL/BR are sampled by the corner nodes and
- * forwarded by the IMU Controller; CHASSIS is wired to the IMU Controller. */
+/* 0x03xx IMUs. FL/FR/BL/BR are the suspension IMUs, each sampled and sent by
+ * its wheel hub node (corner_fl .. corner_br); CHASSIS is wired to the IMU
+ * Controller (imu). */
 LBR_SIGNAL(IMU_FL_ACCEL_X,    0x0300, F32,    M_PER_S2,    "FL suspension IMU acceleration, sensor X")
 LBR_SIGNAL(IMU_FL_ACCEL_Y,    0x0301, F32,    M_PER_S2,    "FL suspension IMU acceleration, sensor Y")
 LBR_SIGNAL(IMU_FL_ACCEL_Z,    0x0302, F32,    M_PER_S2,    "FL suspension IMU acceleration, sensor Z")
@@ -62,12 +63,6 @@ LBR_SIGNAL(IMU_CH_ACCEL_Z,    0x031A, F32,    M_PER_S2,    "Chassis IMU accelera
 LBR_SIGNAL(IMU_CH_GYRO_X,     0x031B, F32,    RAD_PER_S,   "Chassis IMU angular rate, sensor X")
 LBR_SIGNAL(IMU_CH_GYRO_Y,     0x031C, F32,    RAD_PER_S,   "Chassis IMU angular rate, sensor Y")
 LBR_SIGNAL(IMU_CH_GYRO_Z,     0x031D, F32,    RAD_PER_S,   "Chassis IMU angular rate, sensor Z")
-LBR_SIGNAL(CORNER_FL_BATTERY, 0x0320, F32,    PERCENT,     "FL corner node battery")
-LBR_SIGNAL(CORNER_FR_BATTERY, 0x0321, F32,    PERCENT,     "FR corner node battery")
-LBR_SIGNAL(CORNER_BL_BATTERY, 0x0322, F32,    PERCENT,     "BL corner node battery")
-LBR_SIGNAL(CORNER_BR_BATTERY, 0x0323, F32,    PERCENT,     "BR corner node battery")
-LBR_SIGNAL(CORNER_LINK,       0x0324, U32,    BITMASK,     "Corner WiFi link OK: bit0 FL, bit1 FR, bit2 BL, bit3 BR")
-LBR_SIGNAL(CORNER_SYNCED,     0x0325, U32,    BITMASK,     "Corner clock synced: bit0 FL, bit1 FR, bit2 BL, bit3 BR")
 
 /* 0x04xx Stress sensors (stress). Location of each in the session config. */
 LBR_SIGNAL(STRESS_1,          0x0400, F32,    MICROSTRAIN, "Stress sensor 1")

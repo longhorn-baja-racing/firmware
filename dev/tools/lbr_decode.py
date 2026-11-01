@@ -94,8 +94,8 @@ class Catalog:
             crc = crc32(s["name"].encode("ascii") + b"\0", crc)
         for f in self.raw["frames"]:
             cnt = 0xFF if f["counter_offset"] is None else f["counter_offset"]
-            crc = crc32(struct.pack("<HBBHBBB", f["id"], f["sender"], f["origin"], f["rate_hz"],
-                                    f["dlc"], cnt, len(f["fields"])), crc)
+            crc = crc32(struct.pack("<HBHBBB", f["id"], f["sender"], f["rate_hz"], f["dlc"], cnt,
+                                    len(f["fields"])), crc)
             for fd in f["fields"]:
                 crc = crc32(struct.pack("<HBBI", fd["signal"], fd["offset"],
                                         self.raw["encodings"].index(fd["enc"]),
@@ -199,47 +199,33 @@ def grid_index(counter, rx_us, period):
 
 class BusDecoder:
     """Which nodes' clocks are on the shared time base, from the heartbeats
-    and CORNER_STATUS seen so far (docs/can-ids.md)."""
+    and boot / lost / found events seen so far (docs/can-ids.md)."""
 
     NOT_SYNCED = 0x01
 
     def __init__(self, cat):
         self.cat = cat
         self.hb = {}
-        self.corner_synced = None
         self.central = central_id(cat)
-        self.imu = next(i for i, n in cat.nodes.items() if n == "imu")
-        self.corners = [next(i for i, n in cat.nodes.items() if n == "corner_" + c)
-                        for c in ("fl", "fr", "bl", "br")]
 
     def forget_sync(self, source, value):
         """A node that booted, or was lost or found again, is not synced
-        until its next heartbeat or CORNER_STATUS says so."""
+        until its next heartbeat says so."""
         name = self.cat.events.get(value & 0xFFFF)
         if name not in ("BOOT", "NODE_LOST", "NODE_FOUND"):
             return
         node = source if name == "BOOT" else value >> 16
-        if node in self.corners:
-            if self.corner_synced is not None:
-                self.corner_synced &= ~(1 << self.corners.index(node)) & 0xFF
-        elif 1 <= node <= 6:
+        if is_can_node(self.cat, node):
             self.hb[node] = self.NOT_SYNCED
 
-    def node_synced(self, node):
+    def synced(self, node):
         if node == self.central:
             return True
         return node in self.hb and not (self.hb[node] & self.NOT_SYNCED)
 
-    def synced(self, origin):
-        if origin in self.corners:
-            bit = 1 << self.corners.index(origin)
-            return (self.corner_synced is not None and bool(self.corner_synced & bit)
-                    and self.node_synced(self.imu))
-        return self.node_synced(origin)
-
 
 def is_can_node(cat, node):
-    return 1 <= node <= 6
+    return 1 <= node <= cat.ids["can_node_max"]
 
 
 def decode_field(cat, fd, data):
@@ -264,11 +250,11 @@ def decode_data_frame(cat, dec, f, t_us, data):
         k = t_us // period
     else:
         k = grid_index(struct.unpack_from("<H", data, f["counter_offset"])[0], t_us, period)
-    synced = dec.synced(f["origin"])
+    synced = dec.synced(f["sender"])
     out = []
     for fd in f["fields"]:
         type_name, valid, bits = decode_field(cat, fd, data)
-        out.append(cat.sample_dict(fd["signal"], f["origin"], type_name, valid, synced, infer,
+        out.append(cat.sample_dict(fd["signal"], f["sender"], type_name, valid, synced, infer,
                                    k & 0xFFFFFFFF, k * period, bits))
     return out
 
@@ -280,9 +266,9 @@ def can_sender(cat, can_id):
     if can_id in (ids["time_sync"], ids["time_follow_up"], ids["command"]):
         return central_id(cat)
     for base in (ids["event_base"], ids["heartbeat_base"]):
-        if base < can_id <= base + 6:
+        if base < can_id <= base + ids["can_node_max"]:
             return can_id - base
-    if can_id >= ids["health_base"]:
+    if can_id >= ids["health_base"] + 16:
         node, page = (can_id - ids["health_base"]) >> 4, can_id & 0xF
         return node if is_can_node(cat, node) and page < HEALTH_PAGES else 0
     f = cat.frames.get(can_id)
@@ -300,10 +286,10 @@ def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
     if ext or can_id > 0x7FF:
         return d  # not LBR traffic
     ids = cat.ids
-    if ids["heartbeat_base"] < can_id <= ids["heartbeat_base"] + 6 and dlc == 2:
+    if is_can_node(cat, can_id - ids["heartbeat_base"]) and dlc == 2:
         dec.hb[can_id - ids["heartbeat_base"]] = data[1]
         d["heartbeat"] = {"state": data[0], "err_flags": data[1]}
-    elif ids["event_base"] < can_id <= ids["event_base"] + 6 and dlc == 8:
+    elif is_can_node(cat, can_id - ids["event_base"]) and dlc == 8:
         fl = data[4]
         sig = cat.by_name["FAULT" if fl & 1 else "EVENT"]
         t_lo = data[5] | data[6] << 8 | data[7] << 16
@@ -314,9 +300,6 @@ def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
         dec.forget_sync(can_id - ids["event_base"], value)
     elif can_id in cat.frames and dlc == cat.frames[can_id]["dlc"]:
         d["samples"] = decode_data_frame(cat, dec, cat.frames[can_id], t_us, data)
-        for smp in d["samples"]:
-            if smp["name"] == "CORNER_SYNCED":
-                dec.corner_synced = int(smp["value_bits"], 16) if smp["valid"] else 0
     elif can_id == ids["time_sync"] and dlc == 8:
         d["time_sync"] = {"seq": data[4], "epoch": data[5] | data[6] << 8,
                           "ms": struct.unpack_from("<I", data)[0]}
@@ -324,7 +307,7 @@ def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
         d["time_follow_up"] = {"seq": data[0], "tx_us": struct.unpack_from("<Q", data)[0] >> 8}
     elif can_id == ids["command"] and dlc == 8:
         d["command"] = {"code": data[0], "args": data[1:8].hex()}
-    elif can_id >= ids["health_base"] and dlc == 8:
+    elif can_id >= ids["health_base"] + 16 and dlc == 8:
         node, page = (can_id - ids["health_base"]) >> 4, can_id & 0xF
         if is_can_node(cat, node) and page < HEALTH_PAGES:
             try:

@@ -37,8 +37,6 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/transport/packet.c"
     "${LBR_COMPONENTS}/transport/lora_policy.c"
     "${LBR_COMPONENTS}/wlink/wlink.c"
-    "${LBR_COMPONENTS}/wlink/corner_core.c"
-    "${LBR_COMPONENTS}/wlink/corner_rx.c"
     "${LBR_COMPONENTS}/wlink/dash_link.c"
     "${LBR_COMPONENTS}/wlink/dash_core.c"
     "${LBR_COMPONENTS}/gateway/gw_core.c"

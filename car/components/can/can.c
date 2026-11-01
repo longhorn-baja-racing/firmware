@@ -27,7 +27,7 @@ uint8_t lbr_can_sender(uint32_t id)
     if (id > LBR_CAN_ID_HEARTBEAT_BASE && id <= LBR_CAN_ID_HEARTBEAT_BASE + LBR_NODE_CAN_MAX) {
         return (uint8_t)(id - LBR_CAN_ID_HEARTBEAT_BASE);
     }
-    if (id >= LBR_CAN_ID_HEALTH_BASE) {
+    if (id >= LBR_CAN_ID_HEALTH_BASE + 16u) {
         uint32_t node = (id - LBR_CAN_ID_HEALTH_BASE) >> 4;
         uint32_t page = id & 0xFu;
         return (lbr_node_is_can((uint8_t)node) && page < LBR_HEALTH_PAGE_COUNT) ? (uint8_t)node
@@ -215,7 +215,7 @@ size_t lbr_can_decode_data(const lbr_can_frame_t *f, uint64_t rx_shared_us, bool
         lbr_sample_t *s = &out[n++];
         memset(s, 0, sizeof *s);
         lbr_can_field_decode(&d->fields[i], f->data, s);
-        s->source       = d->origin;
+        s->source       = d->sender;
         s->synced       = synced;
         s->seq_inferred = infer;
         s->seq          = (uint32_t)k;
@@ -377,7 +377,7 @@ bool lbr_can_encode_health_page(uint8_t node, const lbr_health_record_t *h, unsi
 
 int lbr_can_decode_health_page(const lbr_can_frame_t *f, lbr_health_record_t *h)
 {
-    if (f->id < LBR_CAN_ID_HEALTH_BASE || f->id > LBR_CAN_ID_MAX || f->dlc != 8) {
+    if (f->id < LBR_CAN_ID_HEALTH_BASE + 16u || f->id > LBR_CAN_ID_MAX || f->dlc != 8) {
         return -1;
     }
     uint32_t node = (f->id - LBR_CAN_ID_HEALTH_BASE) >> 4;
@@ -398,7 +398,7 @@ void lbr_bus_decoder_init(lbr_bus_decoder_t *d)
     memset(d, 0, sizeof *d);
 }
 
-static bool can_node_synced(const lbr_bus_decoder_t *d, uint8_t node)
+bool lbr_bus_decoder_synced(const lbr_bus_decoder_t *d, uint8_t node)
 {
     if (node == LBR_NODE_CENTRAL) {
         return true;
@@ -407,20 +407,10 @@ static bool can_node_synced(const lbr_bus_decoder_t *d, uint8_t node)
            (d->hb_flags[node] & LBR_HB_ERR_NOT_SYNCED) == 0;
 }
 
-bool lbr_bus_decoder_synced(const lbr_bus_decoder_t *d, uint8_t origin)
-{
-    int corner = lbr_node_corner_index(origin);
-    if (corner >= 0) {
-        return d->corner_seen && (d->corner_synced & (1u << corner)) != 0 &&
-               can_node_synced(d, LBR_NODE_IMU);
-    }
-    return can_node_synced(d, origin);
-}
-
-/* A node that booted, or was lost or found again, is not synced until it
- * says so again: its next heartbeat (CAN nodes) or CORNER_STATUS (corners).
- * Otherwise frames from a rebooted node, stamped on its fresh local clock,
- * would be labelled synced by the heartbeat it sent before the reboot. */
+/* A node that booted, or was lost or found again, is not synced until its
+ * next heartbeat says so. Otherwise frames from a rebooted node, stamped on
+ * its fresh local clock, would be labelled synced by the heartbeat it sent
+ * before the reboot. */
 static void forget_sync(lbr_bus_decoder_t *d, const lbr_sample_t *ev)
 {
     uint16_t code = (uint16_t)(ev->v.u32 & 0xFFFFu);
@@ -428,10 +418,7 @@ static void forget_sync(lbr_bus_decoder_t *d, const lbr_sample_t *ev)
     if (code != LBR_EVT_BOOT && code != LBR_EVT_NODE_LOST && code != LBR_EVT_NODE_FOUND) {
         return;
     }
-    int corner = lbr_node_corner_index(node);
-    if (corner >= 0) {
-        d->corner_synced &= (uint8_t)~(1u << corner);
-    } else if (lbr_node_is_can(node)) {
+    if (lbr_node_is_can(node)) {
         d->hb_seen[node]  = true;
         d->hb_flags[node] = LBR_HB_ERR_NOT_SYNCED;
     }
@@ -455,15 +442,7 @@ size_t lbr_bus_decode(lbr_bus_decoder_t *d, const lbr_can_frame_t *f, uint64_t r
     if (def == NULL) {
         return 0;
     }
-    size_t n =
-        lbr_can_decode_data(f, rx_shared_us, lbr_bus_decoder_synced(d, def->origin), out, cap);
-    for (size_t i = 0; i < n; i++) {
-        if (out[i].signal == LBR_SIG_CORNER_SYNCED) {
-            d->corner_seen   = true;
-            d->corner_synced = out[i].valid ? (uint8_t)out[i].v.u32 : 0u;
-        }
-    }
-    return n;
+    return lbr_can_decode_data(f, rx_shared_us, lbr_bus_decoder_synced(d, def->sender), out, cap);
 }
 
 /* ------------------------------------------------------------------------ */

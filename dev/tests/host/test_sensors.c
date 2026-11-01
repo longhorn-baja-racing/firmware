@@ -102,7 +102,7 @@ static void test_io_parse_valid(void)
     CHECK(t[1].u.adc.ntc);
 
     /* Button bitmask on a u32 signal. */
-    static const lbr_signal_id_t btn[] = {LBR_SIG_CORNER_LINK};
+    static const lbr_signal_id_t btn[] = {LBR_SIG_GPS_SATELLITES};
     lbr_io_chan_t                b;
     CHECK_EQ_I(lbr_io_parse("din gpio=4,5,18,19", btn, 1, &b, &lbr_io_chip_esp32, err, sizeof err),
                0);
@@ -158,7 +158,7 @@ static void test_io_parse_rejects(void)
  * and dashboard nodes): ADC1 is GPIO 1..6 and 15..22 belong to flash. */
 static void test_io_parse_chip_rules(void)
 {
-    static const lbr_signal_id_t batt[] = {LBR_SIG_CORNER_FL_BATTERY};
+    static const lbr_signal_id_t batt[] = {LBR_SIG_DASH_BATTERY};
     lbr_io_chan_t                c;
     char                         err[96] = "";
     CHECK_EQ_I(lbr_io_parse("adc gpio=3 mv0=0 v0=0 mv1=3000 v1=100", batt, 1, &c,

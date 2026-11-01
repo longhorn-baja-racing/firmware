@@ -4,33 +4,29 @@
 #include "driver_input_plan.h"
 #include "imu_plan.h"
 #include "lbr/can.h"
-#include "lbr/corner_core.h"
 #include "lbr/frames.h"
 #include "lbr/nodes.h"
-#include "lbr/wlink.h"
 #include "lbr_test.h"
 #include "powertrain_plan.h"
 #include "stress_plan.h"
 #include "temperature_plan.h"
 
 /* Defaults the firmware ships with (CONFIG_LBR_CAN_BITRATE and
- * CONFIG_LBR_CAN_TX_QUEUE_LEN, raised on the IMU Controller). Keep in sync
- * with car/components/can/Kconfig and car/nodes/imu/sdkconfig.defaults. */
-#define BITRATE          500000u
-#define TX_QUEUE_LEN     64u
-#define IMU_TX_QUEUE_LEN 127u
+ * CONFIG_LBR_CAN_TX_QUEUE_LEN). Keep in sync with car/components/can/Kconfig. */
+#define BITRATE      500000u
+#define TX_QUEUE_LEN 64u
 
-/* The six wired CAN controllers (DAQ-WIRING.md "CAN node 1..6"). */
+/* The CAN nodes (DAQ-WIRING.md "CAN node 1..10"). */
 static const lbr_node_plan_t *const k_can_plans[] = {
-    &lbr_plan_imu,         &lbr_plan_powertrain, &lbr_plan_driver_input,
-    &lbr_plan_temperature, &lbr_plan_stress,     &lbr_plan_central,
+    &lbr_plan_imu,       &lbr_plan_powertrain, &lbr_plan_driver_input, &lbr_plan_temperature,
+    &lbr_plan_stress,    &lbr_plan_central,    &lbr_plan_corner[0],    &lbr_plan_corner[1],
+    &lbr_plan_corner[2], &lbr_plan_corner[3],
 };
 #define N_CAN (sizeof k_can_plans / sizeof k_can_plans[0])
 
-/* The wireless nodes. */
+/* The nodes off the bus. */
 static const lbr_node_plan_t *const k_wireless_plans[] = {
-    &lbr_plan_dashboard, &lbr_plan_corner[0], &lbr_plan_corner[1],
-    &lbr_plan_corner[2], &lbr_plan_corner[3],
+    &lbr_plan_dashboard,
 };
 #define N_WIRELESS (sizeof k_wireless_plans / sizeof k_wireless_plans[0])
 
@@ -107,7 +103,6 @@ static void test_frame_table(void)
         CHECK(i == 0 || lbr_frame_at(i - 1)->can_id < d->can_id); /* sorted, unique */
         CHECK(lbr_frame_def(d->can_id) == d);
         CHECK(lbr_node_is_can(d->sender));
-        CHECK(strcmp(lbr_node_name(d->origin), "?") != 0);
         CHECK(d->rate_hz > 0 && 1000000u % d->rate_hz == 0);
         CHECK(d->dlc >= 1 && d->dlc <= 8);
         CHECK(d->n_fields >= 1 && d->n_fields <= LBR_FRAME_MAX_FIELDS);
@@ -152,8 +147,7 @@ static void test_frame_table(void)
     }
 }
 
-/* Each frame is filled by one plan: its sender's (own samples) or its
- * origin's (forwarded corner samples). */
+/* Each frame is filled by its sender's plan. */
 static void test_every_frame_has_a_producer(void)
 {
     for (size_t i = 0; i < lbr_frame_count(); i++) {
@@ -167,7 +161,7 @@ static void test_every_frame_has_a_producer(void)
             plans[N_CAN + k] = k_wireless_plans[k];
         }
         for (size_t p = 0; p < N_CAN + N_WIRELESS && !found; p++) {
-            if (plans[p]->node_id != d->origin) {
+            if (plans[p]->node_id != d->sender) {
                 continue;
             }
             for (size_t s = 0; s < plans[p]->n_slots; s++) {
@@ -221,9 +215,7 @@ static void test_local_logs_are_targeted(void)
  * Every slot of a node can come due in the same instant as its heartbeat
  * (their periods divide one second), and all of those frames are queued
  * before the first one is on the wire. The TX queue must hold that burst
- * plus a couple of events, or frames are dropped every second. The IMU
- * Controller can also receive all four corners' datagrams at once, each
- * carrying up to two batches of new samples.
+ * plus a couple of events, or frames are dropped every second.
  */
 static void test_burst_fits_tx_queue(void)
 {
@@ -232,16 +224,7 @@ static void test_burst_fits_tx_queue(void)
         size_t  burst = 1u + LBR_HEALTH_PAGE_COUNT + 2u; /* heartbeat, pages, EVENT/FAULT */
         size_t  cap   = TX_QUEUE_LEN;
         for (size_t f = 0; f < lbr_frame_count(); f++) {
-            const lbr_frame_def_t *d = lbr_frame_at(f);
-            if (d->sender == node && d->origin == node) {
-                burst++;
-            }
-        }
-        if (node == LBR_NODE_IMU) {
-            const lbr_frame_def_t *fr[4];
-            size_t                 per = lbr_wlink_origin_frames(LBR_NODE_CORNER_FL, fr, 4, NULL);
-            burst += 4u * per * 2u * LBR_CORNER_DEFAULT_BATCH;
-            cap = IMU_TX_QUEUE_LEN;
+            burst += lbr_frame_at(f)->sender == node ? 1u : 0u;
         }
         if (node == LBR_NODE_CENTRAL) {
             burst += 2u + 1u; /* time sync pair, command */

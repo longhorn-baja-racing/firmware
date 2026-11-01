@@ -39,27 +39,29 @@ static void test_ids_stable(void)
     CHECK_EQ_U(LBR_SIG_FUEL_LEVEL, 0x0202);
     CHECK_EQ_U(LBR_SIG_IMU_FL_ACCEL_X, 0x0300);
     CHECK_EQ_U(LBR_SIG_IMU_CH_GYRO_Z, 0x031D);
-    CHECK_EQ_U(LBR_SIG_CORNER_SYNCED, 0x0325);
+
     CHECK_EQ_U(LBR_SIG_STRESS_8, 0x0407);
     CHECK_EQ_U(LBR_SIG_TEMP_CVT, 0x0504);
     CHECK_EQ_U(LBR_SIG_GPS_UTC, 0x0608);
     CHECK_EQ_U(LBR_SIG_DASH_LINK, 0x0611);
     CHECK_EQ_U(LBR_SIG_EVENT, 0x0700);
     CHECK_EQ_U(LBR_SIG_FAULT, 0x0701);
-    /* Node ids 1..6 are the DAQ-WIRING "CAN node N" numbers. */
+    /* Node ids 1..10 are the DAQ-WIRING "CAN node N" numbers. */
     CHECK_EQ_U(LBR_NODE_IMU, 0x01);
     CHECK_EQ_U(LBR_NODE_POWERTRAIN, 0x02);
     CHECK_EQ_U(LBR_NODE_DRIVER_INPUT, 0x03);
     CHECK_EQ_U(LBR_NODE_TEMPERATURE, 0x04);
     CHECK_EQ_U(LBR_NODE_STRESS, 0x05);
     CHECK_EQ_U(LBR_NODE_CENTRAL, 0x06);
-    CHECK_EQ_U(LBR_NODE_DASHBOARD, 0x07);
-    CHECK_EQ_U(LBR_NODE_CORNER_BR, 0x0B);
+    CHECK_EQ_U(LBR_NODE_CORNER_FL, 0x07);
+    CHECK_EQ_U(LBR_NODE_CORNER_FR, 0x08);
+    CHECK_EQ_U(LBR_NODE_CORNER_BL, 0x09);
+    CHECK_EQ_U(LBR_NODE_CORNER_BR, 0x0A);
+    CHECK_EQ_U(LBR_NODE_DASHBOARD, 0x0B);
     CHECK(strcmp(lbr_node_name(LBR_NODE_CENTRAL), "central") == 0);
     CHECK(strcmp(lbr_node_name(LBR_NODE_CORNER_BL), "corner_bl") == 0);
-    CHECK(lbr_node_is_can(LBR_NODE_CENTRAL) && !lbr_node_is_can(LBR_NODE_DASHBOARD));
-    CHECK_EQ_I(lbr_node_corner_index(LBR_NODE_CORNER_FR), 1);
-    CHECK_EQ_I(lbr_node_corner_index(LBR_NODE_IMU), -1);
+    CHECK(lbr_node_is_can(LBR_NODE_CENTRAL) && lbr_node_is_can(LBR_NODE_CORNER_BR));
+    CHECK(!lbr_node_is_can(LBR_NODE_DASHBOARD) && !lbr_node_is_can(LBR_NODE_INVALID));
     CHECK(strcmp(lbr_node_name(0x77), "?") == 0);
 }
 

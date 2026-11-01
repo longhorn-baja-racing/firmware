@@ -18,18 +18,18 @@
 
 #define NO_CNT LBR_FRAME_NO_COUNTER
 
-/* Corner/chassis IMU pair: accel X/Y/Z then gyro X/Y/Z, counter in bytes 6..7. */
-#define IMU_ACCEL(id_, name_, origin_, p_)                                                         \
+/* IMU pair of node `node_`: accel X/Y/Z then gyro X/Y/Z, counter in bytes 6..7. */
+#define IMU_ACCEL(id_, name_, node_, p_)                                                           \
     {                                                                                              \
-        .can_id = (id_), .name = (name_), .sender = LBR_NODE_IMU, .origin = (origin_),             \
-        .rate_hz = 100, .dlc = 8, .counter_offset = 6, .n_fields = 3,                              \
+        .can_id = (id_), .name = (name_), .sender = (node_), .rate_hz = 100, .dlc = 8,             \
+        .counter_offset = 6, .n_fields = 3,                                                        \
         .fields = {F(p_##_ACCEL_X, 0, I16, 0.01f), F(p_##_ACCEL_Y, 2, I16, 0.01f),                 \
                    F(p_##_ACCEL_Z, 4, I16, 0.01f)}                                                 \
     }
-#define IMU_GYRO(id_, name_, origin_, p_)                                                          \
+#define IMU_GYRO(id_, name_, node_, p_)                                                            \
     {                                                                                              \
-        .can_id = (id_), .name = (name_), .sender = LBR_NODE_IMU, .origin = (origin_),             \
-        .rate_hz = 100, .dlc = 8, .counter_offset = 6, .n_fields = 3,                              \
+        .can_id = (id_), .name = (name_), .sender = (node_), .rate_hz = 100, .dlc = 8,             \
+        .counter_offset = 6, .n_fields = 3,                                                        \
         .fields = {F(p_##_GYRO_X, 0, I16, 0.001f), F(p_##_GYRO_Y, 2, I16, 0.001f),                 \
                    F(p_##_GYRO_Z, 4, I16, 0.001f)}                                                 \
     }
@@ -39,7 +39,6 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x100,
      .name           = "DRIVER_INPUTS",
      .sender         = LBR_NODE_DRIVER_INPUT,
-     .origin         = LBR_NODE_DRIVER_INPUT,
      .rate_hz        = 100,
      .dlc            = 8,
      .counter_offset = 6,
@@ -51,7 +50,6 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x200,
      .name           = "POWERTRAIN_SPEEDS",
      .sender         = LBR_NODE_POWERTRAIN,
-     .origin         = LBR_NODE_POWERTRAIN,
      .rate_hz        = 100,
      .dlc            = 8,
      .counter_offset = 6,
@@ -60,14 +58,14 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x201,
      .name           = "FUEL_LEVEL",
      .sender         = LBR_NODE_POWERTRAIN,
-     .origin         = LBR_NODE_POWERTRAIN,
      .rate_hz        = 1,
      .dlc            = 2,
      .counter_offset = NO_CNT,
      .n_fields       = 1,
      .fields         = {F(FUEL_LEVEL, 0, I16, 0.1f)}},
 
-    /* IMUs: accel 0.01 m/s^2 (+/-327 m/s^2), gyro 0.001 rad/s (+/-32.7 rad/s). */
+    /* IMUs: accel 0.01 m/s^2 (+/-327 m/s^2), gyro 0.001 rad/s (+/-32.7 rad/s). Each wheel hub
+     * node sends its own suspension IMU; the IMU Controller sends the chassis IMU. */
     IMU_ACCEL(0x300, "IMU_FL_ACCEL", LBR_NODE_CORNER_FL, IMU_FL),
     IMU_GYRO(0x301, "IMU_FL_GYRO", LBR_NODE_CORNER_FL, IMU_FL),
     IMU_ACCEL(0x302, "IMU_FR_ACCEL", LBR_NODE_CORNER_FR, IMU_FR),
@@ -78,23 +76,10 @@ static const lbr_frame_def_t s_frames[] = {
     IMU_GYRO(0x307, "IMU_BR_GYRO", LBR_NODE_CORNER_BR, IMU_BR),
     IMU_ACCEL(0x308, "IMU_CH_ACCEL", LBR_NODE_IMU, IMU_CH),
     IMU_GYRO(0x309, "IMU_CH_GYRO", LBR_NODE_IMU, IMU_CH),
-    {.can_id         = 0x30A,
-     .name           = "CORNER_STATUS",
-     .sender         = LBR_NODE_IMU,
-     .origin         = LBR_NODE_IMU,
-     .rate_hz        = 1,
-     .dlc            = 6,
-     .counter_offset = NO_CNT,
-     .n_fields       = 6,
-     .fields         = {F(CORNER_FL_BATTERY, 0, U8, 1.0f), F(CORNER_FR_BATTERY, 1, U8, 1.0f),
-                        F(CORNER_BL_BATTERY, 2, U8, 1.0f), F(CORNER_BR_BATTERY, 3, U8, 1.0f),
-                        F(CORNER_LINK, 4, U8, 1.0f), F(CORNER_SYNCED, 5, U8, 1.0f)}},
-
     /* Stress: whole microstrain (scaling TBD). */
     {.can_id         = 0x400,
      .name           = "STRESS_1_4",
      .sender         = LBR_NODE_STRESS,
-     .origin         = LBR_NODE_STRESS,
      .rate_hz        = 100,
      .dlc            = 8,
      .counter_offset = NO_CNT,
@@ -104,7 +89,6 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x401,
      .name           = "STRESS_5_8",
      .sender         = LBR_NODE_STRESS,
-     .origin         = LBR_NODE_STRESS,
      .rate_hz        = 100,
      .dlc            = 8,
      .counter_offset = NO_CNT,
@@ -116,7 +100,6 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x500,
      .name           = "BRAKE_TEMPS",
      .sender         = LBR_NODE_TEMPERATURE,
-     .origin         = LBR_NODE_TEMPERATURE,
      .rate_hz        = 10,
      .dlc            = 8,
      .counter_offset = NO_CNT,
@@ -126,7 +109,6 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x501,
      .name           = "CVT_TEMP",
      .sender         = LBR_NODE_TEMPERATURE,
-     .origin         = LBR_NODE_TEMPERATURE,
      .rate_hz        = 10,
      .dlc            = 2,
      .counter_offset = NO_CNT,
@@ -137,7 +119,6 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x600,
      .name           = "GPS_POSITION",
      .sender         = LBR_NODE_CENTRAL,
-     .origin         = LBR_NODE_CENTRAL,
      .rate_hz        = 10,
      .dlc            = 8,
      .counter_offset = NO_CNT,
@@ -146,7 +127,6 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x601,
      .name           = "GPS_MOTION",
      .sender         = LBR_NODE_CENTRAL,
-     .origin         = LBR_NODE_CENTRAL,
      .rate_hz        = 10,
      .dlc            = 8,
      .counter_offset = 6,
@@ -156,7 +136,6 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x602,
      .name           = "GPS_STATUS",
      .sender         = LBR_NODE_CENTRAL,
-     .origin         = LBR_NODE_CENTRAL,
      .rate_hz        = 10,
      .dlc            = 8,
      .counter_offset = NO_CNT,
@@ -166,7 +145,6 @@ static const lbr_frame_def_t s_frames[] = {
     {.can_id         = 0x60A,
      .name           = "DASH_STATUS",
      .sender         = LBR_NODE_CENTRAL,
-     .origin         = LBR_NODE_CENTRAL,
      .rate_hz        = 1,
      .dlc            = 2,
      .counter_offset = NO_CNT,
@@ -248,14 +226,13 @@ uint32_t lbr_frames_hash(uint32_t crc)
 {
     for (size_t i = 0; i < FRAME_COUNT; i++) {
         const lbr_frame_def_t *d = &s_frames[i];
-        uint8_t                rec[9];
+        uint8_t                rec[8];
         lbr_put_u16(rec, d->can_id);
         rec[2] = d->sender;
-        rec[3] = d->origin;
-        lbr_put_u16(rec + 4, d->rate_hz);
-        rec[6] = d->dlc;
-        rec[7] = d->counter_offset;
-        rec[8] = d->n_fields;
+        lbr_put_u16(rec + 3, d->rate_hz);
+        rec[5] = d->dlc;
+        rec[6] = d->counter_offset;
+        rec[7] = d->n_fields;
         crc    = lbr_crc32_update(crc, rec, sizeof rec);
         for (size_t f = 0; f < d->n_fields; f++) {
             uint8_t fr[8];

@@ -135,11 +135,6 @@ static const lbr_node_hal_t k_hal = {
     .log             = hal_log,
 };
 
-struct lbr_node_core *lbr_node_running_core(void)
-{
-    return s_started ? &s_core : NULL;
-}
-
 void lbr_node_emit_event(lbr_event_code_t code, uint16_t arg, bool fault)
 {
     if (!s_started) {
@@ -259,9 +254,6 @@ void lbr_node_run(const lbr_node_config_t *cfg)
 
     lbr_node_core_start(&s_core, can == LBR_CAN_OK, can == LBR_CAN_ERR_PINS_UNSET, log);
     s_started = true;
-    if (cfg->on_started != NULL) {
-        cfg->on_started(cfg->on_started_ctx);
-    }
 
     if (valid) {
         for (size_t i = 0; i < cfg->n_acq && i < LBR_NODE_MAX_SENSORS; i++) {

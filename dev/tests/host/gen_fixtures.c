@@ -142,7 +142,7 @@ static void json_health(buf_t *b, const lbr_health_record_t *h)
 }
 
 /* Decode a frame as the Central's live views do. `dec` carries the sync
- * state across a capture (heartbeats, CORNER_STATUS), as a reader must. */
+ * state across a capture (heartbeats, boot events), as a reader must. */
 static void json_can_frame(buf_t *b, lbr_bus_decoder_t *dec, uint64_t t_us, uint8_t flags,
                            const lbr_can_frame_t *f)
 {
@@ -247,8 +247,7 @@ static void gen_catalog(buf_t *j)
     jf(j, "  ],\n  \"frames\": [\n");
     for (size_t i = 0; i < lbr_frame_count(); i++) {
         const lbr_frame_def_t *d = lbr_frame_at(i);
-        jf(j, "    {\"id\": %u, \"name\": \"%s\", \"sender\": %u, \"origin\": %u, ", d->can_id,
-           d->name, d->sender, d->origin);
+        jf(j, "    {\"id\": %u, \"name\": \"%s\", \"sender\": %u, ", d->can_id, d->name, d->sender);
         jf(j, "\"rate_hz\": %u, \"dlc\": %u, \"counter_offset\": ", d->rate_hz, d->dlc);
         if (d->counter_offset == LBR_FRAME_NO_COUNTER) {
             jf(j, "null");
@@ -269,6 +268,7 @@ static void gen_catalog(buf_t *j)
        LBR_CAN_ID_TIME_SYNC, LBR_CAN_ID_TIME_FOLLOW_UP, LBR_CAN_ID_COMMAND);
     jf(j, "\"event_base\": %u, \"heartbeat_base\": %u, \"health_base\": %u, ",
        LBR_CAN_ID_EVENT_BASE, LBR_CAN_ID_HEARTBEAT_BASE, LBR_CAN_ID_HEALTH_BASE);
+    jf(j, "\"can_node_max\": %u, ", LBR_NODE_CAN_MAX);
     jf(j, "\"time_sync_hz\": %u, \"bitrate\": 500000},\n", LBR_TIME_SYNC_HZ);
     jf(j, "  \"encodings\": [");
     for (unsigned e = 0; e < LBR_ENC_COUNT_; e++) {
@@ -399,8 +399,10 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     /* Heartbeats first: they say which clocks are synced. */
     lbr_can_encode_heartbeat(LBR_NODE_DRIVER_INPUT, LBR_NODE_RUN, 0, &f[n]);
     t[n] = base, flags[n++] = 0;
-    lbr_can_encode_heartbeat(LBR_NODE_IMU, LBR_NODE_DEGRADED, LBR_HB_ERR_LINK, &f[n]);
+    lbr_can_encode_heartbeat(LBR_NODE_CORNER_FL, LBR_NODE_RUN, 0, &f[n]);
     t[n] = base + 100, flags[n++] = 0;
+    lbr_can_encode_heartbeat(LBR_NODE_CORNER_BR, LBR_NODE_DEGRADED, LBR_HB_ERR_SENSOR, &f[n]);
+    t[n] = base + 150, flags[n++] = 0;
     lbr_can_encode_heartbeat(LBR_NODE_STRESS, LBR_NODE_DEGRADED,
                              LBR_HB_ERR_NOT_SYNCED | LBR_HB_ERR_SENSOR, &f[n]);
     t[n] = base + 200, flags[n++] = 0;
@@ -421,7 +423,7 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     lbr_can_encode_data(lbr_frame_def(0x201), v, k / 100u, &f[n]);
     t[n] = k * 10000u + 800, flags[n++] = 0;
 
-    /* A forwarded corner sample whose BR gyro Z did not fit its field. */
+    /* Wheel hub IMU samples; the BR gyro Z did not fit its field. */
     v[0] = fv(LBR_SIG_IMU_FL_ACCEL_X, 1.25f);
     v[1] = fv(LBR_SIG_IMU_FL_ACCEL_Y, -0.5f);
     v[2] = fv(LBR_SIG_IMU_FL_ACCEL_Z, 9.81f);
@@ -433,16 +435,12 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     lbr_can_encode_data(lbr_frame_def(0x307), v, k - 3, &f[n]);
     t[n] = k * 10000u + 1000, flags[n++] = 0;
 
-    /* Corner status: FL synced, BL down. */
-    v[0] = fv(LBR_SIG_CORNER_FL_BATTERY, 81.0f);
-    v[1] = fv(LBR_SIG_CORNER_FR_BATTERY, 77.0f);
-    lbr_sample_set_unavailable(&v[2], LBR_UNAVAIL_NO_DATA);
-    v[2].signal = LBR_SIG_CORNER_BL_BATTERY;
-    v[2].type   = LBR_VAL_F32;
-    v[3]        = fv(LBR_SIG_CORNER_BR_BATTERY, 79.0f);
-    v[4]        = uv(LBR_SIG_CORNER_LINK, 0x0B);
-    v[5]        = uv(LBR_SIG_CORNER_SYNCED, 0x01);
-    lbr_can_encode_data(lbr_frame_def(0x30A), v, k / 100u, &f[n]);
+    /* The FL node reboots: its samples are not synced until its next
+     * heartbeat says so. */
+    lbr_sample_t boot = mk(LBR_SIG_EVENT, LBR_NODE_CORNER_FL, 0, 15000);
+    boot.synced       = false;
+    boot.v.u32        = lbr_event_value(LBR_EVT_BOOT, LBR_RESET_BROWNOUT);
+    lbr_can_encode_event(&boot, &f[n]);
     t[n] = k * 10000u + 1200, flags[n++] = 0;
     v[0] = fv(LBR_SIG_IMU_FL_ACCEL_X, 1.5f);
     v[1] = fv(LBR_SIG_IMU_FL_ACCEL_Y, -0.25f);

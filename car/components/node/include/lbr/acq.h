@@ -11,7 +11,7 @@
 /*
  * Acquisition engine for one slot (pure; host-tested). Shared by every node
  * that samples sensors: the CAN sensor nodes (node_core.c), the Central's
- * GPS (gw_core.c), the corner nodes and the dashboard (wlink).
+ * GPS (gw_core.c), and the dashboard (wlink).
  *
  * Sampling is locked to the shared time grid: sample k of a slot is due at
  * shared time k * period_us, and the platform wakes the slot at each grid

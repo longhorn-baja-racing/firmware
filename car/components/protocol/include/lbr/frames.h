@@ -48,11 +48,10 @@ typedef struct {
 #define LBR_FRAME_NO_COUNTER 0xFFu
 
 typedef struct {
-    uint16_t        can_id; /* 11-bit standard id; lower wins arbitration */
     const char     *name;
-    uint8_t         sender;         /* CAN node that transmits it (lbr_node_id_t) */
-    uint8_t         origin;         /* node that takes the samples (a corner for forwarded IMU) */
+    uint16_t        can_id;         /* 11-bit standard id; lower wins arbitration */
     uint16_t        rate_hz;        /* stream rate; 1000000 is a multiple of it */
+    uint8_t         sender;         /* CAN node that samples and transmits it (lbr_node_id_t) */
     uint8_t         dlc;            /* payload bytes */
     uint8_t         counter_offset; /* uint16 sample counter, or LBR_FRAME_NO_COUNTER */
     uint8_t         n_fields;

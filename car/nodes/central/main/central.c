@@ -405,7 +405,7 @@ static void build_config_text(void)
                      (unsigned long)lbr_catalog_hash(), (unsigned long)can.bitrate,
                      LBR_TIME_SYNC_HZ, CONFIG_LBR_LORA_FREQ_HZ, CONFIG_LBR_LORA_SF,
                      CONFIG_LBR_LORA_BW_KHZ, CONFIG_LBR_LORA_CR + 4, CONFIG_LBR_LORA_TX_DBM);
-    for (uint8_t id = LBR_NODE_IMU; id <= LBR_NODE_CORNER_BR && n > 0; id++) {
+    for (uint8_t id = LBR_NODE_IMU; id <= LBR_NODE_LAST && n > 0; id++) {
         n += snprintf(s_config_text + n, sizeof s_config_text - (size_t)n, "%s%s",
                       id == LBR_NODE_IMU ? "" : ",", lbr_node_name(id));
     }
