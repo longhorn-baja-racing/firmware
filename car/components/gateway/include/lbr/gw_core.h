@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include "lbr/can.h"
-#include "lbr/dash_link.h"
+#include "lbr/cockpit_link.h"
 #include "lbr/gw_config.h"
 #include "lbr/health.h"
 #include "lbr/logging.h"
@@ -22,20 +22,20 @@
  *
  * Every frame on the bus (and every frame the Central sends) goes to the
  * authoritative log first, then to the USB/WiFi stream, the LoRa policy, and
- * the cockpit dashboard's view. The Central is the time master, tracks node
- * presence and health, samples its own GPS (and the dashboard link state)
- * into ordinary data frames, and pushes display data to the dashboard over
+ * the cockpit display's view. The Central is the time master, tracks node
+ * presence and health, samples its own GPS (and the cockpit link state)
+ * into ordinary data frames, and pushes display data to the cockpit over
  * WiFi. The hardware is reached only through lbr_gw_hal_t, so the same code
  * runs on the ESP32-C5 (car/nodes/central) and in the simulator (dev/sim).
  *
  * Threading: on target, CAN RX, time sync, each acquisition slot, stream
- * flush, LoRa, the dashboard link, and the heartbeat are separate tasks.
+ * flush, LoRa, the cockpit link, and the heartbeat are separate tasks.
  * Shared state is guarded by hal.lock with one of the lock ids below;
  * counters are atomic.
  */
 
 typedef enum {
-    LBR_GW_LOCK_STATE = 0, /* node table, decoder, LoRa policy, dashboard link, last heartbeat */
+    LBR_GW_LOCK_STATE = 0, /* node table, decoder, LoRa policy, cockpit link, last heartbeat */
     LBR_GW_LOCK_STREAM,    /* USB/WiFi stream batcher */
     LBR_GW_LOCK_EVENT,     /* event sequence */
     LBR_GW_LOCK_COUNT_
@@ -75,7 +75,7 @@ typedef struct {
     bool               config_valid; /* stored Central config passed validation */
     const char        *config_text;  /* session config; must outlive the core */
 
-    /* The Central's own acquisition slots (GPS, dashboard status), from its
+    /* The Central's own acquisition slots (GPS, cockpit status), from its
      * plan; their sensors must outlive the core. May be empty. */
     const lbr_acq_t *acq;
     size_t           n_acq;
@@ -87,11 +87,11 @@ typedef struct {
     lbr_transport_t *wifi;
     lbr_transport_t *lora;
     lbr_transport_t *ble;
-    lbr_transport_t *dash; /* datagrams to the cockpit dashboard */
+    lbr_transport_t *cockpit; /* datagrams to the cockpit display */
 } lbr_gw_links_t;
 
 #define LBR_GW_HEALTH_PERIOD_MS 1000u
-#define LBR_GW_DASH_STALE_US    2000000u
+#define LBR_GW_COCKPIT_STALE_US 2000000u
 
 typedef struct {
     lbr_gw_hal_t    hal;
@@ -110,8 +110,8 @@ typedef struct {
     lbr_node_table_t    nodes;
     lbr_bus_decoder_t   decoder;
     lbr_lora_policy_t   lora_policy;
-    lbr_value_table_t   dash_values;
-    lbr_dash_link_t     dash;
+    lbr_value_table_t   cockpit_values;
+    lbr_cockpit_link_t  cockpit;
     lbr_health_record_t last_health;
 
     /* LBR_GW_LOCK_STREAM */
@@ -137,7 +137,7 @@ typedef struct {
     atomic_uint   sync_tx_fail;
     atomic_uint   overruns;
     atomic_uint   out_of_range;
-    atomic_uint   dash_sent;
+    atomic_uint   cockpit_sent;
     atomic_ullong last_sample_us;
 } lbr_gw_core_t;
 
@@ -160,7 +160,7 @@ void lbr_gw_core_on_rx(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t rx_l
 uint8_t lbr_gw_core_sync_send(lbr_gw_core_t *c);
 void    lbr_gw_core_sync_done(lbr_gw_core_t *c, bool sent, uint64_t tx_local_us);
 
-/* Own acquisition slot i (GPS, dashboard status): as for sensor nodes. */
+/* Own acquisition slot i (GPS, cockpit status): as for sensor nodes. */
 void     lbr_gw_core_slot_start(lbr_gw_core_t *c, size_t i);
 void     lbr_gw_core_slot_tick(lbr_gw_core_t *c, size_t i);
 uint64_t lbr_gw_core_slot_next_due(lbr_gw_core_t *c, size_t i);
@@ -171,14 +171,14 @@ void lbr_gw_core_stream_flush(lbr_gw_core_t *c);
 /* Every lora_period_ms: build and send one LoRa packet if the radio is ready. */
 void lbr_gw_core_lora_tick(lbr_gw_core_t *c);
 
-/* Every dash_period_ms: link timeout and one display datagram. */
-void lbr_gw_core_dash_tick(lbr_gw_core_t *c);
+/* Every cockpit_period_ms: link timeout and one display datagram. */
+void lbr_gw_core_cockpit_tick(lbr_gw_core_t *c);
 
-/* A datagram from the cockpit dashboard, with its local receive time. */
-void lbr_gw_core_on_dash_packet(lbr_gw_core_t *c, const uint8_t *buf, size_t len,
-                                uint64_t rx_local_us);
+/* A datagram from the cockpit display, with its local receive time. */
+void lbr_gw_core_on_cockpit_packet(lbr_gw_core_t *c, const uint8_t *buf, size_t len,
+                                   uint64_t rx_local_us);
 
-/* The DASH_STATUS driver needs the state lock; these take it. */
+/* The COCKPIT_STATUS driver needs the state lock; these take it. */
 void lbr_gw_core_lock_state(void *core);
 void lbr_gw_core_unlock_state(void *core);
 

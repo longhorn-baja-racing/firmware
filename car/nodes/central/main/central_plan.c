@@ -4,7 +4,7 @@
 
 /*
  * central node, the Central Controller (ESP32-C5, CAN node 6): logger, time
- * master, LoRa telemetry, the dashboard's WiFi link, and the GPS receiver
+ * master, LoRa telemetry, the cockpit's WiFi link, and the GPS receiver
  * (DAQ-WIRING.md section 4). These slots are its own measurements; they go
  * on CAN in its frames (0x600..0x60A) and so into the log like any other.
  *
@@ -16,7 +16,7 @@ static const lbr_signal_id_t k_gps[] = {
     LBR_SIG_GPS_SPEED,      LBR_SIG_GPS_COURSE,    LBR_SIG_GPS_FIX,
     LBR_SIG_GPS_SATELLITES, LBR_SIG_GPS_HDOP,      LBR_SIG_GPS_UTC,
 };
-static const lbr_signal_id_t k_dash_status[] = {LBR_SIG_DASH_BATTERY, LBR_SIG_DASH_LINK};
+static const lbr_signal_id_t k_cockpit_status[] = {LBR_SIG_COCKPIT_BATTERY, LBR_SIG_COCKPIT_LINK};
 
 static const lbr_slot_t k_slots[CENTRAL_SLOT_COUNT] = {
     [CENTRAL_SLOT_GPS] =
@@ -26,11 +26,11 @@ static const lbr_slot_t k_slots[CENTRAL_SLOT_COUNT] = {
             .n_signals = sizeof k_gps / sizeof k_gps[0],
             .rate_hz   = 10,
         },
-    [CENTRAL_SLOT_DASH_STATUS] =
+    [CENTRAL_SLOT_COCKPIT_STATUS] =
         {
-            .name      = "dash_status",
-            .signals   = k_dash_status,
-            .n_signals = sizeof k_dash_status / sizeof k_dash_status[0],
+            .name      = "cockpit_status",
+            .signals   = k_cockpit_status,
+            .n_signals = sizeof k_cockpit_status / sizeof k_cockpit_status[0],
             .rate_hz   = 1,
         },
 };

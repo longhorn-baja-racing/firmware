@@ -15,7 +15,7 @@ build-host/
 *.elf
 *.bin
 *.map
-# ...except the golden fixtures shared with lbr-dashboard
+# ...except the golden fixtures shared with the dashboard app
 !dev/tests/fixtures/*.bin
 
 # Editor / OS

@@ -88,7 +88,7 @@ void lbr_node_build(const lbr_node_plan_t *plan, lbr_sensor_fill_t unbound, lbr_
 /*
  * Check a plan against the frame table. `can` is true for nodes that
  * transmit on CAN (their slot signals must travel in frames they send, at
- * the slot rate, all fields from that slot); false for the dashboard, which
+ * the slot rate, all fields from that slot); false for the cockpit, which
  * is off the bus (each signal must travel in a frame of the table at the
  * slot rate, sent for it by the Central). Returns 0, or <0 with a reason in
  * `err`.

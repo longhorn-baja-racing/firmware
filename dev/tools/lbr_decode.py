@@ -7,7 +7,7 @@ written from the spec rather than from the firmware source. It serves as
     talk to the Central Controller over USB serial (needs pyserial);
   - a cross-check: --selftest decodes every golden fixture in dev/tests/fixtures
     and compares the result with the expected JSON the firmware produced.
-    lbr-dashboard should pass the same fixtures with its own decoder.
+    The dashboard app should pass the same fixtures with its own decoder.
 
 The decoder is schema-driven: names, value types, units, events, reasons,
 and every CAN data frame layout (the frame table) come from catalog.json,

@@ -6,22 +6,22 @@ Items marked **(proposed)** are a starting design, not settled. Items marked **T
 ## 1. Overview
 
 - 10 controllers (ESP32 / ESP32-C5) on one CAN bus, powered from the car's central battery: 6 on the chassis and 4 wheel hub nodes (Mini ESP32-C5), one at each corner, each with its suspension IMU.
-- 1 wireless Dashboard Controller (ESP32-C5) with its own battery, receiving data over WiFi from the Central Controller.
+- 1 wireless Cockpit Controller (ESP32-C5) with its own battery, receiving data over WiFi from the Central Controller.
 - Central Controller sends telemetry off the car over LoRa, logs the whole CAN bus, and has the GPS receiver wired to it.
 
 ## 2. Link types
 
 - **Wired sensor link:** every sensor is wired directly to its controller. The interface for each sensor (analog/ADC, digital GPIO, I2C, SPI, UART, etc.) is **TBD** and will follow the sensor manufacturer's recommendation. Pin assignments are **TBD**. The diagram labels these "GPIO" only as a placeholder.
 - **CAN:** backbone between all 10 controllers, wheel hub nodes included.
-- **5 GHz WiFi:** Central Controller to Dashboard Controller only. Only ESP32-C5 boards are used for WiFi links.
+- **5 GHz WiFi:** Central Controller to Cockpit Controller only. Only ESP32-C5 boards are used for WiFi links.
 
 ## 3. Power
 
 - **Central battery powers:** IMU Controller, Powertrain Controller, Driver Input Controller, Temperature Controller, Stress Controller, Central Controller, and the 4 wheel hub nodes (and their wired sensors, including the GPS receiver).
-- **Own battery pack:** the Dashboard Controller (on a moving part). It has no wired connection to the rest of the car and communicates only over WiFi.
+- **Own battery pack:** the Cockpit Controller (on a moving part). It has no wired connection to the rest of the car and communicates only over WiFi.
 - **(proposed)** Run power and CAN together in one 4-wire harness to each controller: battery+, GND, CAN_H, CAN_L. Each controller gets a buck regulator from battery voltage down to 5 V / 3.3 V. Battery voltage is **TBD** (likely 12 V).
 - The harness to each wheel hub node crosses the suspension travel: flex-rated cable, strain relief, and a sealed connector (**TBD** with the harness).
-- **The Dashboard Controller must last a full Baja endurance race (4 hours) plus margin.** Battery capacity, charging method, and low-battery reporting are **TBD**.
+- **The Cockpit Controller must last a full Baja endurance race (4 hours) plus margin.** Battery capacity, charging method, and low-battery reporting are **TBD**.
 
 ## 4. Nodes and what connects to them
 
@@ -55,11 +55,11 @@ Items marked **(proposed)** are a starting design, not settled. Items marked **T
 ### ESP32-C5, Central Controller (central battery, CAN node 6)
 - LoRa Antenna / radio (wired; off-car telemetry)
 - GPS receiver (wired; any NMEA 0183 module on a UART). Its position, speed, and fix go on CAN like any other sensor (0x600 to 0x602).
-- Sends data to the Dashboard Controller over 5 GHz WiFi.
+- Sends data to the Cockpit Controller over 5 GHz WiFi.
 - Owns system time sync on CAN (see CAN ID map).
 - Logs every CAN frame. The firmware writes the log to a microSD card on the Central Controller; the card hardware is **TBD**.
 
-### ESP32-C5, Dashboard Controller (own battery)
+### ESP32-C5, Cockpit Controller (own battery)
 - Receives data from the Central Controller over 5 GHz WiFi.
 - No sensors attached.
 
@@ -83,12 +83,12 @@ FL/FR/BL/BR Brake Temp, CVT Temp --> [ESP32 Temperature Controller]
                                                           | CAN
                [GPS receiver] --> [ESP32-C5 Central Controller] --- [LoRa radio]
                                                           ~ 5GHz WiFi
-                            [ESP32-C5 Dashboard Controller]
+                            [ESP32-C5 Cockpit Controller]
 
 --  = wired, interface TBD per sensor
 ~~  = 5 GHz WiFi
 |   = CAN (one shared bus; physical order, ends, and termination TBD with the harness)
-[Dashboard] = own battery; everything else = central battery
+[Cockpit] = own battery; everything else = central battery
 ```
 
 ## 6. CAN bus spec (proposed)
@@ -106,7 +106,7 @@ FL/FR/BL/BR Brake Temp, CVT Temp --> [ESP32 Temperature Controller]
 
 There are no pre-assigned or standard IDs for this system. This scheme groups by priority (safety/driver inputs first, slow data last).
 
-The firmware implements this map as a schema (`car/components/protocol/frames.c`, exported to `dev/tests/fixtures/catalog.json`), so the dashboard decodes frames from the table, not from hand-written layouts. Rows marked **(added)** are not in the original proposal: the firmware needs them for precise time sync, events/faults, the GPS on the Central, the dashboard link, and full health reporting. Bit-level details are in `docs/can-ids.md`. Every id has exactly one sender, the node that samples its data.
+The firmware implements this map as a schema (`car/components/protocol/frames.c`, exported to `dev/tests/fixtures/catalog.json`), so the dashboard decodes frames from the table, not from hand-written layouts. Rows marked **(added)** are not in the original proposal: the firmware needs them for precise time sync, events/faults, the GPS on the Central, the cockpit link, and full health reporting. Bit-level details are in `docs/can-ids.md`. Every id has exactly one sender, the node that samples its data.
 
 | ID | Sender | Content | Rate | Payload (bytes) |
 |---|---|---|---|---|
@@ -134,7 +134,7 @@ The firmware implements this map as a schema (`car/components/protocol/frames.c`
 | 0x600 | Central | GPS position **(added)** | 10 Hz | 0-3: int32 latitude, 4-7: int32 longitude (1e-7 deg) |
 | 0x601 | Central | GPS motion **(added)** | 10 Hz | 0-1: uint16 speed (0.01 m/s), 2-3: uint16 course (0.01 deg), 4-5: int16 altitude (0.1 m), 6-7: uint16 sample counter |
 | 0x602 | Central | GPS status **(added)** | 10 Hz | 0-3: uint32 UTC (Unix s), 4: fix type, 5: satellites, 6-7: uint16 HDOP (0.01) |
-| 0x60A | Central | Dashboard status **(added)** | 1 Hz | 0: dashboard battery %, 1: link OK |
+| 0x60A | Central | Cockpit status **(added)** | 1 Hz | 0: cockpit battery %, 1: link OK |
 | 0x701 | IMU Ctrl | Heartbeat | 1 Hz | 0: state, 1: error flags |
 | 0x702 | Powertrain | Heartbeat | 1 Hz | same |
 | 0x703 | Driver Input | Heartbeat | 1 Hz | same |
@@ -150,29 +150,29 @@ Firmware conventions on top of the table:
 
 - **Sample counter = time.** Every node samples on a grid of the shared clock (sample k at k x period), so the uint16 counter is k mod 65536 and the Central rebuilds each sample's exact time from it. Frames without a counter (0x201, 0x400/0x401, 0x500/0x501, 0x600, 0x602, 0x60A) are stamped at the last grid point before reception, which holds while a frame is delivered within one period.
 - **Missing values are never zero.** Each integer field reserves its 8 lowest (signed) or highest (unsigned) raw values for "unavailable, because ...": not fitted, no data, sensor fault, out of range, not calibrated, bus error. A reading that does not fit its field is sent as out of range.
-- **Heartbeat error flags** (byte 1 of 0x70n): bit0 clock not synced, bit1 sensor fault, bit2 CAN errors, bit3 config rejected, bit4 storage, bit5 simulated data, bit6 data lost this second, bit7 dashboard WiFi link down (Central).
+- **Heartbeat error flags** (byte 1 of 0x70n): bit0 clock not synced, bit1 sensor fault, bit2 CAN errors, bit3 config rejected, bit4 storage, bit5 simulated data, bit6 data lost this second, bit7 cockpit WiFi link down (Central).
 - **Node presence.** The Central tracks every node by its heartbeat and reports a node that goes quiet (and comes back) as an event, wheel hubs included.
 - Planned load from this table: about 43 % of 500 kbit/s (the host tests check it stays under 50 %).
 
 ## 8. Wireless links (proposed)
 
-The Dashboard Controller is the only wireless node.
+The Cockpit Controller is the only wireless node.
 
-- **Central -> Dashboard:** 5 GHz, UDP, Central pushes display data at a modest rate (e.g. 10-20 Hz). No TCP, to avoid retransmit stalls.
+- **Central -> Cockpit:** 5 GHz, UDP, Central pushes display data at a modest rate (e.g. 10-20 Hz). No TCP, to avoid retransmit stalls.
 - **Band fallback:** ESP32-C5 is dual-band, so keep the band configurable (5 GHz default, 2.4 GHz fallback) and test both on the car.
-- **Battery reporting:** the dashboard reports its battery level so it can be logged and shown.
+- **Battery reporting:** the cockpit reports its battery level so it can be logged and shown.
 
 What the firmware does today (`car/components/wlink`, exercised by the simulator in `dev/sim`):
 
-- UDP (ports 47801 dashboard, 47802 dashboard status), one CRC-checked packet per datagram with a per-sender sequence number, so lost datagrams are counted.
-- The Central sends display data 10 times a second; the dashboard reports its battery once a second.
-- A dashboard silent for 3 s is reported lost (event + 0x60A bit) and found again when it comes back.
+- UDP (ports 47801 cockpit, 47802 cockpit status), one CRC-checked packet per datagram with a per-sender sequence number, so lost datagrams are counted.
+- The Central sends display data 10 times a second; the cockpit reports its battery once a second.
+- A cockpit silent for 3 s is reported lost (event + 0x60A bit) and found again when it comes back.
 - Band: 5 GHz by default, 2.4 GHz with one menuconfig switch (`CONFIG_LBR_WIFI_5GHZ`).
 - Every CAN node, wheel hubs included, syncs to the Central over CAN within about 50 us.
 
 ## 9. LoRa telemetry
 
-- LoRa bandwidth is very low (a few kbit/s at most), so only a summary is sent off-car (e.g. RPM, speeds, temps, fuel, dashboard battery, heartbeat status at a few Hz). Full-rate data is logged on the car. Exact telemetry packet contents are **TBD**.
+- LoRa bandwidth is very low (a few kbit/s at most), so only a summary is sent off-car (e.g. RPM, speeds, temps, fuel, cockpit battery, heartbeat status at a few Hz). Full-rate data is logged on the car. Exact telemetry packet contents are **TBD**.
 
 ## 10. Sensor count summary
 
@@ -182,7 +182,7 @@ What the firmware does today (`car/components/wlink`, exercised by the simulator
 - Driver inputs: 3 (brake pedal, gas pedal, steering angle)
 - Temperatures: 5 (4 brake, 1 CVT)
 - Stress sensors: 8
-- Total: 25 sensors, 10 CAN controllers (4 of them wheel hub nodes), 1 dashboard node, 1 LoRa radio
+- Total: 25 sensors, 10 CAN controllers (4 of them wheel hub nodes), 1 cockpit node, 1 LoRa radio
 
 ## 11. Still TBD
 
@@ -191,7 +191,7 @@ What the firmware does today (`car/components/wlink`, exercised by the simulator
 - CAN transceiver part and connector type
 - Battery voltage, regulators, fuses
 - CAN routing to the 4 wheel hubs, the bus ends, and the hub harness (flex cable, connectors)
-- Battery capacity and charging for the dashboard
+- Battery capacity and charging for the cockpit
 - Data logging hardware (the firmware logs to a microSD card on the Central Controller; the log format is in `docs/protocol.md`)
 - GPS module part and antenna placement
 - LoRa packet contents and rate

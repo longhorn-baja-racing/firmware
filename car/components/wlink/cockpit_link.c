@@ -1,4 +1,4 @@
-#include "lbr/dash_link.h"
+#include "lbr/cockpit_link.h"
 
 #include <string.h>
 
@@ -8,24 +8,24 @@
 #include "lbr/transport.h"
 #include "lbr/wlink.h"
 
-/* Pure Central-side dashboard link; see lbr/dash_link.h. */
+/* Pure Central-side cockpit link; see lbr/cockpit_link.h. */
 
-const lbr_signal_id_t lbr_dash_signals[] = {
+const lbr_signal_id_t lbr_cockpit_signals[] = {
     LBR_SIG_ENGINE_RPM,    LBR_SIG_CVT_RPM,       LBR_SIG_GPS_SPEED,     LBR_SIG_FUEL_LEVEL,
     LBR_SIG_TEMP_CVT,      LBR_SIG_TEMP_BRAKE_FL, LBR_SIG_TEMP_BRAKE_FR, LBR_SIG_TEMP_BRAKE_BL,
     LBR_SIG_TEMP_BRAKE_BR, LBR_SIG_BRAKE_PEDAL,   LBR_SIG_GAS_PEDAL,     LBR_SIG_FAULT,
 };
-const size_t lbr_dash_signal_count = sizeof lbr_dash_signals / sizeof lbr_dash_signals[0];
+const size_t lbr_cockpit_signal_count = sizeof lbr_cockpit_signals / sizeof lbr_cockpit_signals[0];
 
-void lbr_dash_link_init(lbr_dash_link_t *d)
+void lbr_cockpit_link_init(lbr_cockpit_link_t *d)
 {
     memset(d, 0, sizeof *d);
 }
 
 static void on_record(uint8_t type, const uint8_t *payload, size_t len, void *ctx)
 {
-    lbr_dash_link_t *d = ctx;
-    lbr_sample_t     s;
+    lbr_cockpit_link_t *d = ctx;
+    lbr_sample_t        s;
     if (type != LBR_REC_SAMPLE) {
         return; /* unknown record types are skipped */
     }
@@ -33,26 +33,28 @@ static void on_record(uint8_t type, const uint8_t *payload, size_t len, void *ct
         d->rejected++;
         return;
     }
-    if (s.signal == LBR_SIG_DASH_BATTERY) {
+    if (s.signal == LBR_SIG_COCKPIT_BATTERY) {
         d->battery      = s;
         d->have_battery = true;
     }
 }
 
-void lbr_dash_link_on_packet(lbr_dash_link_t *d, const uint8_t *buf, size_t len, uint64_t rx_us)
+void lbr_cockpit_link_on_packet(lbr_cockpit_link_t *d, const uint8_t *buf, size_t len,
+                                uint64_t rx_us)
 {
     lbr_pkt_header_t hdr;
-    if (!lbr_pkt_parse(buf, len, &hdr, NULL, NULL) || hdr.source != LBR_NODE_DASHBOARD ||
-        hdr.link != LBR_LINK_DASH) {
+    if (!lbr_pkt_parse(buf, len, &hdr, NULL, NULL) || hdr.source != LBR_NODE_COCKPIT ||
+        hdr.link != LBR_LINK_COCKPIT) {
         d->rejected++;
         return;
     }
-    if (d->seq.have && rx_us > d->last_rx_us && rx_us - d->last_rx_us > LBR_WLINK_DASH_TIMEOUT_US) {
+    if (d->seq.have && rx_us > d->last_rx_us &&
+        rx_us - d->last_rx_us > LBR_WLINK_COCKPIT_TIMEOUT_US) {
         lbr_seq_window_restart(&d->seq, &d->packet_gaps); /* back after an outage */
     }
     lbr_seq_result_t sr = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
     if (sr == LBR_SEQ_OLD) {
-        lbr_seq_window_restart(&d->seq, &d->packet_gaps); /* the dashboard restarted its count */
+        lbr_seq_window_restart(&d->seq, &d->packet_gaps); /* the cockpit restarted its count */
         sr = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
     }
     if (sr != LBR_SEQ_NEW) {
@@ -65,24 +67,24 @@ void lbr_dash_link_on_packet(lbr_dash_link_t *d, const uint8_t *buf, size_t len,
     lbr_pkt_parse(buf, len, &hdr, on_record, d);
 }
 
-int lbr_dash_link_tick(lbr_dash_link_t *d, uint64_t now_us)
+int lbr_cockpit_link_tick(lbr_cockpit_link_t *d, uint64_t now_us)
 {
-    bool up =
-        d->seen && (now_us <= d->last_rx_us || now_us - d->last_rx_us <= LBR_WLINK_DASH_TIMEOUT_US);
-    int change = up == d->up ? 0 : (up ? 1 : -1);
-    d->up      = up;
+    bool up = d->seen &&
+              (now_us <= d->last_rx_us || now_us - d->last_rx_us <= LBR_WLINK_COCKPIT_TIMEOUT_US);
+    int  change = up == d->up ? 0 : (up ? 1 : -1);
+    d->up       = up;
     return change;
 }
 
-size_t lbr_dash_link_build(lbr_dash_link_t *d, uint64_t now_us, uint8_t source,
-                           const lbr_value_table_t *values, const lbr_node_table_t *nodes,
-                           uint8_t *buf, size_t cap)
+size_t lbr_cockpit_link_build(lbr_cockpit_link_t *d, uint64_t now_us, uint8_t source,
+                              const lbr_value_table_t *values, const lbr_node_table_t *nodes,
+                              uint8_t *buf, size_t cap)
 {
     lbr_pkt_builder_t b;
-    lbr_pkt_begin(&b, buf, cap, LBR_LINK_DASH, source, d->tx_seq, now_us);
-    for (size_t i = 0; i < lbr_dash_signal_count; i++) {
+    lbr_pkt_begin(&b, buf, cap, LBR_LINK_COCKPIT, source, d->tx_seq, now_us);
+    for (size_t i = 0; i < lbr_cockpit_signal_count; i++) {
         lbr_sample_t      s;
-        lbr_value_state_t st = lbr_value_table_get(values, lbr_dash_signals[i], now_us, &s);
+        lbr_value_state_t st = lbr_value_table_get(values, lbr_cockpit_signals[i], now_us, &s);
         if (st == LBR_VALUE_NONE) {
             continue;
         }
@@ -115,18 +117,18 @@ size_t lbr_dash_link_build(lbr_dash_link_t *d, uint64_t now_us, uint8_t source,
 }
 
 /* ------------------------------------------------------------------------ */
-/* DASH_STATUS driver                                                        */
+/* COCKPIT_STATUS driver                                                        */
 
-static int dash_init(lbr_sensor_t *self)
+static int cockpit_init(lbr_sensor_t *self)
 {
     (void)self;
     return 0;
 }
 
-static int dash_read(lbr_sensor_t *self, uint64_t t_us, lbr_reading_t *out)
+static int cockpit_read(lbr_sensor_t *self, uint64_t t_us, lbr_reading_t *out)
 {
     (void)t_us;
-    lbr_dash_link_t *d = self->ctx;
+    lbr_cockpit_link_t *d = self->ctx;
     if (d->lock != NULL) {
         d->lock(d->lock_ctx);
     }
@@ -139,10 +141,10 @@ static int dash_read(lbr_sensor_t *self, uint64_t t_us, lbr_reading_t *out)
     for (size_t ch = 0; ch < self->n_signals; ch++) {
         lbr_reading_t *r = &out[ch];
         memset(r, 0, sizeof *r);
-        if (self->signals[ch] == LBR_SIG_DASH_LINK) {
+        if (self->signals[ch] == LBR_SIG_COCKPIT_LINK) {
             r->valid = true;
             r->v.b   = up;
-        } else if (self->signals[ch] == LBR_SIG_DASH_BATTERY) {
+        } else if (self->signals[ch] == LBR_SIG_COCKPIT_BATTERY) {
             if (!up || !have) {
                 r->reason = LBR_UNAVAIL_NO_DATA;
             } else if (!batt.valid) {
@@ -158,9 +160,9 @@ static int dash_read(lbr_sensor_t *self, uint64_t t_us, lbr_reading_t *out)
     return 0;
 }
 
-void lbr_sensor_dash_link(lbr_sensor_t *out, const char *name, const lbr_signal_id_t *signals,
-                          size_t n_signals, lbr_dash_link_t *d, void (*lock)(void *),
-                          void (*unlock)(void *), void      *lock_ctx)
+void lbr_sensor_cockpit_link(lbr_sensor_t *out, const char *name, const lbr_signal_id_t *signals,
+                             size_t n_signals, lbr_cockpit_link_t *d, void (*lock)(void *),
+                             void (*unlock)(void *), void         *lock_ctx)
 {
     d->lock     = lock;
     d->unlock   = unlock;
@@ -169,8 +171,8 @@ void lbr_sensor_dash_link(lbr_sensor_t *out, const char *name, const lbr_signal_
         .name      = name,
         .signals   = signals,
         .n_signals = n_signals,
-        .init      = dash_init,
-        .read      = dash_read,
+        .init      = cockpit_init,
+        .read      = cockpit_read,
         .ctx       = d,
     };
 }

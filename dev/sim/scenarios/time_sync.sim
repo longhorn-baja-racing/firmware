@@ -3,7 +3,7 @@
 at 0.0  drift imu 400
 at 0.0  drift stress 250
 at 0.0  drift corner_fr -400
-at 0.0  drift dashboard 300
+at 0.0  drift cockpit 300
 at 10.0 expect can sync_err_us < 50
 at 10.0 expect can synced == 1
 at 10.0 expect corners synced == 1

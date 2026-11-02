@@ -11,7 +11,7 @@
  * Live bus topology, built from received frames: which CAN nodes are
  * present, when each was last heard, its latest heartbeat (state and error
  * flags) and health record. Used by the Central (NODE_FOUND / NODE_LOST
- * events, telemetry health, the cockpit dashboard's node display). Pure;
+ * events, telemetry health, the cockpit display's node display). Pure;
  * host-tested.
  */
 

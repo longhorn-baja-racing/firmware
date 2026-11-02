@@ -35,7 +35,7 @@ signal order, separated by `;`. Empty means not fitted.
 
 Pins are checked against the node's chip: on the classic ESP32 (powertrain, driver_input,
 temperature, stress) ADC1 is GPIO 32..39 and 34..39 have no internal pulls; on the ESP32-C5
-(imu, central, dashboard, corners) ADC1 is GPIO 1..6 and GPIO 15..22 belong to flash.
+(imu, central, cockpit, corners) ADC1 is GPIO 1..6 and GPIO 15..22 belong to flash.
 
 ADC options: `avg=` samples per reading (default 4), `lo=`/`hi=` electrical window in mV (outside
 it the channel reads `SENSOR_FAULT`: open or shorted sensor), `min=`/`max=` physical range
@@ -105,4 +105,4 @@ decimated). So a rate or channel change is two edits: the node's plan and the fr
 `test_plans` checks every plan against the table, that every frame has a producer, and the whole
 bus against its 50 % ceiling. A new signal goes in its group in `signals.def` and in one frame,
 followed by `cmake --build build-dev --target fixtures` and a matching update in
-`lbr-dashboard`.
+the dashboard app.

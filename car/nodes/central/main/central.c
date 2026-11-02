@@ -15,7 +15,7 @@
 #include "esp_timer.h"
 #include "gw_store.h"
 #include "lbr/can_bus.h"
-#include "lbr/dash_link.h"
+#include "lbr/cockpit_link.h"
 #include "lbr/gw_core.h"
 #include "lbr/log_service.h"
 #include "lbr/nmea.h"
@@ -31,21 +31,21 @@
 
 /*
  * ESP32-C5 platform for the Central Controller: FreeRTOS tasks, TWAI, SD log
- * service, the live links, its GPS and dashboard-status slots, the dashboard
+ * service, the live links, its GPS and cockpit-status slots, the cockpit
  * datagrams, NVS config, and OTA confirmation. All decisions are in
  * gw_core.c, which the simulator runs unchanged.
  */
 
 static const char *TAG = "central";
 
-#define RX_TASK_PRIO     12
-#define SYNC_TASK_PRIO   11
-#define STREAM_TASK_PRIO 7
-#define HEALTH_TASK_PRIO 6
-#define LORA_TASK_PRIO   5
-#define ACQ_TASK_PRIO    10
-#define DASH_TASK_PRIO   5
-#define CONFIG_TEXT_MAX  2048
+#define RX_TASK_PRIO      12
+#define SYNC_TASK_PRIO    11
+#define STREAM_TASK_PRIO  7
+#define HEALTH_TASK_PRIO  6
+#define LORA_TASK_PRIO    5
+#define ACQ_TASK_PRIO     10
+#define COCKPIT_TASK_PRIO 5
+#define CONFIG_TEXT_MAX   2048
 
 static lbr_gw_core_t     s_core;
 static lbr_gw_config_t   s_gw;
@@ -54,7 +54,7 @@ static lbr_logger_t     *s_log;
 static lbr_transport_t  *s_usb;
 static SemaphoreHandle_t s_locks[LBR_GW_LOCK_COUNT_];
 
-/* The Central's own slots (GPS, dashboard status). */
+/* The Central's own slots (GPS, cockpit status). */
 static lbr_sensor_t      s_sensors[CENTRAL_SLOT_COUNT];
 static lbr_acq_t         s_acq[CENTRAL_SLOT_COUNT];
 static lbr_node_config_t s_plan_cfg;
@@ -67,10 +67,10 @@ typedef struct {
 
 static acq_task_t s_acq_tasks[CENTRAL_SLOT_COUNT];
 
-/* Dashboard datagrams over the pit access point. */
-static lbr_udp_t            *s_dash_udp;
-static lbr_transport_t       s_dash;
-static lbr_transport_stats_t s_dash_st;
+/* Cockpit datagrams over the pit access point. */
+static lbr_udp_t            *s_cockpit_udp;
+static lbr_transport_t       s_cockpit;
+static lbr_transport_stats_t s_cockpit_st;
 
 /* ------------------------------------------------------------------------ */
 /* HAL                                                                       */
@@ -236,12 +236,12 @@ static void acq_task(void *arg)
     }
 }
 
-static void dash_task(void *arg)
+static void cockpit_task(void *arg)
 {
     (void)arg;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(s_gw.dash_period_ms));
-        lbr_gw_core_dash_tick(&s_core);
+        vTaskDelay(pdMS_TO_TICKS(s_gw.cockpit_period_ms));
+        lbr_gw_core_cockpit_tick(&s_core);
     }
 }
 
@@ -298,51 +298,53 @@ static void on_log_event(uint16_t code, bool fault)
 }
 
 /* ------------------------------------------------------------------------ */
-/* Dashboard link                                                            */
+/* Cockpit link                                                            */
 
-static int dash_send(lbr_transport_t *self, const uint8_t *pkt, size_t len)
+static int cockpit_send(lbr_transport_t *self, const uint8_t *pkt, size_t len)
 {
     (void)self;
-    /* The dashboard is the only listener on its port: broadcast on the AP. */
-    if (!lbr_udp_send(s_dash_udp, LBR_UDP_BROADCAST, LBR_WLINK_DASH_PORT, pkt, len)) {
-        s_dash_st.packets_dropped++;
+    /* The cockpit is the only listener on its port: broadcast on the AP. */
+    if (!lbr_udp_send(s_cockpit_udp, LBR_UDP_BROADCAST, LBR_WLINK_COCKPIT_PORT, pkt, len)) {
+        s_cockpit_st.packets_dropped++;
         return -1;
     }
-    s_dash_st.packets_sent++;
-    s_dash_st.bytes_sent += (uint32_t)len;
+    s_cockpit_st.packets_sent++;
+    s_cockpit_st.bytes_sent += (uint32_t)len;
     return 0;
 }
 
-static void dash_stats(lbr_transport_t *self, lbr_transport_stats_t *out)
+static void cockpit_stats(lbr_transport_t *self, lbr_transport_stats_t *out)
 {
     (void)self;
-    *out = s_dash_st;
+    *out = s_cockpit_st;
 }
 
-static void on_dash_datagram(lbr_udp_t *self, const uint8_t *buf, size_t len, uint32_t ip,
-                             uint16_t port, uint64_t rx_local_us, void *ctx)
+static void on_cockpit_datagram(lbr_udp_t *self, const uint8_t *buf, size_t len, uint32_t ip,
+                                uint16_t port, uint64_t rx_local_us, void *ctx)
 {
     (void)self;
     (void)ip;
     (void)port;
     (void)ctx;
-    lbr_gw_core_on_dash_packet(&s_core, buf, len, rx_local_us);
+    lbr_gw_core_on_cockpit_packet(&s_core, buf, len, rx_local_us);
 }
 
-static lbr_transport_t *start_dash_link(bool wifi_up)
+static lbr_transport_t *start_cockpit_link(bool wifi_up)
 {
-#if CONFIG_LBR_DASH_ENABLE
-    if (!s_gw.dash_enable || !wifi_up) {
-        ESP_LOGW(TAG, "dashboard link off (needs the WiFi pit link)");
+#if CONFIG_LBR_COCKPIT_ENABLE
+    if (!s_gw.cockpit_enable || !wifi_up) {
+        ESP_LOGW(TAG, "cockpit link off (needs the WiFi pit link)");
         return NULL;
     }
-    s_dash_udp = lbr_udp_open(LBR_WLINK_STATUS_PORT, on_dash_datagram, NULL);
-    if (s_dash_udp == NULL) {
+    s_cockpit_udp = lbr_udp_open(LBR_WLINK_STATUS_PORT, on_cockpit_datagram, NULL);
+    if (s_cockpit_udp == NULL) {
         return NULL;
     }
-    s_dash = (lbr_transport_t){
-        .name = "dash", .kind = LBR_LINK_DASH, .send = dash_send, .get_stats = dash_stats};
-    return &s_dash;
+    s_cockpit = (lbr_transport_t){.name      = "cockpit",
+                                  .kind      = LBR_LINK_COCKPIT,
+                                  .send      = cockpit_send,
+                                  .get_stats = cockpit_stats};
+    return &s_cockpit;
 #else
     (void)wifi_up;
     return NULL;
@@ -441,8 +443,8 @@ static void start_links(lbr_gw_links_t *links)
     if (s_gw.lora_enable && (links->lora = lbr_link_lora_start(s_gw.lora_duty_permille)) == NULL) {
         ESP_LOGW(TAG, "LoRa link unavailable (pins TBD?)");
     }
-    links->dash = start_dash_link(links->wifi != NULL);
-    s_usb       = links->usb;
+    links->cockpit = start_cockpit_link(links->wifi != NULL);
+    s_usb          = links->usb;
 }
 
 void central_run(void)
@@ -471,10 +473,11 @@ void central_run(void)
         .n_acq        = CENTRAL_SLOT_COUNT,
     };
     lbr_gw_core_init(&s_core, &k_hal, &s_gw, &boot);
-    /* The dashboard-status slot reads this core's own link state. */
-    const lbr_slot_t *ds = &lbr_plan_central.slots[CENTRAL_SLOT_DASH_STATUS];
-    lbr_sensor_dash_link(&s_sensors[CENTRAL_SLOT_DASH_STATUS], ds->name, ds->signals, ds->n_signals,
-                         &s_core.dash, lbr_gw_core_lock_state, lbr_gw_core_unlock_state, &s_core);
+    /* The cockpit-status slot reads this core's own link state. */
+    const lbr_slot_t *ds = &lbr_plan_central.slots[CENTRAL_SLOT_COCKPIT_STATUS];
+    lbr_sensor_cockpit_link(&s_sensors[CENTRAL_SLOT_COCKPIT_STATUS], ds->name, ds->signals,
+                            ds->n_signals, &s_core.cockpit, lbr_gw_core_lock_state,
+                            lbr_gw_core_unlock_state, &s_core);
 
     /* Authoritative log first: everything after this point is recorded. */
     lbr_log_service_config_t lc = {
@@ -508,8 +511,8 @@ void central_run(void)
         xTaskCreate(sync_task, "gw_sync", 3072, NULL, SYNC_TASK_PRIO, NULL);
     }
     start_slots();
-    if (links.dash != NULL) {
-        xTaskCreate(dash_task, "gw_dash", 4096, NULL, DASH_TASK_PRIO, NULL);
+    if (links.cockpit != NULL) {
+        xTaskCreate(cockpit_task, "gw_cockpit", 4096, NULL, COCKPIT_TASK_PRIO, NULL);
     }
     if (links.lora != NULL) {
         xTaskCreate(lora_task, "gw_lora", 4096, NULL, LORA_TASK_PRIO, NULL);

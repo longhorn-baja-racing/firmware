@@ -2,7 +2,7 @@
 
 #include "lbr/protocol.h"
 
-/* Pure dashboard-link helpers; see lbr/wlink.h. */
+/* Pure cockpit-link helpers; see lbr/wlink.h. */
 
 /* ------------------------------------------------------------------------ */
 /* Datagram sequence                                                         */

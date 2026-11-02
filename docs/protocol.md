@@ -41,7 +41,7 @@ are grouped like the CAN map, in the high byte:
 | `0x03xx` | IMUs: four suspension (wheel hubs), chassis | `corner_fl` .. `corner_br`, `imu` |
 | `0x04xx` | Stress sensors | `stress` |
 | `0x05xx` | Temperatures | `temperature` |
-| `0x06xx` | GPS, dashboard link | `central` |
+| `0x06xx` | GPS, cockpit link | `central` |
 | `0x07xx` | Events / faults | any CAN node |
 
 **Catalog hash** (`lbr_catalog_hash`): CRC-32 over, for each signal in id order,
@@ -142,7 +142,7 @@ then the exact validated configuration as `key=value` lines (`config_crc` is its
 
 The Central's authoritative log holds `CAN_FRAME` records: every frame on the bus, byte-exact,
 with its receive time, including the Central's own transmissions (flag bit 1: time sync, events,
-GPS, dashboard status). Decoding is deterministic from those bytes plus the frame table: a reader
+GPS, cockpit status). Decoding is deterministic from those bytes plus the frame table: a reader
 replays the frames in order through the sync-tracking rules of `can-ids.md`, so the log never
 depends on the firmware's decoder. Local node logs (a plan with `local_log`; none in the 2026
 car) hold `SAMPLE` records at full rate.
@@ -160,13 +160,13 @@ formats a card or overwrites a session.
 
 ## Transport packets
 
-Every live link (USB, WiFi, LoRa) and every dashboard datagram carries the same packet:
+Every live link (USB, WiFi, LoRa) and every cockpit datagram carries the same packet:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 1 | version (1) |
-| 1 | 1 | link: 0 LoRa, 1 USB, 2 WiFi, 3 BLE, 4 dashboard |
-| 2 | 1 | source node (the Central on its links; the sender on the dashboard link) |
+| 1 | 1 | link: 0 LoRa, 1 USB, 2 WiFi, 3 BLE, 4 cockpit |
+| 2 | 1 | source node (the Central on its links; the sender on the cockpit link) |
 | 3 | 1 | record count |
 | 4 | 4 | packet seq, per link |
 | 8 | 8 | `t_us` when the packet was built |
@@ -189,24 +189,24 @@ data`), `FILE_END` (0x12: `bytes u32, crc32 u32, name`).
 
 A gap in the per-link `seq` at the receiver means packets lost in transit; packets the Central
 could not enqueue are counted in its heartbeat (`transport_error_count`). Over WiFi (UDP) packets
-can also arrive reordered, so the dashboard link's receivers keep a 32-packet window
+can also arrive reordered, so the cockpit link's receivers keep a 32-packet window
 (`lbr_seq_window_t`): a packet counts as lost only when it leaves the window unseen, a late one
 fills its hole, a repeat is dropped, and a packet older than the window means the sender
 restarted its count. Only packets newer than any so far update displayed values, so an older one
 never overwrites a newer one.
 
-## Dashboard link
+## Cockpit link
 
-The cockpit dashboard is the only node off the CAN bus. Over 5 GHz WiFi UDP (DAQ-WIRING.md
+The cockpit display is the only node off the CAN bus. Over 5 GHz WiFi UDP (DAQ-WIRING.md
 section 8; `car/components/wlink/include/lbr/wlink.h`), one transport packet per datagram, no COBS:
 
-- **Central -> dashboard** (link 4, port 47801, broadcast on the Central's access point, every
-  `dash_period_ms`): a `SAMPLE` record per display signal (latest value; stale ones as `NO_DATA`)
+- **Central -> cockpit** (link 4, port 47801, broadcast on the Central's access point, every
+  `cockpit_period_ms`): a `SAMPLE` record per display signal (latest value; stale ones as `NO_DATA`)
   and a `HEALTH_LITE` per CAN node.
-- **Dashboard -> Central** (link 4, port 47802, once a second): `SAMPLE` records (`DASH_BATTERY`).
-  The Central puts its battery and the link state on CAN (`DASH_STATUS`, 0x60A).
+- **Cockpit -> Central** (link 4, port 47802, once a second): `SAMPLE` records (`COCKPIT_BATTERY`).
+  The Central puts its battery and the link state on CAN (`COCKPIT_STATUS`, 0x60A).
 
-The dashboard keeps no shared clock: it only shows ages. After a receive timeout, or a packet
+The cockpit keeps no shared clock: it only shows ages. After a receive timeout, or a packet
 older than its window (the sender restarted its count), a receiver restarts its window and counts
 the packets the old one still held unseen as lost.
 
@@ -233,8 +233,8 @@ that tracks offset and rate:
   need that version's decoder (the version is in every session record). Changing any layout in
   this file is incompatible: bump
   `LBR_PROTOCOL_VERSION` (and `LBR_LOG_FORMAT_VERSION` for the log), regenerate the fixtures, and
-  update `lbr-dashboard` in step.
-- Every node and the dashboard report their protocol version and catalog hash; a mismatch is a
+  update the dashboard app in step.
+- Every node and the cockpit report their protocol version and catalog hash; a mismatch is a
   configuration error to surface, not to guess around.
 
 ## Golden fixtures
@@ -242,10 +242,10 @@ that tracks offset and rate:
 `dev/tests/fixtures/` holds binary fixtures produced by the firmware codecs, each with the expected
 decode as JSON: `catalog.json`, `samples.bin`, `health.bin`, `can_capture.bin`, `session.lbr`,
 `stream_usb.bin`. CTest fails if a fixture no longer matches the codecs; `dev/tools/lbr_decode.py
---selftest` is an independent decoder that must reproduce every expected JSON. `lbr-dashboard`
+--selftest` is an independent decoder that must reproduce every expected JSON. The dashboard app
 should run the same fixtures through its decoder in its own CI.
 
-## Still to agree with lbr-dashboard (#14)
+## Still to agree with the dashboard app (#14)
 
 - [ ] where the canonical copy of this spec and the catalog lives (this repo generates it today)
 - [ ] the dashboard's fixture replay test, wired into its CI

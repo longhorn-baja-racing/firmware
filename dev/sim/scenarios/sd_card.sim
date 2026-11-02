@@ -8,7 +8,7 @@ at 3.0  sd remove
 at 4.0  expect central state == DEGRADED
 at 4.0  expect central event:SD_WRITE_ERROR == 1
 at 4.0  expect stress state == RUN
-at 4.0  expect dashboard link == 1
+at 4.0  expect cockpit link == 1
 at 6.0  sd insert
 at 7.0  expect central state == DEGRADED
 at 9.0  expect central state == RUN

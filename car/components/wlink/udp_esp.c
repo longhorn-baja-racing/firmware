@@ -13,7 +13,7 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
-/* ESP32-C5 WiFi + UDP for the dashboard link; see lbr/wlink_esp.h. */
+/* ESP32-C5 WiFi + UDP for the cockpit link; see lbr/wlink_esp.h. */
 
 static const char *TAG = "lbr_wlink";
 

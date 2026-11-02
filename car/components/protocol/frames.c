@@ -10,7 +10,7 @@
  * The CAN data frame table (DAQ-WIRING.md section 7). Sorted by id (checked
  * by the host tests). Scales marked TBD are provisional until the parts are
  * chosen; changing one is a catalog change (the hash moves) and must be
- * mirrored in lbr-dashboard.
+ * mirrored in the dashboard app.
  */
 
 #define F(sig_, off_, enc_, scale_)                                                                \
@@ -115,7 +115,7 @@ static const lbr_frame_def_t s_frames[] = {
      .n_fields       = 1,
      .fields         = {F(TEMP_CVT, 0, I16, 0.1f)}},
 
-    /* Central: GPS (any NMEA receiver) and the dashboard link. */
+    /* Central: GPS (any NMEA receiver) and the cockpit link. */
     {.can_id         = 0x600,
      .name           = "GPS_POSITION",
      .sender         = LBR_NODE_CENTRAL,
@@ -143,13 +143,13 @@ static const lbr_frame_def_t s_frames[] = {
      .fields = {F(GPS_UTC, 0, U32, 1.0f), F(GPS_FIX, 4, U8, 1.0f), F(GPS_SATELLITES, 5, U8, 1.0f),
                 F(GPS_HDOP, 6, U16, 0.01f)}},
     {.can_id         = 0x60A,
-     .name           = "DASH_STATUS",
+     .name           = "COCKPIT_STATUS",
      .sender         = LBR_NODE_CENTRAL,
      .rate_hz        = 1,
      .dlc            = 2,
      .counter_offset = NO_CNT,
      .n_fields       = 2,
-     .fields         = {F(DASH_BATTERY, 0, U8, 1.0f), F(DASH_LINK, 1, U8, 1.0f)}},
+     .fields         = {F(COCKPIT_BATTERY, 0, U8, 1.0f), F(COCKPIT_LINK, 1, U8, 1.0f)}},
 };
 
 #define FRAME_COUNT (sizeof s_frames / sizeof s_frames[0])

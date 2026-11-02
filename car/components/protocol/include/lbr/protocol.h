@@ -8,11 +8,11 @@
 
 /*
  * Shared protocol definitions (firmware side of the spec in docs/protocol.md).
- * Every byte layout here is little-endian and MUST match lbr-dashboard; the
+ * Every byte layout here is little-endian and MUST match the dashboard app; the
  * golden fixtures in dev/tests/fixtures pin it down.
  */
 
-/* Bump on any incompatible change; must match lbr-dashboard. */
+/* Bump on any incompatible change; must match the dashboard app. */
 #define LBR_PROTOCOL_VERSION 4u
 
 /* Value representation. The catalog fixes the type of every known signal;
@@ -75,7 +75,7 @@ typedef enum {
     LBR_EVT_SD_WRITE_ERROR   = 0x0031,
     LBR_EVT_SD_MOUNTED       = 0x0032,
     LBR_EVT_QUEUE_OVERFLOW   = 0x0040, /* arg: queue id */
-    LBR_EVT_NODE_LOST        = 0x0050, /* arg: node id (Central: CAN nodes, dashboard) */
+    LBR_EVT_NODE_LOST        = 0x0050, /* arg: node id (Central: CAN nodes, cockpit) */
     LBR_EVT_NODE_FOUND       = 0x0051, /* arg: node id */
     LBR_EVT_CAN_PINS_UNSET   = 0x0060, /* CAN GPIO still TBD in Kconfig */
 } lbr_event_code_t;
@@ -161,7 +161,7 @@ typedef enum {
     LBR_REC_LOSS        = 0x05, /* records/bytes dropped before this point */
     LBR_REC_TEXT        = 0x06, /* ASCII diagnostic text */
     LBR_REC_END         = 0x07, /* log only: clean close marker */
-    LBR_REC_HEALTH_LITE = 0x08, /* transport only: compact LoRa / dashboard health */
+    LBR_REC_HEALTH_LITE = 0x08, /* transport only: compact LoRa / cockpit health */
 
     LBR_REC_FILE_INFO  = 0x10, /* transport only: log listing entry */
     LBR_REC_FILE_CHUNK = 0x11, /* transport only: log dump data */

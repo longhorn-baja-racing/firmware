@@ -5,10 +5,10 @@
 #include <stdint.h>
 
 /*
- * WiFi + UDP for the dashboard link (ESP32-C5 only; not built on host).
+ * WiFi + UDP for the cockpit link (ESP32-C5 only; not built on host).
  *
- * The Central is the access point of the pit/dashboard network (started by
- * its pit link, lbr_link_wifi_start); the dashboard joins it as a station.
+ * The Central is the access point of the pit/cockpit network (started by
+ * its pit link, lbr_link_wifi_start); the cockpit joins it as a station.
  * The band is CONFIG_LBR_WIFI_5GHZ (5 GHz by default, 2.4 GHz fallback,
  * DAQ-WIRING.md section 8). Sends never block: a datagram the stack cannot
  * take is dropped and counted by the caller, who sees false.

@@ -32,7 +32,7 @@ static void test_sender_map(void)
     CHECK_EQ_U(lbr_can_sender(0x70A), LBR_NODE_CORNER_BR);
     CHECK_EQ_U(lbr_can_sender(0x700 + 16 * 5 + 11), LBR_NODE_STRESS);
     CHECK_EQ_U(lbr_can_sender(0x700 + 16 * 10), LBR_NODE_CORNER_BR);
-    /* Unassigned ids, the dashboard (not on CAN), page 12+, and anything
+    /* Unassigned ids, the cockpit (not on CAN), page 12+, and anything
      * above 11 bits are not LBR. */
     CHECK_EQ_U(lbr_can_sender(0x000), 0u);
     CHECK_EQ_U(lbr_can_sender(0x020), 0u);
@@ -119,8 +119,8 @@ static void test_field_codec(void)
     lbr_can_field_decode(&i32, p, &o);
     CHECK(o.valid && o.type == LBR_VAL_I32 && o.v.i32 == -973456789);
     lbr_field_def_t u8 = {
-        .signal = LBR_SIG_DASH_LINK, .offset = 1, .enc = LBR_ENC_U8, .scale = 1.0f};
-    lbr_sample_t b = {.signal = LBR_SIG_DASH_LINK, .type = LBR_VAL_BOOL, .valid = true};
+        .signal = LBR_SIG_COCKPIT_LINK, .offset = 1, .enc = LBR_ENC_U8, .scale = 1.0f};
+    lbr_sample_t b = {.signal = LBR_SIG_COCKPIT_LINK, .type = LBR_VAL_BOOL, .valid = true};
     b.v.b          = true;
     CHECK(lbr_can_field_encode(&u8, &b, p));
     CHECK_EQ_U(p[1], 1);
@@ -244,7 +244,7 @@ static void test_event_frame(void)
     s.source = LBR_NODE_CORNER_FL;
     CHECK(lbr_can_encode_event(&s, &f));
     CHECK_EQ_U(f.id, 0x027);
-    s.source = LBR_NODE_DASHBOARD;
+    s.source = LBR_NODE_COCKPIT;
     CHECK(!lbr_can_encode_event(&s, &f));
     f.id = 0x100;
     CHECK(!lbr_can_decode_event(&f, 0, &o));
@@ -312,7 +312,7 @@ static void test_heartbeat_and_health(void)
     CHECK_EQ_U(lbr_can_decode_heartbeat(&f, &state, &flags), LBR_NODE_STRESS);
     CHECK_EQ_U(state, LBR_NODE_DEGRADED);
     CHECK_EQ_U(flags, LBR_HB_ERR_SENSOR);
-    CHECK(!lbr_can_encode_heartbeat(LBR_NODE_DASHBOARD, 0, 0, &f));
+    CHECK(!lbr_can_encode_heartbeat(LBR_NODE_COCKPIT, 0, 0, &f));
 
     lbr_health_record_t h = {.uptime_ms = 1234, .state = LBR_NODE_RUN, .can_bus_off_count = 3};
     lbr_health_record_t o = {0};
@@ -325,7 +325,7 @@ static void test_heartbeat_and_health(void)
     CHECK_EQ_I(lbr_can_decode_health_page(&f, &o), 3);
     CHECK_EQ_U(o.can_bus_off_count, 3u);
     CHECK(!lbr_can_encode_health_page(1, &h, LBR_HEALTH_PAGE_COUNT, &f));
-    CHECK(!lbr_can_encode_health_page(LBR_NODE_DASHBOARD, &h, 0, &f));
+    CHECK(!lbr_can_encode_health_page(LBR_NODE_COCKPIT, &h, 0, &f));
     CHECK(lbr_can_encode_health_page(LBR_NODE_CORNER_BR, &h, 11, &f));
     CHECK_EQ_U(f.id, 0x7AB);
     CHECK_EQ_I(lbr_can_decode_health_page(&f, &o), 11);
@@ -371,7 +371,7 @@ static void test_bus_decoder(void)
     CHECK_EQ_U(lbr_bus_decode(&d, &f, 1000000, out, 8), 3u);
     CHECK(out[2].synced);
     CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_FL));
-    CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_DASHBOARD));
+    CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_COCKPIT));
 
     /* Events decode to one sample; foreign frames to none. */
     lbr_sample_t e = {.signal    = LBR_SIG_EVENT,

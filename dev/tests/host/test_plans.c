@@ -1,6 +1,6 @@
 #include "central_plan.h"
 #include "corner_plan.h"
-#include "dashboard_plan.h"
+#include "cockpit_plan.h"
 #include "driver_input_plan.h"
 #include "imu_plan.h"
 #include "lbr/can.h"
@@ -26,7 +26,7 @@ static const lbr_node_plan_t *const k_can_plans[] = {
 
 /* The nodes off the bus. */
 static const lbr_node_plan_t *const k_wireless_plans[] = {
-    &lbr_plan_dashboard,
+    &lbr_plan_cockpit,
 };
 #define N_WIRELESS (sizeof k_wireless_plans / sizeof k_wireless_plans[0])
 
@@ -64,7 +64,7 @@ static void test_each_plan_valid(void)
     }
     /* A CAN plan is not a wireless plan and vice versa. */
     CHECK(lbr_plan_check(&lbr_plan_imu, false, err, sizeof err) != 0);
-    CHECK(lbr_plan_check(&lbr_plan_dashboard, true, err, sizeof err) != 0);
+    CHECK(lbr_plan_check(&lbr_plan_cockpit, true, err, sizeof err) != 0);
 }
 
 static void test_node_ids_unique(void)

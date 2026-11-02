@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "lbr/dash_core.h"
+#include "lbr/cockpit_core.h"
 #include "lbr/value_table.h"
 
 /*
@@ -11,7 +11,7 @@
  * only backend prints a status summary to the console; a real panel driver
  * replaces display.c behind these two calls.
  */
-void dash_display_init(void);
-void dash_display_render(const lbr_value_table_t *values,
-                         const lbr_dash_node_t nodes[LBR_DASH_MAX_NODES], bool link_up,
-                         uint64_t now_us);
+void cockpit_display_init(void);
+void cockpit_display_render(const lbr_value_table_t *values,
+                            const lbr_cockpit_node_t nodes[LBR_COCKPIT_MAX_NODES], bool link_up,
+                            uint64_t now_us);

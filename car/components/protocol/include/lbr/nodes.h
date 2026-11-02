@@ -6,7 +6,7 @@
 /*
  * Node identity scheme (DAQ-WIRING.md sections 4 and 7). Ids 1..10 are the
  * CAN nodes and match their "CAN node N" number, which is also the low
- * nibble of their heartbeat id (0x700 + N). The dashboard is the only node
+ * nibble of their heartbeat id (0x700 + N). The cockpit is the only node
  * off the bus; it never transmits on CAN. Part of the shared protocol:
  * never renumber or reuse an id. 0x00 and 0xFF are reserved.
  */
@@ -22,15 +22,15 @@ typedef enum {
     LBR_NODE_CORNER_FR = 0x08,
     LBR_NODE_CORNER_BL = 0x09,
     LBR_NODE_CORNER_BR = 0x0A,
-    LBR_NODE_DASHBOARD = 0x0B, /* in-cockpit display over WiFi (not lbr-dashboard) */
-    LBR_NODE_RESERVED  = 0xFF,
+    LBR_NODE_COCKPIT  = 0x0B, /* driver display in the cockpit, over WiFi (not the dashboard app) */
+    LBR_NODE_RESERVED = 0xFF,
 } lbr_node_id_t;
 
 /* Highest CAN node id. */
 #define LBR_NODE_CAN_MAX 0x0Au
 
 /* Highest assigned node id. */
-#define LBR_NODE_LAST LBR_NODE_DASHBOARD
+#define LBR_NODE_LAST LBR_NODE_COCKPIT
 
 /* Short lowercase name ("powertrain"), or "?" for an unknown id. */
 const char *lbr_node_name(uint8_t node_id);

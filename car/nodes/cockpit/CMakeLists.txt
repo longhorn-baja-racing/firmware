@@ -13,4 +13,4 @@ set(COMPONENTS main)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # Refuse to build with any ESP-IDF other than the one pinned in .idf-version.
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/idf_version.cmake")
-project(lbr_dashboard)
+project(lbr_cockpit)

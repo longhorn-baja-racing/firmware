@@ -1,39 +1,40 @@
-#include "lbr/dash_core.h"
+#include "lbr/cockpit_core.h"
 
 #include <string.h>
 
 #include "lbr/bytes.h"
-#include "lbr/dash_link.h"
+#include "lbr/cockpit_link.h"
 #include "lbr/lora_policy.h"
 #include "lbr/nodes.h"
 #include "lbr/packet.h"
 #include "lbr/transport.h"
 #include "lbr/wlink.h"
 
-/* Pure dashboard logic; see lbr/dash_core.h. No platform headers here. */
+/* Pure cockpit logic; see lbr/cockpit_core.h. No platform headers here. */
 
-static void lock(lbr_dash_core_t *c)
+static void lock(lbr_cockpit_core_t *c)
 {
     if (c->hal.lock != NULL) {
         c->hal.lock(c->hal.ctx);
     }
 }
 
-static void unlock(lbr_dash_core_t *c)
+static void unlock(lbr_cockpit_core_t *c)
 {
     if (c->hal.unlock != NULL) {
         c->hal.unlock(c->hal.ctx);
     }
 }
 
-void lbr_dash_core_init(lbr_dash_core_t *c, const lbr_node_config_t *cfg, const lbr_dash_hal_t *hal)
+void lbr_cockpit_core_init(lbr_cockpit_core_t *c, const lbr_node_config_t *cfg,
+                           const lbr_cockpit_hal_t *hal)
 {
     memset(c, 0, sizeof *c);
     c->cfg = cfg;
     c->hal = *hal;
-    lbr_value_table_init(&c->values, LBR_DASH_STALE_US);
-    for (size_t i = 0; i < lbr_dash_signal_count; i++) {
-        lbr_value_table_watch(&c->values, lbr_dash_signals[i], 0);
+    lbr_value_table_init(&c->values, LBR_COCKPIT_STALE_US);
+    for (size_t i = 0; i < lbr_cockpit_signal_count; i++) {
+        lbr_value_table_watch(&c->values, lbr_cockpit_signals[i], 0);
     }
     for (size_t i = 0; i < cfg->n_acq && i < LBR_NODE_MAX_SENSORS; i++) {
         lbr_acq_slot_init(&c->slot[i], cfg->acq[i].sensor, cfg->acq[i].rate_hz, (uint16_t)i);
@@ -41,15 +42,15 @@ void lbr_dash_core_init(lbr_dash_core_t *c, const lbr_node_config_t *cfg, const 
 }
 
 typedef struct {
-    lbr_dash_core_t *c;
-    uint64_t         rx_us;
+    lbr_cockpit_core_t *c;
+    uint64_t            rx_us;
 } rx_ctx_t;
 
-static void put_node(lbr_dash_core_t *c, const uint8_t *lite, uint64_t rx_us)
+static void put_node(lbr_cockpit_core_t *c, const uint8_t *lite, uint64_t rx_us)
 {
-    uint8_t          id   = lite[0];
-    lbr_dash_node_t *slot = NULL;
-    for (size_t i = 0; i < LBR_DASH_MAX_NODES; i++) {
+    uint8_t             id   = lite[0];
+    lbr_cockpit_node_t *slot = NULL;
+    for (size_t i = 0; i < LBR_COCKPIT_MAX_NODES; i++) {
         if (c->nodes[i].node_id == id) {
             slot = &c->nodes[i];
             break;
@@ -71,8 +72,8 @@ static void put_node(lbr_dash_core_t *c, const uint8_t *lite, uint64_t rx_us)
 
 static void on_record(uint8_t type, const uint8_t *payload, size_t len, void *ctx)
 {
-    rx_ctx_t        *r = ctx;
-    lbr_dash_core_t *c = r->c;
+    rx_ctx_t           *r = ctx;
+    lbr_cockpit_core_t *c = r->c;
     if (type == LBR_REC_SAMPLE) {
         lbr_sample_t s;
         if (lbr_sample_decode(payload, len, &s) == LBR_SAMPLE_WIRE_SIZE) {
@@ -85,11 +86,12 @@ static void on_record(uint8_t type, const uint8_t *payload, size_t len, void *ct
     }
 }
 
-void lbr_dash_core_on_packet(lbr_dash_core_t *c, const uint8_t *buf, size_t len, uint64_t rx_us)
+void lbr_cockpit_core_on_packet(lbr_cockpit_core_t *c, const uint8_t *buf, size_t len,
+                                uint64_t rx_us)
 {
     lbr_pkt_header_t hdr;
     if (!lbr_pkt_parse(buf, len, &hdr, NULL, NULL) || hdr.source != LBR_NODE_CENTRAL ||
-        hdr.link != LBR_LINK_DASH) {
+        hdr.link != LBR_LINK_COCKPIT) {
         atomic_fetch_add(&c->rejected, 1);
         return;
     }
@@ -117,17 +119,17 @@ void lbr_dash_core_on_packet(lbr_dash_core_t *c, const uint8_t *buf, size_t len,
     atomic_fetch_add(&c->packets, 1);
 }
 
-void lbr_dash_core_slot_start(lbr_dash_core_t *c, size_t i)
+void lbr_cockpit_core_slot_start(lbr_cockpit_core_t *c, size_t i)
 {
     lbr_acq_slot_start(&c->slot[i], c->hal.mono_us(c->hal.ctx), NULL, NULL);
 }
 
-uint64_t lbr_dash_core_slot_next_due(lbr_dash_core_t *c, size_t i)
+uint64_t lbr_cockpit_core_slot_next_due(lbr_cockpit_core_t *c, size_t i)
 {
     return lbr_acq_next_due(c->hal.mono_us(c->hal.ctx), c->slot[i].period_us);
 }
 
-void lbr_dash_core_slot_tick(lbr_dash_core_t *c, size_t i)
+void lbr_cockpit_core_slot_tick(lbr_cockpit_core_t *c, size_t i)
 {
     lbr_acq_slot_t   *a = &c->slot[i];
     lbr_reading_t     readings[LBR_SENSOR_MAX_SIGNALS];
@@ -139,7 +141,7 @@ void lbr_dash_core_slot_tick(lbr_dash_core_t *c, size_t i)
     if (!lbr_acq_slot_tick(a, now, now, 0, readings, &tick, NULL, NULL)) {
         return;
     }
-    lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_DASH, c->cfg->node_id, c->tx_seq, now);
+    lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_COCKPIT, c->cfg->node_id, c->tx_seq, now);
     for (size_t ch = 0; ch < a->sensor->n_signals; ch++) {
         lbr_sample_t s;
         uint8_t      rec[LBR_SAMPLE_WIRE_SIZE];
@@ -160,7 +162,7 @@ void lbr_dash_core_slot_tick(lbr_dash_core_t *c, size_t i)
     }
 }
 
-bool lbr_dash_core_link_up(lbr_dash_core_t *c, uint64_t now_us)
+bool lbr_cockpit_core_link_up(lbr_cockpit_core_t *c, uint64_t now_us)
 {
     lock(c);
     bool up = c->seq.have &&
@@ -169,8 +171,8 @@ bool lbr_dash_core_link_up(lbr_dash_core_t *c, uint64_t now_us)
     return up;
 }
 
-void lbr_dash_core_snapshot(lbr_dash_core_t *c, lbr_value_table_t *values,
-                            lbr_dash_node_t nodes[LBR_DASH_MAX_NODES])
+void lbr_cockpit_core_snapshot(lbr_cockpit_core_t *c, lbr_value_table_t *values,
+                               lbr_cockpit_node_t nodes[LBR_COCKPIT_MAX_NODES])
 {
     lock(c);
     *values = c->values;

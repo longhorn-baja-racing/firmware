@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c" "dashboard_plan.c" "display.c"
+    SRCS "main.c" "cockpit_plan.c" "display.c"
     INCLUDE_DIRS "."
     REQUIRES node sensors protocol timebase wlink transport freertos esp_timer log
 )

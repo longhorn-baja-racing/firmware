@@ -10,7 +10,7 @@
  *   - the GPS (SIM_SLOT_NMEA): the position becomes NMEA sentences that the
  *     firmware's real NMEA parser decodes;
  *   - digital parts (SIM_SLOT_DIRECT, e.g. the IMUs): values in catalog units;
- *   - slots whose driver is firmware (the dashboard link on the Central)
+ *   - slots whose driver is firmware (the cockpit link on the Central)
  *     are bound by the simulator exactly as the node app binds them.
  */
 #include <math.h>
@@ -49,7 +49,7 @@ void world_init(sim_world_t *w)
     w->temp_ambient = 31.0;
     w->temp_cvt     = 31.0;
     w->fuel_pct     = 96.0;
-    w->batt_dash    = 88.0;
+    w->batt_cockpit = 88.0;
     for (int i = 0; i < 4; i++) {
         w->travel[i]     = 80.0;
         w->temp_brake[i] = 31.0;
@@ -133,9 +133,9 @@ void world_step(sim_t *s, double dt)
             (w->brake_kpa * share * side - (w->temp_brake[i] - w->temp_ambient) * 0.03) * dt;
     }
     w->fuel_pct = fmax(0.0, w->fuel_pct - (0.002 + w->throttle * 0.0004) * dt);
-    /* Dashboard battery: a 4 h race plus margin takes it down about 15 %/h
+    /* Cockpit battery: a 4 h race plus margin takes it down about 15 %/h
      * here, so a long run shows the drain. */
-    w->batt_dash = fmax(0.0, w->batt_dash - 0.004 * dt);
+    w->batt_cockpit = fmax(0.0, w->batt_cockpit - 0.004 * dt);
 }
 
 static double heading_deg(const sim_world_t *w)
@@ -225,8 +225,8 @@ bool world_signal_value(sim_t *s, lbr_signal_id_t sig, double *v)
         case LBR_SIG_TEMP_CVT:
             *v = w->temp_cvt;
             return true;
-        case LBR_SIG_DASH_BATTERY:
-            *v = w->batt_dash;
+        case LBR_SIG_COCKPIT_BATTERY:
+            *v = w->batt_cockpit;
             return true;
         case LBR_SIG_GPS_SPEED:
             *v = w->speed;
@@ -495,8 +495,8 @@ static const wiring_t k_wiring[] = {
     {"temperature", "cvt", SIM_SLOT_IO,
      "adc gpio=32 curve=ntc r25=10000 beta=3950 rpull=2200 vsup=3300 lo=50 hi=3250"},
     {"central", "gps", SIM_SLOT_NMEA, NULL},
-    {"central", "dash_status", SIM_SLOT_FIRMWARE, NULL},
-    {"dashboard", "battery", SIM_SLOT_IO,
+    {"central", "cockpit_status", SIM_SLOT_FIRMWARE, NULL},
+    {"cockpit", "battery", SIM_SLOT_IO,
      "adc gpio=4 mv0=1650 v0=0 mv1=2100 v1=100 lo=1000 hi=2400 min=-2 max=102"},
 };
 

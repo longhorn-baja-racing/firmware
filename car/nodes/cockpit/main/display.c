@@ -6,7 +6,7 @@
 #include "lbr/health.h"
 #include "lbr/nodes.h"
 
-static const char *TAG = "dash";
+static const char *TAG = "cockpit";
 
 static const char *state_name(uint8_t state)
 {
@@ -18,7 +18,7 @@ static const char *state_name(uint8_t state)
     return state < sizeof names / sizeof names[0] ? names[state] : "?";
 }
 
-void dash_display_init(void)
+void cockpit_display_init(void)
 {
     ESP_LOGI(TAG, "console display backend (panel hardware TBD)");
 }
@@ -47,9 +47,9 @@ static void fmt_value(const lbr_value_table_t *values, lbr_signal_id_t sig, uint
     }
 }
 
-void dash_display_render(const lbr_value_table_t *values,
-                         const lbr_dash_node_t nodes[LBR_DASH_MAX_NODES], bool link_up,
-                         uint64_t now_us)
+void cockpit_display_render(const lbr_value_table_t *values,
+                            const lbr_cockpit_node_t nodes[LBR_COCKPIT_MAX_NODES], bool link_up,
+                            uint64_t now_us)
 {
     if (!link_up) {
         ESP_LOGW(TAG, "NO LINK to the Central");
@@ -65,7 +65,7 @@ void dash_display_render(const lbr_value_table_t *values,
 
     char   line[192];
     size_t n = 0;
-    for (size_t i = 0; i < LBR_DASH_MAX_NODES && n < sizeof line; i++) {
+    for (size_t i = 0; i < LBR_COCKPIT_MAX_NODES && n < sizeof line; i++) {
         if (nodes[i].node_id == 0) {
             continue;
         }

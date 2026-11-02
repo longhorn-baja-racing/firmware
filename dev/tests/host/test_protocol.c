@@ -43,7 +43,7 @@ static void test_ids_stable(void)
     CHECK_EQ_U(LBR_SIG_STRESS_8, 0x0407);
     CHECK_EQ_U(LBR_SIG_TEMP_CVT, 0x0504);
     CHECK_EQ_U(LBR_SIG_GPS_UTC, 0x0608);
-    CHECK_EQ_U(LBR_SIG_DASH_LINK, 0x0611);
+    CHECK_EQ_U(LBR_SIG_COCKPIT_LINK, 0x0611);
     CHECK_EQ_U(LBR_SIG_EVENT, 0x0700);
     CHECK_EQ_U(LBR_SIG_FAULT, 0x0701);
     /* Node ids 1..10 are the DAQ-WIRING "CAN node N" numbers. */
@@ -57,11 +57,11 @@ static void test_ids_stable(void)
     CHECK_EQ_U(LBR_NODE_CORNER_FR, 0x08);
     CHECK_EQ_U(LBR_NODE_CORNER_BL, 0x09);
     CHECK_EQ_U(LBR_NODE_CORNER_BR, 0x0A);
-    CHECK_EQ_U(LBR_NODE_DASHBOARD, 0x0B);
+    CHECK_EQ_U(LBR_NODE_COCKPIT, 0x0B);
     CHECK(strcmp(lbr_node_name(LBR_NODE_CENTRAL), "central") == 0);
     CHECK(strcmp(lbr_node_name(LBR_NODE_CORNER_BL), "corner_bl") == 0);
     CHECK(lbr_node_is_can(LBR_NODE_CENTRAL) && lbr_node_is_can(LBR_NODE_CORNER_BR));
-    CHECK(!lbr_node_is_can(LBR_NODE_DASHBOARD) && !lbr_node_is_can(LBR_NODE_INVALID));
+    CHECK(!lbr_node_is_can(LBR_NODE_COCKPIT) && !lbr_node_is_can(LBR_NODE_INVALID));
     CHECK(strcmp(lbr_node_name(0x77), "?") == 0);
 }
 

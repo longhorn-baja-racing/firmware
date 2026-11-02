@@ -131,7 +131,7 @@ svg text { font-family: system-ui, sans-serif; }
       GPIO reads, UART bytes, SD writes, time-sync updates, WiFi packets.</div></div>
     <div class="pane" id="pane-events"></div>
     <div class="pane" id="pane-cockpit"><div class="tiles" id="tiles"></div>
-      <p class="help">What the cockpit dashboard shows, from its own value table (the
+      <p class="help">What the cockpit display shows, from its own value table (the
       firmware's), fed by central over 5 GHz WiFi; stale and unavailable values included.</p></div>
     <div class="pane" id="pane-console">
       <div id="console-out"></div>
@@ -147,7 +147,7 @@ svg text { font-family: system-ui, sans-serif; }
 // The CAN bus is one trunk (DAQ-WIRING.md section 5): imu at one terminated
 // end, central at the other. Each CAN node sits on the trunk at its tap (an
 // index into TRUNK); the wheel hub nodes hang off it on a drop (`stub`). The
-// dashboard reaches central over 5 GHz WiFi.
+// cockpit reaches central over 5 GHz WiFi.
 const TRUNK = [[340, 418], [340, 470], [340, 720], [470, 720], [470, 110], [320, 110],
                [200, 110], [200, 480], [200, 640], [200, 820], [200, 868]];
 const NODES = {
@@ -161,7 +161,7 @@ const NODES = {
   corner_fr:    {x: 545, y: 120, tap: 4, stub: true, label: "corner_fr", where: "FR wheel hub, CAN node 8"},
   corner_bl:    {x: 95,  y: 895, tap: 9, stub: true, label: "corner_bl", where: "BL wheel hub, CAN node 9"},
   corner_br:    {x: 545, y: 895, tap: 3, stub: true, label: "corner_br", where: "BR wheel hub, CAN node 10"},
-  dashboard:    {x: 320, y: 262, peer: "central", label: "dashboard", where: "cockpit display, own battery"},
+  cockpit:    {x: 320, y: 262, peer: "central", label: "cockpit", where: "cockpit display, own battery"},
 };
 // Sensors: position, owning node, and the signals they carry.
 const SENSORS = [
@@ -189,8 +189,8 @@ const SENSORS = [
   {id: "gps", x: 120, y: 575, node: "central", label: "GPS",
    sigs: ["GPS_LATITUDE","GPS_LONGITUDE","GPS_ALTITUDE","GPS_SPEED","GPS_COURSE","GPS_FIX",
           "GPS_SATELLITES","GPS_HDOP","GPS_UTC"]},
-  {id: "dash_st", x: 255, y: 862, node: "central", sigs: ["DASH_LINK","DASH_BATTERY"], label: "dashboard status"},
-  {id: "dash_bat", x: 392, y: 262, node: "dashboard", sigs: ["DASH_BATTERY"], label: "dashboard battery"},
+  {id: "cockpit_st", x: 255, y: 862, node: "central", sigs: ["COCKPIT_LINK","COCKPIT_BATTERY"], label: "cockpit status"},
+  {id: "cockpit_bat", x: 392, y: 262, node: "cockpit", sigs: ["COCKPIT_BATTERY"], label: "cockpit battery"},
 ];
 for (const c of ["FL", "FR", "BL", "BR"]) {
   const n = NODES["corner_" + c.toLowerCase()], front = c[0] === "F";
@@ -203,7 +203,7 @@ const PRIO_COLOR = ["#f85149", "#ffa657", "#d2a8ff", "#79c0ff", "#56d364", "#e3b
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-const wireless = (n) => n.kind === "dash";
+const wireless = (n) => n.kind === "cockpit";
 let snap = null, ui = {}, selected = {kind: "node", id: "central"};
 const seenWire = new Set();
 
@@ -317,7 +317,7 @@ for (const [name, n] of Object.entries(NODES)) {
 // ---------------------------------------------------------------------------
 // Frames on the wire: a dot from the sender (down its drop, if it has one)
 // along the trunk to central (or from central's tap to the far, imu end for
-// its own frames). Dashboard WiFi packets run along its dashed link.
+// its own frames). Cockpit WiFi packets run along its dashed link.
 const dots = [];
 function pathFor(src) {
   const a = NODES[src], end = NODES.central.tap;
@@ -343,7 +343,7 @@ function spawnDot(w) {
 }
 function spawnWifiDot(name) {
   const n = NODES[name], p = NODES[n.peer];
-  // Most of the traffic is central's display stream to the dashboard.
+  // Most of the traffic is central's display stream to the cockpit.
   addDot([[p.x, p.y], [n.x, n.y]], 3.5, "var(--accent)", 500);
 }
 function animate(now) {
@@ -416,7 +416,7 @@ function render() {
     else if (!wl && !n.connected) sub = "CAN unplugged";
     else if (wl && !n.wifi.up) sub = "out of WiFi range";
     else if (n.kind === "central") sub = n.state + "  master";
-    else if (n.kind === "dash") sub = n.state + "  " + (n.wifi.link ? "linked" : "no link");
+    else if (n.kind === "cockpit") sub = n.state + "  " + (n.wifi.link ? "linked" : "no link");
     else if (n.synced) sub = n.state + "  " + n.sync_err_us + " us";
     if (n.traced) sub += "  [trace]";
     e.sub.textContent = sub;
@@ -492,7 +492,7 @@ function renderSide() {
     h += "</table>";
     if (slot && slot.kind === "firmware") {
       h += '<p class="help">Computed by ' + s.node + "'s firmware from its WiFi link, not wired to a " +
-        "pin: change it with the WiFi buttons on the dashboard node.</p>";
+        "pin: change it with the WiFi buttons on the cockpit node.</p>";
     } else {
       h += "<h3>Drive the sensor</h3>";
       for (const sig of s.sigs.slice(0, 4)) {
@@ -535,9 +535,9 @@ function renderSide() {
     const steps = hl ? hl.steps : "-";
     h += "<h3>Time</h3><div class=\"kv\">" +
       "<div>synced</div><div>" + (central ? "time master (epoch " + snap.gw.epoch + ")"
-                                   : n.kind === "dash" ? "no shared clock (display only)"
+                                   : n.kind === "cockpit" ? "no shared clock (display only)"
                                    : n.synced ? "yes" : '<span class="warn">no</span>') + "</div>" +
-      "<div>sync error</div><div>" + (central || n.kind === "dash" ? "-" : n.sync_err_us + " us") + "</div>" +
+      "<div>sync error</div><div>" + (central || n.kind === "cockpit" ? "-" : n.sync_err_us + " us") + "</div>" +
       "<div>time steps</div><div>" + steps + "</div>" +
       "<div>crystal</div><div>" + n.ppm.toFixed(1) + " ppm</div>" +
       "<div>uptime</div><div>" + n.uptime_s.toFixed(1) + " s, boot " + n.boot_count + "</div></div>" +
@@ -606,7 +606,7 @@ function renderSide() {
       h += "<h3>Live links</h3><div class=\"kv\">" +
         "<div>USB</div><div>" + g.usb_pkts + " packets, " + (g.usb_bytes / 1048576).toFixed(2) + " MiB</div>" +
         "<div>WiFi (pit)</div><div>" + g.wifi_pkts + " packets</div>" +
-        "<div>dashboard</div><div>" + g.dash_pkts + " packets</div>" +
+        "<div>cockpit</div><div>" + g.cockpit_pkts + " packets</div>" +
         "<div>LoRa</div><div>" + g.lora_pkts + " packets (" + g.lora_records + " records last)</div>" +
         "<div>sync not sent</div><div>" + g.sync_fail + "</div></div>" +
         '<p class="help">The SD log and the USB stream are real files in the simulator\'s output folder: ' +
@@ -619,7 +619,7 @@ function renderSide() {
 function renderCockpit() {
   if (!$("pane-cockpit").classList.contains("show")) return;
   let h = "";
-  for (const d of snap.dash) {
+  for (const d of snap.cockpit) {
     const col = d.state === "ok" ? "var(--text)" : d.state === "invalid" ? "var(--bad)" : "var(--off)";
     let v = d.state === "invalid" ? "n/a" : d.state, unit = d.unit;
     if (d.state === "ok") v = Number.isInteger(d.v) ? d.v : d.v.toFixed(1);
@@ -739,7 +739,7 @@ const HELP = [
   "unplug|plug <node> <slot>     a part stops / starts responding",
   "open|close <SIGNAL>           open circuit on one input / repair it",
   "set <SIGNAL> <value> | auto <SIGNAL>   override the vehicle model",
-  "wifi <node> up|down           the dashboard in / out of WiFi range",
+  "wifi <node> up|down           the cockpit in / out of WiFi range",
   "wifi <node> loss <permille>   drop that share of its WiFi packets",
   "disconnect|connect <node>     CAN cable (CAN nodes only)",
   "busoff <node>                 force the controller bus-off (CAN nodes only)",
@@ -752,11 +752,11 @@ const HELP = [
   "   metrics: state seen synced link sync_err_us tx_dropped bus_off tec overflow steps",
   "            boot_count transport_errors gaps event:<NAME>;",
   "            bus: load errors; log: intact frames;",
-  "            central: frames_logged log_dropped usb_pkts lora_pkts dash_pkts sync_fail;",
+  "            central: frames_logged log_dropped usb_pkts lora_pkts cockpit_pkts sync_fail;",
   "            SIGNAL: valid value age_ms reason",
   "slots: imu chassis | powertrain speeds fuel | driver_input inputs |",
-  "       temperature brakes cvt | stress stress | central gps dash_status |",
-  "       corner_* imu | dashboard battery",
+  "       temperature brakes cvt | stress stress | central gps cockpit_status |",
+  "       corner_* imu | cockpit battery",
 ];
 const hist = []; let hpos = 0;
 $("console-in").addEventListener("keydown", (e) => {

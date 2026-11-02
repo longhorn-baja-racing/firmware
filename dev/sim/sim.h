@@ -5,10 +5,10 @@
  *
  * Runs the real firmware logic of every node (lbr_node_core_t on the CAN
  * sensor nodes, wheel hubs included, lbr_gw_core_t on the Central,
- * lbr_dash_core_t on the dashboard, the acquisition engine, the time servo,
+ * lbr_cockpit_core_t on the cockpit, the acquisition engine, the time servo,
  * the logger, the packet and LoRa code, the input conversions, the NMEA
  * parser) on a virtual car: a bit-timed CAN bus with arbitration and error
- * counters, the dashboard's 5 GHz WiFi link with latency and loss,
+ * counters, the cockpit's 5 GHz WiFi link with latency and loss,
  * per-node drifting clocks, a vehicle model behind
  * the sensors, and an SD card that writes a real .LBR file. Every call the
  * firmware makes into its hardware layer is a "command" that can be traced.
@@ -22,7 +22,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "lbr/dash_core.h"
+#include "lbr/cockpit_core.h"
 #include "lbr/gw_core.h"
 #include "lbr/log_keeper.h"
 #include "lbr/logging.h"
@@ -32,20 +32,20 @@
 #include "lbr/sensor_io.h"
 #include "lbr/value_table.h"
 
-#define SIM_MAX_NODES   12 /* ten CAN nodes and the dashboard */
+#define SIM_MAX_NODES   12 /* ten CAN nodes and the cockpit */
 #define SIM_MAX_SLOTS   8
 #define SIM_TXQ_LEN     128 /* room for CONFIG_LBR_CAN_TX_QUEUE_LEN up to its maximum (127) */
 #define SIM_MAX_SIGNALS 0x0800u
 #define SIM_RECENT      16
 
 /* Periodic jobs after the acquisition slots (sim_node_t.next_local index). */
-#define SIM_JOB_HEALTH (SIM_MAX_SLOTS + 0)
-#define SIM_JOB_PUMP   (SIM_MAX_SLOTS + 1) /* SD log pump */
-#define SIM_JOB_SYNC   (SIM_MAX_SLOTS + 2) /* Central: time sync */
-#define SIM_JOB_STREAM (SIM_MAX_SLOTS + 3) /* Central: USB/WiFi batch */
-#define SIM_JOB_LORA   (SIM_MAX_SLOTS + 4) /* Central: LoRa */
-#define SIM_JOB_DASH   (SIM_MAX_SLOTS + 5) /* Central: dashboard datagram */
-#define SIM_JOB_COUNT  (SIM_MAX_SLOTS + 6)
+#define SIM_JOB_HEALTH  (SIM_MAX_SLOTS + 0)
+#define SIM_JOB_PUMP    (SIM_MAX_SLOTS + 1) /* SD log pump */
+#define SIM_JOB_SYNC    (SIM_MAX_SLOTS + 2) /* Central: time sync */
+#define SIM_JOB_STREAM  (SIM_MAX_SLOTS + 3) /* Central: USB/WiFi batch */
+#define SIM_JOB_LORA    (SIM_MAX_SLOTS + 4) /* Central: LoRa */
+#define SIM_JOB_COCKPIT (SIM_MAX_SLOTS + 5) /* Central: cockpit datagram */
+#define SIM_JOB_COUNT   (SIM_MAX_SLOTS + 6)
 
 typedef struct sim sim_t;
 
@@ -93,7 +93,7 @@ typedef enum {
     SIM_SLOT_DIRECT = 0, /* digital part: values straight from the vehicle model */
     SIM_SLOT_IO,         /* on-chip inputs: model -> pin voltage/level -> lbr_io conversion */
     SIM_SLOT_NMEA,       /* GPS: model -> NMEA sentences -> lbr_nmea parser */
-    SIM_SLOT_FIRMWARE,   /* the firmware's own driver (the Central's dashboard link) */
+    SIM_SLOT_FIRMWARE,   /* the firmware's own driver (the Central's cockpit link) */
 } sim_slot_kind_t;
 
 typedef struct {
@@ -118,7 +118,7 @@ typedef struct {
 } sim_slot_t;
 
 /* ------------------------------------------------------------------------ */
-/* WiFi (the dashboard's 5 GHz UDP link to the Central)                      */
+/* WiFi (the cockpit's 5 GHz UDP link to the Central)                      */
 
 typedef struct {
     bool     up;            /* in range, radio working */
@@ -130,9 +130,9 @@ typedef struct {
 /* Nodes                                                                     */
 
 typedef enum {
-    SIM_NODE_CENTRAL = 0, /* gw_core: logger, time master, GPS, LoRa, dashboard link */
+    SIM_NODE_CENTRAL = 0, /* gw_core: logger, time master, GPS, LoRa, cockpit link */
     SIM_NODE_CAN,         /* node_core: a CAN sensor node (wheel hubs included) */
-    SIM_NODE_DASH,        /* dash_core: WiFi only */
+    SIM_NODE_COCKPIT,     /* cockpit_core: WiFi only */
 } sim_node_kind_t;
 
 typedef struct {
@@ -152,7 +152,7 @@ typedef struct {
     sim_can_t        can;
     lbr_time_servo_t servo;
 
-    /* Plan and sensors (every kind; the Central's are its GPS and dashboard link). */
+    /* Plan and sensors (every kind; the Central's are its GPS and cockpit link). */
     const lbr_node_plan_t *plan;
     const lbr_io_chip_t   *chip; /* esp32 or esp32c5 */
     lbr_sensor_t           sensors[SIM_MAX_SLOTS];
@@ -161,8 +161,8 @@ typedef struct {
     lbr_node_config_t      cfg;
     lbr_node_core_t       *core;      /* SIM_NODE_CAN */
     lbr_logger_t          *local_log; /* a node plan with local_log (none in 2026) */
-    lbr_dash_core_t       *dash;      /* SIM_NODE_DASH */
-    sim_wifi_t             wifi;      /* SIM_NODE_DASH */
+    lbr_cockpit_core_t    *cockpit;   /* SIM_NODE_COCKPIT */
+    sim_wifi_t             wifi;      /* SIM_NODE_COCKPIT */
     int                    peer;      /* node index at the other end of the WiFi link */
 
     /* SD card (gateway, and nodes with a local log). */
@@ -195,8 +195,8 @@ typedef struct {
     uint8_t  sync_seq;
     uint32_t sync_timeouts;
 
-    lbr_transport_t       usb, wifi, lora, dash;
-    lbr_transport_stats_t usb_st, wifi_st, lora_st, dash_st;
+    lbr_transport_t       usb, wifi, lora, cockpit;
+    lbr_transport_stats_t usb_st, wifi_st, lora_st, cockpit_st;
     uint32_t              usb_seq, lora_seq;
     FILE                 *usb_file;
     uint64_t              lora_next_tx_local;
@@ -223,9 +223,9 @@ typedef struct {
     double      temp_cvt, temp_brake[4], temp_ambient;
     double      engine_rpm, cvt_rpm;
     double      fuel_pct;
-    double      batt_dash; /* percent */
-    double      x_m, y_m;  /* position from the start, east/north */
-    double      bump;      /* filtered terrain input */
+    double      batt_cockpit; /* percent */
+    double      x_m, y_m;     /* position from the start, east/north */
+    double      bump;         /* filtered terrain input */
 } sim_world_t;
 
 /* ------------------------------------------------------------------------ */
@@ -308,7 +308,7 @@ void     vbus_recover(sim_t *s, int node);
 uint32_t vbus_frame_bits(const lbr_can_frame_t *f); /* exact, with bit stuffing */
 
 /* Virtual WiFi (sim.c): a datagram from node `from` to node `to` over the
- * dashboard's link. */
+ * cockpit's link. */
 bool wifi_send(sim_t *s, int from, int to, const uint8_t *buf, size_t len);
 
 /* Vehicle model and sensor drivers (world.c) */
@@ -327,7 +327,7 @@ typedef enum {
     EV_GW_STREAM,
     EV_GW_LORA,
     EV_GW_PUMP,
-    EV_GW_DASH,
+    EV_GW_COCKPIT,
     EV_BUS,
     EV_BUS_OFF_END,
     EV_WORLD,

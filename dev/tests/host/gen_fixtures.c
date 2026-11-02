@@ -1,5 +1,5 @@
 /*
- * Golden fixtures shared with lbr-dashboard (dev/tests/fixtures).
+ * Golden fixtures shared with the dashboard app (dev/tests/fixtures).
  *
  *   gen_fixtures write <dir>   regenerate every fixture
  *   gen_fixtures check <dir>   regenerate in memory, byte-compare with <dir>
@@ -217,7 +217,7 @@ static size_t sample_set(lbr_sample_t *out)
     out[n++].v.i32 = 302849870; /* 30.2849870 N */
     out[n]         = mk(LBR_SIG_GPS_SATELLITES, LBR_NODE_CENTRAL, 2, 1000200);
     out[n++].v.u32 = 11;
-    out[n]         = mk(LBR_SIG_DASH_LINK, LBR_NODE_CENTRAL, 0xFFFFFFFFu, 2000000);
+    out[n]         = mk(LBR_SIG_COCKPIT_LINK, LBR_NODE_CENTRAL, 0xFFFFFFFFu, 2000000);
     out[n++].v.b   = true;
     out[n]         = mk(LBR_SIG_GPS_FIX, LBR_NODE_CENTRAL, 3, 2000300);
     out[n++].v.u32 = 3;
@@ -464,7 +464,7 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     lbr_can_encode_data(lbr_frame_def(0x500), v, k / 10u, &f[n]);
     t[n] = k * 10000u + 1700, flags[n++] = 0;
 
-    /* Central: GPS (always synced) and the dashboard link. */
+    /* Central: GPS (always synced) and the cockpit link. */
     v[0]       = uv(LBR_SIG_GPS_LATITUDE, 0);
     v[0].v.i32 = 302849870;
     v[1]       = uv(LBR_SIG_GPS_LONGITUDE, 0);
@@ -482,8 +482,8 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     v[3] = fv(LBR_SIG_GPS_HDOP, 0.9f);
     lbr_can_encode_data(lbr_frame_def(0x602), v, k / 10u, &f[n]);
     t[n] = k * 10000u + 2200, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
-    v[0] = fv(LBR_SIG_DASH_BATTERY, 66.0f);
-    v[1] = uv(LBR_SIG_DASH_LINK, 1);
+    v[0] = fv(LBR_SIG_COCKPIT_BATTERY, 66.0f);
+    v[1] = uv(LBR_SIG_COCKPIT_LINK, 1);
     lbr_can_encode_data(lbr_frame_def(0x60A), v, k / 100u, &f[n]);
     t[n] = k * 10000u + 2300, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
 
@@ -796,7 +796,7 @@ static int emit(const char *dir, const char *name, const buf_t *b, int write)
         fprintf(stderr,
                 "fixture %s no longer matches the codec. If the format change is intended,\n"
                 "bump the version, regenerate (cmake --build build-dev --target fixtures),\n"
-                "and update lbr-dashboard in the same change.\n",
+                "and update the dashboard app in the same change.\n",
                 path);
         return 1;
     }

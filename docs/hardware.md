@@ -17,9 +17,9 @@ signal list of each node is fixed by its plan (`car/nodes/<name>/main/<name>_pla
 | `driver_input` | ESP32 | central battery | CAN | brake pedal, gas pedal, steering angle | no |
 | `temperature` | ESP32 | central battery | CAN | four brake temperatures, CVT temperature | no |
 | `stress` | ESP32 | central battery | CAN | stress sensors 1..8 (bridge amplifier/ADC part) | no |
-| `central` | ESP32-C5 | central battery | CAN (end of the trunk), LoRa, USB, BLE, pit/dashboard WiFi access point | GPS (NMEA) | yes (authoritative log; hardware TBD) |
+| `central` | ESP32-C5 | central battery | CAN (end of the trunk), LoRa, USB, BLE, pit/cockpit WiFi access point | GPS (NMEA) | yes (authoritative log; hardware TBD) |
 | `corner` (x4) | Mini ESP32-C5 | central battery | CAN | suspension IMU | no |
-| `dashboard` | ESP32-C5 | own battery | WiFi to the Central | own battery level | no |
+| `cockpit` | ESP32-C5 | own battery | WiFi to the Central | own battery level | no |
 
 One `corner` firmware runs on all four wheel hub nodes; `CONFIG_LBR_CORNER_POSITION` (FL, FR, BL,
 BR) picks the node id (7..10). Each node's chip is set in its `sdkconfig.defaults`
@@ -37,7 +37,7 @@ Set per node with `idf.py menuconfig` or in that node's `sdkconfig.defaults` onc
 | LoRa (SX127x, SPI) | `CONFIG_LBR_LORA_{SCLK,MOSI,MISO,CS,RST,DIO0}_GPIO` | central (on the C5 it shares the SD card's SPI bus: SCLK/MOSI/MISO must equal the SD pins, or LoRa start fails; own CS) |
 | USB serial | UART0 through the module's USB-UART bridge (or the C5's USB serial) | central |
 | GPS (NMEA) | `CONFIG_LBR_GPS_{UART_NUM,RX_GPIO,TX_GPIO,BAUD}` | central |
-| On-chip ADC / pulse / digital inputs | `CONFIG_LBR_IO_<SLOT>` input specs (pins inside the spec, see [`sensors.md`](sensors.md)) | powertrain, driver_input, temperature, dashboard battery |
+| On-chip ADC / pulse / digital inputs | `CONFIG_LBR_IO_<SLOT>` input specs (pins inside the spec, see [`sensors.md`](sensors.md)) | powertrain, driver_input, temperature, cockpit battery |
 | Sensor buses (I2C/SPI parts) | per driver, when parts are chosen | IMUs, stress, brake temperatures |
 
 `dev/ci/sdkconfig.linkcheck` contains placeholder pins used only so CI can link every
@@ -47,12 +47,12 @@ hardware path. It is **not** a pin map.
 
 | Setting | Meaning | Nodes |
 | --- | --- | --- |
-| `CONFIG_LBR_WIFI_5GHZ` | 5 GHz band (default), off = 2.4 GHz | central, dashboard |
-| `CONFIG_LBR_WIFI_SSID`, `_PASSWORD`, `_CHANNEL` | the Central's access point (pit link + dashboard) | central, dashboard |
-| `CONFIG_LBR_DASH_ENABLE` | push display data to the dashboard | central |
+| `CONFIG_LBR_WIFI_5GHZ` | 5 GHz band (default), off = 2.4 GHz | central, cockpit |
+| `CONFIG_LBR_WIFI_SSID`, `_PASSWORD`, `_CHANNEL` | the Central's access point (pit link + cockpit) | central, cockpit |
+| `CONFIG_LBR_COCKPIT_ENABLE` | push display data to the cockpit | central |
 
 The password defaults to empty, which keeps the network off; set it in a local sdkconfig and never
-commit it. The dashboard link is UDP; the protocol is in [`protocol.md`](protocol.md) ("Dashboard
+commit it. The cockpit link is UDP; the protocol is in [`protocol.md`](protocol.md) ("Cockpit
 link"). Every other node is on CAN only.
 
 ## CAN bus
@@ -76,7 +76,7 @@ link"). Every other node is on CAN only.
   moved to flash (`car/nodes/central/sdkconfig.defaults`).
 - The TWAI interrupt is cache-safe (`CONFIG_TWAI_ISR_CACHE_SAFE`), so CAN reception and time
   sync keep running while flash is written (OTA, config push, boot counter).
-- The dashboard, the only battery-powered node, must last a 4 hour endurance race plus margin. Its
+- The cockpit, the only battery-powered node, must last a 4 hour endurance race plus margin. Its
   WiFi runs without power save for latency; capacity, charging, and low-battery behavior are TBD.
 
 ## To verify against the final schematic and harness before bring-up (#15)

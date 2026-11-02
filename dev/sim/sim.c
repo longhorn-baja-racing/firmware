@@ -12,11 +12,11 @@
 
 #include "central_plan.h"
 #include "corner_plan.h"
-#include "dashboard_plan.h"
+#include "cockpit_plan.h"
 #include "driver_input_plan.h"
 #include "imu_plan.h"
 #include "lbr/cobs.h"
-#include "lbr/dash_link.h"
+#include "lbr/cockpit_link.h"
 #include "lbr/nodes.h"
 #include "lbr/packet.h"
 #include "lbr/status.h"
@@ -372,7 +372,7 @@ static const lbr_node_hal_t k_node_hal = {
     .log             = h_log,
 };
 
-static const lbr_dash_hal_t k_dash_hal = {
+static const lbr_cockpit_hal_t k_cockpit_hal = {
     .mono_us = h_mono,
     .send    = h_wifi_send,
     .log     = h_log,
@@ -577,18 +577,18 @@ static int lora_send(lbr_transport_t *self, const uint8_t *pkt, size_t len)
     return 0;
 }
 
-/* The Central's dashboard datagrams (as the app's UDP link would send them). */
-static int dash_send(lbr_transport_t *self, const uint8_t *pkt, size_t len)
+/* The Central's cockpit datagrams (as the app's UDP link would send them). */
+static int cockpit_send(lbr_transport_t *self, const uint8_t *pkt, size_t len)
 {
-    sim_t    *s    = self->ctx;
-    sim_gw_t *g    = &s->gw;
-    int       dash = s->nodes[GW].peer;
-    if (dash < 0 || !wifi_send(s, GW, dash, pkt, len)) {
-        g->dash_st.packets_dropped++;
+    sim_t    *s       = self->ctx;
+    sim_gw_t *g       = &s->gw;
+    int       cockpit = s->nodes[GW].peer;
+    if (cockpit < 0 || !wifi_send(s, GW, cockpit, pkt, len)) {
+        g->cockpit_st.packets_dropped++;
         return -1;
     }
-    g->dash_st.packets_sent++;
-    g->dash_st.bytes_sent += (uint32_t)len;
+    g->cockpit_st.packets_sent++;
+    g->cockpit_st.bytes_sent += (uint32_t)len;
     return 0;
 }
 
@@ -599,8 +599,8 @@ static void link_stats(lbr_transport_t *self, lbr_transport_stats_t *out)
         *out = s->gw.usb_st;
     } else if (self == &s->gw.wifi) {
         *out = s->gw.wifi_st;
-    } else if (self == &s->gw.dash) {
-        *out = s->gw.dash_st;
+    } else if (self == &s->gw.cockpit) {
+        *out = s->gw.cockpit_st;
     } else {
         *out = s->gw.lora_st;
     }
@@ -618,11 +618,11 @@ typedef struct {
 
 static wifi_dgram_t s_wifi[WIFI_POOL];
 
-/* The wireless end of a pair (the dashboard) owns the link (range, loss). */
+/* The wireless end of a pair (the cockpit) owns the link (range, loss). */
 static sim_wifi_t *link_of(sim_t *s, int a, int b)
 {
     sim_node_t *na = &s->nodes[a], *nb = &s->nodes[b];
-    return na->kind == SIM_NODE_DASH ? &na->wifi : &nb->wifi;
+    return na->kind == SIM_NODE_COCKPIT ? &na->wifi : &nb->wifi;
 }
 
 bool wifi_send(sim_t *s, int from, int to, const uint8_t *buf, size_t len)
@@ -664,10 +664,10 @@ static void wifi_deliver(sim_t *s, int slot)
     sim_trace(s, d->to, "udp.recv", "%u bytes from %s", (unsigned)d->len, s->nodes[d->from].name);
     switch (n->kind) {
         case SIM_NODE_CENTRAL:
-            lbr_gw_core_on_dash_packet(s->gw.core, d->data, d->len, local);
+            lbr_gw_core_on_cockpit_packet(s->gw.core, d->data, d->len, local);
             break;
-        case SIM_NODE_DASH:
-            lbr_dash_core_on_packet(n->dash, d->data, d->len, local);
+        case SIM_NODE_COCKPIT:
+            lbr_cockpit_core_on_packet(n->cockpit, d->data, d->len, local);
             break;
         case SIM_NODE_CAN:
             break; /* no WiFi */
@@ -699,9 +699,9 @@ static void schedule_acq(sim_t *s, int ni, size_t k)
             now = h_now(&s_ctx[ni]);
             due = lbr_gw_core_slot_next_due(s->gw.core, k);
             break;
-        case SIM_NODE_DASH:
-            now = local; /* the dashboard keeps no shared clock */
-            due = lbr_dash_core_slot_next_due(n->dash, k);
+        case SIM_NODE_COCKPIT:
+            now = local; /* the cockpit keeps no shared clock */
+            due = lbr_cockpit_core_slot_next_due(n->cockpit, k);
             break;
         default:
             now = h_now(&s_ctx[ni]);
@@ -756,11 +756,11 @@ static void boot_gateway(sim_t *s)
     };
     lbr_log_init(&g->log, &lc);
 
-    g->usb   = (lbr_transport_t){"usb", LBR_LINK_USB, NULL, usb_send, link_stats, s};
-    g->wifi  = (lbr_transport_t){"wifi", LBR_LINK_WIFI, NULL, wifi_send_pit, link_stats, s};
-    g->lora  = (lbr_transport_t){"lora", LBR_LINK_LORA, NULL, lora_send, link_stats, s};
-    g->dash  = (lbr_transport_t){"dash", LBR_LINK_DASH, NULL, dash_send, link_stats, s};
-    g->modem = (lbr_lora_modem_t){.sf = 9, .bw_hz = 125000, .cr = 1, .preamble = 8, .crc = true};
+    g->usb     = (lbr_transport_t){"usb", LBR_LINK_USB, NULL, usb_send, link_stats, s};
+    g->wifi    = (lbr_transport_t){"wifi", LBR_LINK_WIFI, NULL, wifi_send_pit, link_stats, s};
+    g->lora    = (lbr_transport_t){"lora", LBR_LINK_LORA, NULL, lora_send, link_stats, s};
+    g->cockpit = (lbr_transport_t){"cockpit", LBR_LINK_COCKPIT, NULL, cockpit_send, link_stats, s};
+    g->modem   = (lbr_lora_modem_t){.sf = 9, .bw_hz = 125000, .cr = 1, .preamble = 8, .crc = true};
     g->lora_next_tx_local = 0;
     g->sync_pending       = false;
 
@@ -780,16 +780,17 @@ static void boot_gateway(sim_t *s)
     g->core->hal.ctx = &s_ctx[GW];
     /* Same order as the Central app: core, its own link-state driver, the
      * log service, then start. */
-    lbr_sensor_dash_link(&n->sensors[CENTRAL_SLOT_DASH_STATUS], "dash_status",
-                         n->plan->slots[CENTRAL_SLOT_DASH_STATUS].signals,
-                         n->plan->slots[CENTRAL_SLOT_DASH_STATUS].n_signals, &g->core->dash,
-                         lbr_gw_core_lock_state, lbr_gw_core_unlock_state, g->core);
+    lbr_sensor_cockpit_link(&n->sensors[CENTRAL_SLOT_COCKPIT_STATUS], "cockpit_status",
+                            n->plan->slots[CENTRAL_SLOT_COCKPIT_STATUS].signals,
+                            n->plan->slots[CENTRAL_SLOT_COCKPIT_STATUS].n_signals,
+                            &g->core->cockpit, lbr_gw_core_lock_state, lbr_gw_core_unlock_state,
+                            g->core);
     keeper_start(s, GW, &g->log, g->config_text);
     lbr_gw_links_t links = {
-        .usb  = g->cfg.usb_enable ? &g->usb : NULL,
-        .wifi = g->cfg.wifi_enable ? &g->wifi : NULL,
-        .lora = g->cfg.lora_enable ? &g->lora : NULL,
-        .dash = g->cfg.dash_enable ? &g->dash : NULL,
+        .usb     = g->cfg.usb_enable ? &g->usb : NULL,
+        .wifi    = g->cfg.wifi_enable ? &g->wifi : NULL,
+        .lora    = g->cfg.lora_enable ? &g->lora : NULL,
+        .cockpit = g->cfg.cockpit_enable ? &g->cockpit : NULL,
     };
     lbr_gw_core_start(g->core, &g->log, &links, true, false);
 
@@ -798,7 +799,7 @@ static void boot_gateway(sim_t *s)
     schedule_local(s, GW, SIM_JOB_STREAM, l + g->cfg.stream_batch_ms * 1000u, EV_GW_STREAM);
     schedule_local(s, GW, SIM_JOB_LORA, l + g->cfg.lora_period_ms * 1000u, EV_GW_LORA);
     schedule_local(s, GW, SIM_JOB_PUMP, l + 20000u, EV_GW_PUMP);
-    schedule_local(s, GW, SIM_JOB_DASH, l + g->cfg.dash_period_ms * 1000u, EV_GW_DASH);
+    schedule_local(s, GW, SIM_JOB_COCKPIT, l + g->cfg.cockpit_period_ms * 1000u, EV_GW_COCKPIT);
     schedule_local(s, GW, SIM_JOB_HEALTH, l + LBR_GW_HEALTH_PERIOD_MS * 1000u, EV_HEALTH);
     for (size_t k = 0; k < n->cfg.n_acq; k++) {
         lbr_gw_core_slot_start(g->core, k);
@@ -859,18 +860,18 @@ static void boot_can_node(sim_t *s, int i)
     }
 }
 
-static void boot_dash(sim_t *s, int i)
+static void boot_cockpit(sim_t *s, int i)
 {
     sim_node_t *n = &s->nodes[i];
     world_bind_sensors(s, i);
-    if (n->dash == NULL) {
-        n->dash = calloc(1, sizeof *n->dash);
+    if (n->cockpit == NULL) {
+        n->cockpit = calloc(1, sizeof *n->cockpit);
     }
-    lbr_dash_hal_t hal = k_dash_hal;
-    hal.ctx            = &s_ctx[i];
-    lbr_dash_core_init(n->dash, &n->cfg, &hal);
+    lbr_cockpit_hal_t hal = k_cockpit_hal;
+    hal.ctx               = &s_ctx[i];
+    lbr_cockpit_core_init(n->cockpit, &n->cfg, &hal);
     for (size_t k = 0; k < n->cfg.n_acq; k++) {
-        lbr_dash_core_slot_start(n->dash, k);
+        lbr_cockpit_core_slot_start(n->cockpit, k);
         schedule_acq(s, i, k);
     }
 }
@@ -889,8 +890,8 @@ static void boot_node(sim_t *s, int i)
         case SIM_NODE_CENTRAL:
             boot_gateway(s);
             break;
-        case SIM_NODE_DASH:
-            boot_dash(s, i);
+        case SIM_NODE_COCKPIT:
+            boot_cockpit(s, i);
             break;
         default:
             boot_can_node(s, i);
@@ -999,8 +1000,8 @@ static void acq_tick(sim_t *s, int ni, size_t k)
         case SIM_NODE_CENTRAL:
             lbr_gw_core_slot_tick(s->gw.core, k);
             break;
-        case SIM_NODE_DASH:
-            lbr_dash_core_slot_tick(n->dash, k);
+        case SIM_NODE_COCKPIT:
+            lbr_cockpit_core_slot_tick(n->cockpit, k);
             break;
         default:
             lbr_node_core_slot_tick(n->core, k);
@@ -1079,10 +1080,11 @@ static void handle(sim_t *s, const event_t *e)
             schedule_local(s, GW, SIM_JOB_LORA,
                            n->next_local[SIM_JOB_LORA] + g->cfg.lora_period_ms * 1000u, EV_GW_LORA);
             break;
-        case EV_GW_DASH:
-            lbr_gw_core_dash_tick(g->core);
-            schedule_local(s, GW, SIM_JOB_DASH,
-                           n->next_local[SIM_JOB_DASH] + g->cfg.dash_period_ms * 1000u, EV_GW_DASH);
+        case EV_GW_COCKPIT:
+            lbr_gw_core_cockpit_tick(g->core);
+            schedule_local(s, GW, SIM_JOB_COCKPIT,
+                           n->next_local[SIM_JOB_COCKPIT] + g->cfg.cockpit_period_ms * 1000u,
+                           EV_GW_COCKPIT);
             break;
         case EV_GW_PUMP:
             lbr_log_keeper_step(&n->keeper, sim_local_us(s, ni), h_now(&s_ctx[ni]));
@@ -1158,7 +1160,7 @@ static void mkdir_p(const char *path)
 int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet)
 {
     /* DAQ-WIRING.md: the Central first (index GW), the other CAN nodes, then
-     * the dashboard (WiFi only). */
+     * the cockpit (WiFi only). */
     const node_def_t defs[] = {
         {"central", LBR_NODE_CENTRAL, SIM_NODE_CENTRAL, &lbr_plan_central, true, 64},
         {"imu", LBR_NODE_IMU, SIM_NODE_CAN, &lbr_plan_imu, true, 64},
@@ -1170,7 +1172,7 @@ int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet
         {"corner_fr", LBR_NODE_CORNER_FR, SIM_NODE_CAN, &lbr_plan_corner[1], true, 64},
         {"corner_bl", LBR_NODE_CORNER_BL, SIM_NODE_CAN, &lbr_plan_corner[2], true, 64},
         {"corner_br", LBR_NODE_CORNER_BR, SIM_NODE_CAN, &lbr_plan_corner[3], true, 64},
-        {"dashboard", LBR_NODE_DASHBOARD, SIM_NODE_DASH, &lbr_plan_dashboard, true, 0},
+        {"cockpit", LBR_NODE_COCKPIT, SIM_NODE_COCKPIT, &lbr_plan_cockpit, true, 0},
     };
     memset(s, 0, sizeof *s);
     memset(s_wifi, 0, sizeof s_wifi);
@@ -1195,7 +1197,7 @@ int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet
         return -1;
     }
 
-    int dash = -1;
+    int cockpit = -1;
     for (int i = 0; i < s->n_nodes; i++) {
         sim_node_t *n    = &s->nodes[i];
         n->name          = defs[i].name;
@@ -1211,16 +1213,16 @@ int sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet
         n->reset_reason  = LBR_RESET_POWER_ON;
         n->peer          = -1;
         n->wifi.up       = true;
-        dash             = n->id == LBR_NODE_DASHBOARD ? i : dash;
+        cockpit          = n->id == LBR_NODE_COCKPIT ? i : cockpit;
         /* Real crystals: within +/- 40 ppm. */
         n->ppm = (sim_rand(s) - 0.5) * 80.0;
         /* Power comes up together; boot times differ a little. */
         uint64_t at = n->is_gateway ? 0 : 50000u + (uint64_t)(sim_rand(s) * 400000.0);
         sim_schedule(s, at, EV_BOOT, i, 0);
     }
-    /* The one WiFi pair: the dashboard and the Central. */
-    s->nodes[dash].peer = GW;
-    s->nodes[GW].peer   = dash;
+    /* The one WiFi pair: the cockpit and the Central. */
+    s->nodes[cockpit].peer = GW;
+    s->nodes[GW].peer      = cockpit;
     sim_schedule(s, 0, EV_WORLD, -1, 0);
     return 0;
 }
@@ -1243,7 +1245,7 @@ void sim_free(sim_t *s)
     for (int i = 0; i < s->n_nodes; i++) {
         free(s->nodes[i].core);
         free(s->nodes[i].local_log);
-        free(s->nodes[i].dash);
+        free(s->nodes[i].cockpit);
     }
     free(s->gw.core);
     free(s->gw.log_queue);
@@ -1258,8 +1260,8 @@ void sim_free(sim_t *s)
 
 static int64_t sync_error_us(sim_t *s, int i)
 {
-    if (i == GW || s->nodes[i].kind == SIM_NODE_DASH) {
-        return 0; /* the reference itself, or the dashboard: it keeps no shared clock */
+    if (i == GW || s->nodes[i].kind == SIM_NODE_COCKPIT) {
+        return 0; /* the reference itself, or the cockpit: it keeps no shared clock */
     }
     if (!s->nodes[i].booted || !s->nodes[GW].booted || !s->nodes[i].servo.synced) {
         return INT32_MAX; /* nothing to compare with: never reads as in sync */
@@ -1271,14 +1273,14 @@ static int64_t sync_error_us(sim_t *s, int i)
 
 static bool wireless(const sim_node_t *n)
 {
-    return n->kind == SIM_NODE_DASH;
+    return n->kind == SIM_NODE_COCKPIT;
 }
 
-/* The dashboard as the Central sees it: up while its datagrams arrive. */
+/* The cockpit as the Central sees it: up while its datagrams arrive. */
 static bool link_up(const sim_t *s, int i)
 {
-    return s->nodes[i].kind == SIM_NODE_DASH && s->gw.core != NULL && s->nodes[GW].booted &&
-           s->gw.core->dash.up;
+    return s->nodes[i].kind == SIM_NODE_COCKPIT && s->gw.core != NULL && s->nodes[GW].booted &&
+           s->gw.core->cockpit.up;
 }
 
 static const char *state_of(const sim_t *s, int i)
@@ -1290,7 +1292,7 @@ static const char *state_of(const sim_t *s, int i)
     if (!n->booted) {
         return "BOOT";
     }
-    if (n->kind == SIM_NODE_DASH) {
+    if (n->kind == SIM_NODE_COCKPIT) {
         return link_up(s, i) ? "RUN" : "LOST";
     }
     if (n->last_health.node_id == 0) {
@@ -1334,8 +1336,8 @@ static void snap_slots(FILE *o, sim_t *s, int i)
             a = &s->gw.core->slot[k].acq;
         } else if (n->kind == SIM_NODE_CAN && n->core != NULL) {
             a = &n->core->slot[k].acq;
-        } else if (n->kind == SIM_NODE_DASH && n->dash != NULL) {
-            a = &n->dash->slot[k];
+        } else if (n->kind == SIM_NODE_COCKPIT && n->cockpit != NULL) {
+            a = &n->cockpit->slot[k];
         }
         bool healthy = n->booted && a != NULL && atomic_load(&a->healthy);
         fprintf(o,
@@ -1353,7 +1355,7 @@ static void snap_slots(FILE *o, sim_t *s, int i)
 
 void sim_snapshot(sim_t *s)
 {
-    static const char *kinds[] = {"central", "can", "dash"};
+    static const char *kinds[] = {"central", "can", "cockpit"};
     FILE              *o       = s->out;
     fprintf(o, "{\"ev\":\"snap\",\"t\":%.6f,\"seed\":%llu,", t_s(s), (unsigned long long)s->seed);
     fprintf(o,
@@ -1386,7 +1388,7 @@ void sim_snapshot(sim_t *s)
                     n->wifi.up ? "true" : "false", link_up(s, i) ? "true" : "false",
                     (unsigned)n->wifi.loss_permille, (unsigned)n->wifi.sent,
                     (unsigned)n->wifi.delivered, (unsigned)n->wifi.dropped,
-                    n->dash != NULL ? (unsigned)atomic_load(&n->dash->packet_gaps) : 0u);
+                    n->cockpit != NULL ? (unsigned)atomic_load(&n->cockpit->packet_gaps) : 0u);
         } else {
             fprintf(o,
                     "\"can\":{\"running\":%s,\"tec\":%u,\"rec\":%u,\"tx\":%u,\"rx\":%u,"
@@ -1413,7 +1415,7 @@ void sim_snapshot(sim_t *s)
             "\"gw\":{\"epoch\":%u,\"sd\":%s,\"log_open\":%s,\"log_file\":\"%s\",\"log_bytes\":%llu,"
             "\"records\":%u,\"dropped\":%u,\"write_errors\":%u,\"queue_hw\":%u,"
             "\"usb_pkts\":%u,\"usb_bytes\":%u,\"wifi_pkts\":%u,\"lora_pkts\":%u,\"lora_bytes\":%u,"
-            "\"lora_records\":%u,\"dash_pkts\":%u,\"sync_fail\":%u},",
+            "\"lora_records\":%u,\"cockpit_pkts\":%u,\"sync_fail\":%u},",
             (unsigned)s->gw.epoch, s->nodes[GW].sd_inserted ? "true" : "false",
             (s->nodes[GW].booted && s->gw.log.open) ? "true" : "false", s->nodes[GW].keeper.name,
             (unsigned long long)s->nodes[GW].log_bytes, (unsigned)ls.records_written,
@@ -1422,7 +1424,7 @@ void sim_snapshot(sim_t *s)
             (unsigned)s->gw.usb_st.packets_sent, (unsigned)s->gw.usb_st.bytes_sent,
             (unsigned)s->gw.wifi_st.packets_sent, (unsigned)s->gw.lora_st.packets_sent,
             (unsigned)s->gw.lora_st.bytes_sent, (unsigned)s->gw.last_lora_records,
-            (unsigned)s->gw.dash_st.packets_sent, (unsigned)s->gw.sync_timeouts);
+            (unsigned)s->gw.cockpit_st.packets_sent, (unsigned)s->gw.sync_timeouts);
 
     /* Latest value of every signal seen on the bus (what the Central logs). */
     fprintf(o, "\"signals\":{");
@@ -1469,18 +1471,18 @@ void sim_snapshot(sim_t *s)
     }
     fprintf(o, "],");
 
-    /* What the cockpit display shows: the dashboard core's own tables. */
-    fprintf(o, "\"dash\":[");
-    int dash = sim_node_by_id(s, LBR_NODE_DASHBOARD);
-    if (dash >= 0 && s->nodes[dash].booted && s->nodes[dash].dash != NULL) {
-        static lbr_value_table_t values;
-        static lbr_dash_node_t   dnodes[LBR_DASH_MAX_NODES];
-        uint64_t                 dnow = sim_local_us(s, dash);
-        lbr_dash_core_snapshot(s->nodes[dash].dash, &values, dnodes);
-        for (size_t k = 0; k < lbr_dash_signal_count; k++) {
+    /* What the cockpit display shows: the cockpit core's own tables. */
+    fprintf(o, "\"cockpit\":[");
+    int cockpit = sim_node_by_id(s, LBR_NODE_COCKPIT);
+    if (cockpit >= 0 && s->nodes[cockpit].booted && s->nodes[cockpit].cockpit != NULL) {
+        static lbr_value_table_t  values;
+        static lbr_cockpit_node_t dnodes[LBR_COCKPIT_MAX_NODES];
+        uint64_t                  dnow = sim_local_us(s, cockpit);
+        lbr_cockpit_core_snapshot(s->nodes[cockpit].cockpit, &values, dnodes);
+        for (size_t k = 0; k < lbr_cockpit_signal_count; k++) {
             lbr_sample_t             smp;
-            const lbr_signal_info_t *info = lbr_signal_info(lbr_dash_signals[k]);
-            lbr_value_state_t  st = lbr_value_table_get(&values, lbr_dash_signals[k], dnow, &smp);
+            const lbr_signal_info_t *info = lbr_signal_info(lbr_cockpit_signals[k]);
+            lbr_value_state_t st = lbr_value_table_get(&values, lbr_cockpit_signals[k], dnow, &smp);
             static const char *names[] = {"none", "stale", "invalid", "ok"};
             fprintf(o, "%s{\"sig\":\"%s\",\"unit\":\"%s\",\"state\":\"%s\"", k ? "," : "",
                     info->name, lbr_unit_name(info->unit), names[st]);
@@ -1625,13 +1627,15 @@ static bool node_metric(sim_t *s, int i, const char *m, double *v)
     if (strcmp(m, "seen") == 0) {
         *v = (i == GW || gw_sees(s, i)) ? 1 : 0;
     } else if (strcmp(m, "synced") == 0) {
-        /* The dashboard keeps no shared clock: nothing to sync, reported 1. */
-        *v = (n->servo.synced || n->kind == SIM_NODE_DASH) ? 1 : 0;
+        /* The cockpit keeps no shared clock: nothing to sync, reported 1. */
+        *v = (n->servo.synced || n->kind == SIM_NODE_COCKPIT) ? 1 : 0;
     } else if (strcmp(m, "link") == 0) {
         *v = !wireless(n) || link_up(s, i) ? 1 : 0;
     } else if (strcmp(m, "gaps") == 0) {
-        /* Datagrams from the Central that never reached the dashboard. */
-        *v = n->kind == SIM_NODE_DASH && n->dash != NULL ? atomic_load(&n->dash->packet_gaps) : 0;
+        /* Datagrams from the Central that never reached the cockpit. */
+        *v = n->kind == SIM_NODE_COCKPIT && n->cockpit != NULL
+                 ? atomic_load(&n->cockpit->packet_gaps)
+                 : 0;
     } else if (strcmp(m, "transport_errors") == 0) {
         *v = n->last_health.transport_error_count;
     } else if (strcmp(m, "sync_err_us") == 0) {
@@ -1708,7 +1712,7 @@ static bool log_metric(sim_t *s, const char *m, double *v)
 
 /* Group targets of expect: all (every node but the Central), can (the CAN
  * sensor nodes, corners included), corners (the four wheel hub nodes),
- * wireless (the dashboard). */
+ * wireless (the cockpit). */
 static int group_of(const char *target)
 {
     static const char *const groups[] = {"all", "can", "corners", "wireless"};
@@ -1818,7 +1822,7 @@ static int cmd_expect(sim_t *s, char **tok, int nt, const char *line)
     } else if (strcmp(target, "central") == 0 && strcmp(metric, "frames_logged") != 0 &&
                strcmp(metric, "log_dropped") != 0 && strcmp(metric, "lora_pkts") != 0 &&
                strcmp(metric, "usb_pkts") != 0 && strcmp(metric, "sync_fail") != 0 &&
-               strcmp(metric, "dash_pkts") != 0) {
+               strcmp(metric, "cockpit_pkts") != 0) {
         if (!node_metric(s, GW, metric, &v)) {
             return err(s, "unknown central metric '%s'", metric);
         }
@@ -1833,8 +1837,8 @@ static int cmd_expect(sim_t *s, char **tok, int nt, const char *line)
             v = s->gw.lora_st.packets_sent;
         } else if (strcmp(metric, "usb_pkts") == 0) {
             v = s->gw.usb_st.packets_sent;
-        } else if (strcmp(metric, "dash_pkts") == 0) {
-            v = s->gw.dash_st.packets_sent;
+        } else if (strcmp(metric, "cockpit_pkts") == 0) {
+            v = s->gw.cockpit_st.packets_sent;
         } else {
             v = s->gw.sync_timeouts;
         }
@@ -1978,7 +1982,7 @@ int sim_command(sim_t *s, const char *line)
             o->value = (float)atof(tok[2]);
         }
     } else if (strcmp(c, "wifi") == 0) {
-        /* wifi <node> up|down|loss <permille>: the dashboard's link. */
+        /* wifi <node> up|down|loss <permille>: the cockpit's link. */
         int i =
             nt > 2 ? need_node(s, tok[1]) : err(s, "usage: wifi <node> up|down|loss <permille>");
         if (i < 0) {
@@ -1986,7 +1990,7 @@ int sim_command(sim_t *s, const char *line)
         }
         sim_node_t *n = &s->nodes[i];
         if (!wireless(n)) {
-            return err(s, "%s has no WiFi link (only the dashboard does)", n->name);
+            return err(s, "%s has no WiFi link (only the cockpit does)", n->name);
         }
         if (strcmp(tok[2], "up") == 0 || strcmp(tok[2], "down") == 0) {
             n->wifi.up = tok[2][0] == 'u';

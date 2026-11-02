@@ -1,6 +1,6 @@
 # CAN ID map
 
-Part of protocol version 4. Keep synchronized with `lbr-dashboard` and every node's firmware.
+Part of protocol version 4. Keep synchronized with the dashboard app and every node's firmware.
 The map is the one in [`DAQ-WIRING.md`](../DAQ-WIRING.md) section 7; this file adds the bit-level
 rules. The data frames are a schema, `car/components/protocol/frames.c`, exported as the
 `frames` table of `dev/tests/fixtures/catalog.json` and folded into the catalog hash; the codec is
@@ -28,7 +28,7 @@ them (`rx_foreign`).
 
 ### Node ids
 
-Ids 1..10 are the CAN nodes and match DAQ-WIRING's "CAN node N". The dashboard (0x0B) is the
+Ids 1..10 are the CAN nodes and match DAQ-WIRING's "CAN node N". The cockpit (0x0B) is the
 only node off the bus; it never transmits on CAN.
 
 | Id | Node | Board | Link |
@@ -38,9 +38,9 @@ only node off the bus; it never transmits on CAN.
 | 0x03 | `driver_input` | ESP32 | CAN |
 | 0x04 | `temperature` | ESP32 | CAN |
 | 0x05 | `stress` | ESP32 | CAN |
-| 0x06 | `central` | ESP32-C5 | CAN, pit/dashboard WiFi access point, LoRa, USB, BLE |
+| 0x06 | `central` | ESP32-C5 | CAN, pit/cockpit WiFi access point, LoRa, USB, BLE |
 | 0x07 .. 0x0A | `corner_fl`, `corner_fr`, `corner_bl`, `corner_br` | Mini ESP32-C5 | CAN |
-| 0x0B | `dashboard` | ESP32-C5 | WiFi to the Central |
+| 0x0B | `cockpit` | ESP32-C5 | WiFi to the Central |
 
 ## Data frames
 
@@ -60,11 +60,11 @@ The sender of a data frame is also the node that takes its samples.
 | 0x600 | `GPS_POSITION` | central | 10 | 0: GPS_LATITUDE i32, 4: GPS_LONGITUDE i32 (1e-7 deg) | - |
 | 0x601 | `GPS_MOTION` | central | 10 | 0: GPS_SPEED u16 0.01 m/s, 2: GPS_COURSE u16 0.01 deg, 4: GPS_ALTITUDE i16 0.1 m | 6 |
 | 0x602 | `GPS_STATUS` | central | 10 | 0: GPS_UTC u32, 4: GPS_FIX u8, 5: GPS_SATELLITES u8, 6: GPS_HDOP u16 0.01 | - |
-| 0x60A | `DASH_STATUS` | central | 1 | 0: DASH_BATTERY u8 1 %, 1: DASH_LINK u8 | - |
+| 0x60A | `COCKPIT_STATUS` | central | 1 | 0: COCKPIT_BATTERY u8 1 %, 1: COCKPIT_LINK u8 | - |
 
 Scales marked TBD in DAQ-WIRING (pedals, steering, fuel, IMU, stress) are provisional until parts
 are chosen. A scale change is a change to `frames.c`: the catalog hash moves, the fixtures are
-regenerated, and `lbr-dashboard` updates in step. Every signal travels in exactly one frame, and
+regenerated, and the dashboard app updates in step. Every signal travels in exactly one frame, and
 every field of a frame comes from one acquisition slot sampled at the frame's rate, so each
 sample is published exactly once (checked by `test_plans`).
 
@@ -135,7 +135,7 @@ Heartbeat error flags: bit 0 `NOT_SYNCED`, bit 1 `SENSOR` (a slot faulted or unc
 `CAN` (error passive, not running, or a bus-off since the last heartbeat), bit 3 `CONFIG`, bit 4
 `STORAGE` (an expected log is not being written), bit 5 `SIM` (simulated data), bit 6 `LOSS`
 (samples, frames, or records lost since the last heartbeat), bit 7 `LINK` (the Central: the
-dashboard's WiFi link is down).
+cockpit's WiFi link is down).
 
 Sensor nodes program their TWAI filter to ids 0x000..0x01F: they only receive the Central's time
 sync and commands. The Central receives everything.

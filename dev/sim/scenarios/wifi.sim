@@ -1,27 +1,27 @@
-# The dashboard's 5 GHz link (DAQ-WIRING.md section 8), the only wireless
+# The cockpit's 5 GHz link (DAQ-WIRING.md section 8), the only wireless
 # node: lost datagrams are counted, never silent; out of range it is reported
 # and comes back; the authoritative log never notices.
-at 3.0  wifi dashboard loss 300
-at 9.0  expect dashboard gaps > 3
-at 9.0  expect dashboard link == 1
-at 9.0  wifi dashboard loss 0
+at 3.0  wifi cockpit loss 300
+at 9.0  expect cockpit gaps > 3
+at 9.0  expect cockpit link == 1
+at 9.0  wifi cockpit loss 0
 
-# The dashboard out of range: the Central reports it and keeps logging.
-at 10.0 wifi dashboard down
-at 14.0 expect dashboard state == LOST
-at 14.0 expect DASH_LINK value == 0
-at 14.0 expect DASH_BATTERY reason == NO_DATA
+# The cockpit out of range: the Central reports it and keeps logging.
+at 10.0 wifi cockpit down
+at 14.0 expect cockpit state == LOST
+at 14.0 expect COCKPIT_LINK value == 0
+at 14.0 expect COCKPIT_BATTERY reason == NO_DATA
 at 14.0 expect central event:NODE_LOST >= 1
 at 14.0 expect central log_dropped == 0
-at 14.0 wifi dashboard up
-at 17.0 expect dashboard state == RUN
-at 17.0 expect DASH_LINK value == 1
+at 14.0 wifi cockpit up
+at 17.0 expect cockpit state == RUN
+at 17.0 expect COCKPIT_LINK value == 1
 at 17.0 expect central event:NODE_FOUND >= 1
 
-# A low dashboard battery is reported as a value, not a fault.
-at 17.0 set DASH_BATTERY 5
-at 19.5 expect DASH_BATTERY value <= 6
-at 19.5 auto DASH_BATTERY
+# A low cockpit battery is reported as a value, not a fault.
+at 17.0 set COCKPIT_BATTERY 5
+at 19.5 expect COCKPIT_BATTERY value <= 6
+at 19.5 auto COCKPIT_BATTERY
 
 at 20.0 expect can tx_dropped == 0
 at 20.0 expect log intact == 1

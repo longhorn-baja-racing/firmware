@@ -94,7 +94,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [central, imu, powertrain, driver_input, temperature, stress, dashboard, corner]
+        node: [central, imu, powertrain, driver_input, temperature, stress, cockpit, corner]
         variant: [default, linkcheck]
     steps:
       - uses: actions/checkout@v4

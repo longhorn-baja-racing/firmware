@@ -5,23 +5,23 @@
 #include <stdint.h>
 
 /*
- * The cockpit dashboard's wireless link (DAQ-WIRING.md section 8), pure
+ * The cockpit display's wireless link (DAQ-WIRING.md section 8), pure
  * (host-tested). It is the only node off the CAN bus:
  *
- *   Central -> dashboard   display values, node status   (LBR_LINK_DASH)
- *   dashboard -> Central   dashboard battery
+ *   Central -> cockpit   display values, node status   (LBR_LINK_COCKPIT)
+ *   cockpit -> Central   cockpit battery
  *
  * Every datagram is one transport packet (lbr/packet.h: header, records,
  * CRC-32) over UDP, no TCP, so a lost datagram never stalls the next. The
  * packet seq is per sender, so the receiver counts lost datagrams. The
- * Central side is lbr/dash_link.h, the dashboard side lbr/dash_core.h.
+ * Central side is lbr/cockpit_link.h, the cockpit side lbr/cockpit_core.h.
  */
 
-#define LBR_WLINK_DASH_PORT   47801u /* dashboard listens */
-#define LBR_WLINK_STATUS_PORT 47802u /* Central listens for the dashboard */
+#define LBR_WLINK_COCKPIT_PORT 47801u /* cockpit listens */
+#define LBR_WLINK_STATUS_PORT  47802u /* Central listens for the cockpit */
 
-#define LBR_WLINK_LINK_TIMEOUT_US 500000u  /* the Central sends 10 datagrams/s */
-#define LBR_WLINK_DASH_TIMEOUT_US 3000000u /* the dashboard reports once a second */
+#define LBR_WLINK_LINK_TIMEOUT_US    500000u  /* the Central sends 10 datagrams/s */
+#define LBR_WLINK_COCKPIT_TIMEOUT_US 3000000u /* the cockpit reports once a second */
 
 /* ------------------------------------------------------------------------ */
 /* Datagram sequence                                                         */

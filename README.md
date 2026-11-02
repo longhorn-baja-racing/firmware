@@ -6,17 +6,17 @@ The 2026 architecture ([`DAQ-WIRING.md`](DAQ-WIRING.md)) is a **distributed CAN 
 ESP32 nodes**. Ten controllers each own a different set of sensors and publish their
 measurements onto a shared **CAN bus**, including a wheel hub node at each corner that carries
 that corner's suspension IMU. The **Central Controller** records the authoritative log, keeps
-the shared clock, carries the GPS, and drives the live telemetry links, including the in-cockpit
-dashboard over WiFi. The firmware is the vehicle-side half of the telemetry system; the
-companion desktop application lives in
-[`longhorn-baja-racing/lbr-dashboard`](https://github.com/longhorn-baja-racing/lbr-dashboard).
+the shared clock, carries the GPS, and drives the live telemetry links, including the
+**cockpit** display over WiFi. The firmware is the vehicle-side half of the telemetry system; the
+companion desktop application, the **dashboard** used in the pits to view live data and logs,
+lives in [`longhorn-baja-racing/dashboard`](https://github.com/longhorn-baja-racing/dashboard).
 
 The recommended runtime is **C/C++ on ESP-IDF** (Espressif's official framework), using the
 ESP32's built-in **TWAI** controller for CAN with an external CAN transceiver.
 
 The 2026 vehicle carries five sensor controllers (**IMU, powertrain, driver input, temperature,
 stress**), four **corner** (wheel hub) nodes, the **Central** controller, all on CAN, and the
-cockpit **dashboard** over WiFi.
+**cockpit** driver display over WiFi.
 
 ## Project status
 
@@ -25,7 +25,7 @@ test, simulate, or flash, see [Getting started](#getting-started).
 
 - **Shared libraries** (`car/components/`): protocol, signal catalog and CAN frame table, CAN
   codec and TWAI adapter, CAN-distributed time sync, recoverable SD logging, heartbeat/health,
-  sensor framework, grid-locked acquisition, node runtime, the dashboard WiFi link,
+  sensor framework, grid-locked acquisition, node runtime, the cockpit WiFi link,
   live transports (USB, LoRa, WiFi, BLE), and the Central's logic. The hardware-independent
   parts run in host tests under ASan/UBSan.
 - **Node apps** (`car/nodes/`): one per node of DAQ-WIRING.md. Every node publishes its full
@@ -37,7 +37,7 @@ test, simulate, or flash, see [Getting started](#getting-started).
   replay, and builds every node twice (shipped config and a link-coverage overlay).
 
 Open, by design: part-specific drivers (IMU, strain amplifier, thermocouples; #10), per-node GPIO and CAN bus
-parameters (#15), and agreeing the canonical spec location with `lbr-dashboard` (#14). All
+parameters (#15), and agreeing the canonical spec location with the dashboard app (#14). All
 pins default to `-1` in Kconfig and the firmware refuses to drive an unset pin.
 
 ## 2026 goals
@@ -48,7 +48,7 @@ The firmware must:
 - timestamp samples against a shared, CAN-distributed monotonic time base;
 - publish measurements onto the CAN bus as schema-driven records;
 - write a full-fidelity, time-aligned log to microSD on the Central Controller without depending on a live link;
-- expose live telemetry over **LoRa** during the race, to the driver on the cockpit dashboard, and over **USB serial / WiFi / BLE** for pit and bench use;
+- expose live telemetry over **LoRa** during the race, to the driver on the cockpit display, and over **USB serial / WiFi / BLE** for pit and bench use;
 - report packet sequence numbers, heartbeats, per-node sensor status, calibration state, storage health, bus health, and recoverable errors;
 - preserve enough session metadata to interpret a log later, including firmware/protocol versions, the node topology, and sensor configuration;
 - keep acquisition, logging, and each transport decoupled so no node or link reduces the fidelity of the authoritative log.
@@ -67,7 +67,7 @@ The firmware must:
                                        GPS --> [Central Controller]
                                                  |-> authoritative microSD log (full fidelity, time-aligned)
                                                  |-> LoRa  -> pit (in-race critical subset)
-                                                 |-> WiFi  -> cockpit dashboard (own battery) and pit laptop
+                                                 |-> WiFi  -> cockpit display (own battery) and pit laptop
                                                  |-> BLE   -> phone/tablet (walk-up diagnostics)
                                                  |-> USB   -> bench (log dump / debug / flash)
 ```
@@ -81,14 +81,15 @@ The firmware must:
 | `driver_input` | 0x03 | ESP32 | `BRAKE_PEDAL`, `GAS_PEDAL`, `STEERING_ANGLE` 100 Hz | |
 | `temperature` | 0x04 | ESP32 | `TEMP_BRAKE_FL/FR/BL/BR`, `TEMP_CVT` 10 Hz | |
 | `stress` | 0x05 | ESP32 | `STRESS_1..8` 100 Hz | |
-| `central` | 0x06 | ESP32-C5 | `GPS_*` 10 Hz; `DASH_BATTERY`, `DASH_LINK` 1 Hz | logger, time master, LoRa, dashboard link |
+| `central` | 0x06 | ESP32-C5 | `GPS_*` 10 Hz; `COCKPIT_BATTERY`, `COCKPIT_LINK` 1 Hz | logger, time master, LoRa, cockpit link |
 | `corner_fl/fr/bl/br` | 0x07..0x0A | Mini ESP32-C5 | their `IMU_xx_*` 100 Hz | wheel hub, one firmware for all four |
-| `dashboard` | 0x0B | ESP32-C5 | `DASH_BATTERY` (reported to the Central) | driver's display, WiFi only, own battery |
+| `cockpit` | 0x0B | ESP32-C5 | `COCKPIT_BATTERY` (reported to the Central) | driver's display, WiFi only, own battery |
 
 Rates and frames are DAQ-WIRING.md section 7, implemented as a table
 (`car/components/protocol/frames.c`); each node's plan (`car/nodes/<name>/main/<name>_plan.c`)
-must match it, which the host tests check together with the bus budget. The cockpit `dashboard`
-node is the driver's display in the car; it is unrelated to the `lbr-dashboard` desktop app.
+must match it, which the host tests check together with the bus budget. The `cockpit`
+node is the driver's display in the car. "Dashboard" always means the pit/desktop app
+([`longhorn-baja-racing/dashboard`](https://github.com/longhorn-baja-racing/dashboard)), never a node.
 
 Each sensor node is an independent, independently testable ESP32 that:
 
@@ -108,7 +109,7 @@ The Central fills the gateway/logger role. It:
 - is the single source of truth and single pull-point after a run;
 - broadcasts the CAN time-sync frames that discipline every node's clock;
 - samples its GPS and puts it on CAN like any other node;
-- drives all live transports (LoRa, WiFi, BLE, USB) and the dashboard from the logical record stream.
+- drives all live transports (LoRa, WiFi, BLE, USB) and the cockpit from the logical record stream.
 
 A slow or disconnected live link must **never** reduce the fidelity of the authoritative log.
 Acquisition, logging, and each transport use **bounded queues** with explicit overflow/error
@@ -154,7 +155,7 @@ Counter widths and rollover behavior are specified in the shared protocol.
 ## Live transports
 
 All transports implement the **same logical record and health model** behind a transport
-interface (one packet framing for every link, including the dashboard WiFi link). Transport-specific framing and bandwidth policy must not change the meaning of a
+interface (one packet framing for every link, including the cockpit WiFi link). Transport-specific framing and bandwidth policy must not change the meaning of a
 logged signal. Each link occupies a distinct range/bandwidth/availability niche:
 
 ### LoRa - in-race telemetry
@@ -176,9 +177,9 @@ Short-range, high-bandwidth, power-hungry. The Central's access point (5 GHz by 
 fallback) serves the pit: near-full-rate live view when the car is stationary or passing pit,
 plus **OTA firmware updates** and configuration push.
 
-### Cockpit dashboard - 5 GHz WiFi on the car
+### Cockpit display - 5 GHz WiFi on the car
 
-The cockpit dashboard, the only node off the CAN bus, joins the Central's access point and gets
+The cockpit display, the only node off the CAN bus, joins the Central's access point and gets
 display values and node status 10 times a second over UDP; it reports its battery back. Lost
 datagrams are counted, never silent. Details: DAQ-WIRING.md section 8 and
 [`docs/protocol.md`](docs/protocol.md).
@@ -214,7 +215,7 @@ The canonical specification should define:
 - compatibility rules for older logs and unknown future signals/nodes;
 - golden binary/log fixtures used by both repositories.
 
-The initial canonical specification may live in `lbr-dashboard`, with generated/copied bindings
+The initial canonical specification may live in the dashboard app, with generated/copied bindings
 or golden fixtures consumed here. Do not let independent, incompatible definitions evolve in the
 two codebases, or across nodes.
 
@@ -234,7 +235,7 @@ Each node will minimally need:
 | microSD (Central, and local-logging nodes) | SPI / SDMMC | **TBD** |
 | LoRa radio (Central) | SPI (+ control lines) | e.g. SX127x/RFM95 class module; **TBD** |
 | GPS receiver (Central) | UART, NMEA 0183 | any module; **TBD** |
-| WiFi (Central, dashboard) | ESP32-C5 radio, 5 GHz | 2.4 GHz fallback by menuconfig |
+| WiFi (Central, cockpit) | ESP32-C5 radio, 5 GHz | 2.4 GHz fallback by menuconfig |
 
 Electrical voltage levels, transceiver choice, pull-ups, bus termination, card-detect,
 interrupt, reset, and power-control details must be verified against the final schematic and
@@ -256,20 +257,20 @@ car/                          # ON THE CAR: everything that is flashed to an ESP
     node/                     #     plans/validation, grid-locked acquisition, sensor-node runtime
     transport/                #     packet framing, LoRa policy
     links/                    #     the Central's USB/LoRa/WiFi/BLE links
-    wlink/                    #     dashboard WiFi link (cores + C5 WiFi/UDP glue)
+    wlink/                    #     cockpit WiFi link (cores + C5 WiFi/UDP glue)
     gateway/                  #     the Central's logic, runtime config, status text
   nodes/                      #   one ESP-IDF app per physical node (DAQ-WIRING.md)
     sdkconfig.common          #     settings shared by every node
-    central/                  #     CAN logger, time master, GPS, LoRa, dashboard link (ESP32-C5)
+    central/                  #     CAN logger, time master, GPS, LoRa, cockpit link (ESP32-C5)
     imu/                      #     chassis IMU (ESP32-C5)
     powertrain/ driver_input/ temperature/ stress/   # sensor controllers (ESP32)
     corner/                   #     one firmware for the four wheel hub nodes (Mini ESP32-C5)
-    dashboard/                #     cockpit display over WiFi (ESP32-C5)
+    cockpit/                  #     driver display over WiFi (ESP32-C5)
 dev/                          # DEVELOPMENT ONLY: never built into firmware
   CMakeLists.txt              #   host build: unit tests, fixtures, simulator
   sim/                        #   car simulator: real firmware logic on a simulated car + browser UI
   tests/host/                 #   unit tests of the pure logic + fixture generator
-  tests/fixtures/             #   golden fixtures shared with lbr-dashboard
+  tests/fixtures/             #   golden fixtures shared with the dashboard app
   ci/                         #   CI-only sdkconfig overlays (not pin maps)
   tools/lbr_decode.py         #   reference decoder: logs, streams, USB serial, fixture self-test
 docs/                         # protocol, CAN ids, hardware, sensors
@@ -281,8 +282,8 @@ docs/                         # protocol, CAN ids, hardware, sensors
 anything in `car/` includes or builds from `dev/`, and the bench sensor simulator
 (`CONFIG_LBR_SENSOR_SIM`) is compiled into a node only when that bench option is on.
 
-The node runtime, the Central, the dashboard link, and the SD session keeper are pure logic
-(`node_core.c`, `gw_core.c`, `dash_core.c`, `log_keeper.c`) behind small hardware tables; the
+The node runtime, the Central, the cockpit link, and the SD session keeper are pure logic
+(`node_core.c`, `gw_core.c`, `cockpit_core.c`, `log_keeper.c`) behind small hardware tables; the
 `*_esp.c` files only connect
 them to FreeRTOS, TWAI, SD, and the radios. That is what lets the host tests and the
 simulator run exactly the code that is flashed.
@@ -352,11 +353,11 @@ python3 dev/sim/ui/server.py --port 9000 --seed 7 --out /tmp/sim-run   # other p
 In the browser:
 
 - the car from above: the eleven nodes where DAQ-WIRING puts them, every sensor where it sits,
-  the CAN trunk (with drops to the wheel hubs) with frames moving along it, and the dashboard's
+  the CAN trunk (with drops to the wheel hubs) with frames moving along it, and the cockpit's
   5 GHz WiFi link; colors show
   state (green ok, amber degraded or no data, red fault or lost, grey not fitted or off);
 - **click a node** for its state, time sync, CAN controller or WiFi link, heartbeat, slots, SD
-  card, and links, with buttons to unplug its CAN cable, force bus-off, take the dashboard out of
+  card, and links, with buttons to unplug its CAN cable, force bus-off, take the cockpit out of
   WiFi range or add loss, reboot, power it off, change its clock drift, unplug a part, or pull the
   Central's SD card; **click a sensor** to override its value or open the
   circuit; **click the bus** to add noise;
@@ -390,7 +391,7 @@ change. The command and check reference is in [`dev/sim/README.md`](dev/sim/READ
 ### 4. Build and flash the firmware
 
 Each node is its own ESP-IDF project in `car/nodes/<node>` (`central`, `imu`, `powertrain`,
-`driver_input`, `temperature`, `stress`, `corner`, `dashboard`). Its chip (ESP32 or ESP32-C5)
+`driver_input`, `temperature`, `stress`, `corner`, `cockpit`). Its chip (ESP32 or ESP32-C5)
 is set in its `sdkconfig.defaults`. With ESP-IDF exported:
 
 ```sh
@@ -403,7 +404,7 @@ idf.py menuconfig                        # LBR menus: pins, CAN, SD, inputs, lin
 Build every node from the repository root (warnings are errors, as in CI):
 
 ```sh
-for n in central imu powertrain driver_input temperature stress corner dashboard; do
+for n in central imu powertrain driver_input temperature stress corner cockpit; do
   (cd car/nodes/$n && idf.py build) || break
 done
 ```
@@ -415,7 +416,7 @@ done
   `menuconfig` with no code (`docs/sensors.md`).
 - **Bench only:** `CONFIG_LBR_SENSOR_SIM=y` feeds simulated sensor data (flagged in every
   heartbeat and log; never race with it). WiFi stays off until its password is set locally:
-  `CONFIG_LBR_WIFI_PASSWORD` on the Central and the dashboard; never commit it.
+  `CONFIG_LBR_WIFI_PASSWORD` on the Central and the cockpit; never commit it.
 - **Corner position:** flash the `corner` firmware four times with `CONFIG_LBR_CORNER_POSITION`
   set to FL, FR, BL, and BR (CAN nodes 7..10).
 - **Link check** (what CI also builds; placeholder pins, not a pin map):
@@ -449,7 +450,7 @@ Before merging firmware changes:
 2. build every affected node with **warnings treated as errors**;
 3. run formatting and static-analysis checks;
 4. replay golden fixtures through the dashboard compatibility tests;
-5. complete hardware-in-the-loop smoke tests - multi-node CAN acquisition, time sync, Central SD logging, the dashboard WiFi link, LoRa/USB/WiFi/BLE framing, node disconnect/reconnect, bus-off recovery, and fault reporting - when hardware behavior changes.
+5. complete hardware-in-the-loop smoke tests - multi-node CAN acquisition, time sync, Central SD logging, the cockpit WiFi link, LoRa/USB/WiFi/BLE framing, node disconnect/reconnect, bus-off recovery, and fault reporting - when hardware behavior changes.
 
 CI (`.github/workflows/ci.yml`) runs all host tests and simulator scenarios with gcc and clang,
 formatting, static analysis, the fixture replay, and builds every node on each pull request. Hardware-in-the-loop
@@ -464,4 +465,4 @@ is unavailable to CI.
 - Start a session only after configuration is validated; persist the exact configuration and node topology with the log.
 - Represent unavailable measurements and calibration explicitly rather than substituting zero.
 - Make watchdog resets, brownout/boot reasons, and CAN bus-off events observable in the next session.
-- Keep protocol compatibility tests synchronized with `lbr-dashboard`, and keep every node on one protocol/CAN-ID version.
+- Keep protocol compatibility tests synchronized with the dashboard app, and keep every node on one protocol/CAN-ID version.

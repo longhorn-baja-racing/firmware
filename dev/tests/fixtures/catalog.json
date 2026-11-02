@@ -1,7 +1,7 @@
 {
   "protocol_version": 4,
   "log_format_version": 1,
-  "catalog_hash": 1013205878,
+  "catalog_hash": 2862307193,
   "signals": [
     {"id": 256, "name": "BRAKE_PEDAL", "type": "f32", "unit": "%", "desc": "Brake pedal compression"},
     {"id": 257, "name": "GAS_PEDAL", "type": "f32", "unit": "%", "desc": "Gas pedal compression"},
@@ -61,8 +61,8 @@
     {"id": 1542, "name": "GPS_SATELLITES", "type": "u32", "unit": "count", "desc": "Satellites used in fix"},
     {"id": 1543, "name": "GPS_HDOP", "type": "f32", "unit": "", "desc": "Horizontal dilution of precision"},
     {"id": 1544, "name": "GPS_UTC", "type": "u32", "unit": "unix_s", "desc": "UTC time of fix, Unix seconds (wall-clock anchor only)"},
-    {"id": 1552, "name": "DASH_BATTERY", "type": "f32", "unit": "%", "desc": "Dashboard battery"},
-    {"id": 1553, "name": "DASH_LINK", "type": "bool", "unit": "", "desc": "Dashboard WiFi link OK"},
+    {"id": 1552, "name": "COCKPIT_BATTERY", "type": "f32", "unit": "%", "desc": "Cockpit display battery"},
+    {"id": 1553, "name": "COCKPIT_LINK", "type": "bool", "unit": "", "desc": "Cockpit display WiFi link OK"},
     {"id": 1792, "name": "EVENT", "type": "status", "unit": "", "desc": "Event code (see lbr_event_code_t)"},
     {"id": 1793, "name": "FAULT", "type": "status", "unit": "", "desc": "Fault/alarm code (see lbr_event_code_t)"}
   ],
@@ -87,7 +87,7 @@
     {"id": 1536, "name": "GPS_POSITION", "sender": 6, "rate_hz": 10, "dlc": 8, "counter_offset": null, "fields": [{"signal": 1536, "name": "GPS_LATITUDE", "offset": 0, "enc": "i32", "scale": 1}, {"signal": 1537, "name": "GPS_LONGITUDE", "offset": 4, "enc": "i32", "scale": 1}]},
     {"id": 1537, "name": "GPS_MOTION", "sender": 6, "rate_hz": 10, "dlc": 8, "counter_offset": 6, "fields": [{"signal": 1539, "name": "GPS_SPEED", "offset": 0, "enc": "u16", "scale": 0.00999999978}, {"signal": 1540, "name": "GPS_COURSE", "offset": 2, "enc": "u16", "scale": 0.00999999978}, {"signal": 1538, "name": "GPS_ALTITUDE", "offset": 4, "enc": "i16", "scale": 0.100000001}]},
     {"id": 1538, "name": "GPS_STATUS", "sender": 6, "rate_hz": 10, "dlc": 8, "counter_offset": null, "fields": [{"signal": 1544, "name": "GPS_UTC", "offset": 0, "enc": "u32", "scale": 1}, {"signal": 1541, "name": "GPS_FIX", "offset": 4, "enc": "u8", "scale": 1}, {"signal": 1542, "name": "GPS_SATELLITES", "offset": 5, "enc": "u8", "scale": 1}, {"signal": 1543, "name": "GPS_HDOP", "offset": 6, "enc": "u16", "scale": 0.00999999978}]},
-    {"id": 1546, "name": "DASH_STATUS", "sender": 6, "rate_hz": 1, "dlc": 2, "counter_offset": null, "fields": [{"signal": 1552, "name": "DASH_BATTERY", "offset": 0, "enc": "u8", "scale": 1}, {"signal": 1553, "name": "DASH_LINK", "offset": 1, "enc": "u8", "scale": 1}]}
+    {"id": 1546, "name": "COCKPIT_STATUS", "sender": 6, "rate_hz": 1, "dlc": 2, "counter_offset": null, "fields": [{"signal": 1552, "name": "COCKPIT_BATTERY", "offset": 0, "enc": "u8", "scale": 1}, {"signal": 1553, "name": "COCKPIT_LINK", "offset": 1, "enc": "u8", "scale": 1}]}
   ],
   "can_ids": {"time_sync": 1, "time_follow_up": 2, "command": 16, "event_base": 32, "heartbeat_base": 1792, "health_base": 1792, "can_node_max": 10, "time_sync_hz": 10, "bitrate": 500000},
   "encodings": ["i16", "u16", "u8", "i32", "u32"],
@@ -104,7 +104,7 @@
     {"id": 8, "name": "corner_fr"},
     {"id": 9, "name": "corner_bl"},
     {"id": 10, "name": "corner_br"},
-    {"id": 11, "name": "dashboard"}
+    {"id": 11, "name": "cockpit"}
   ],
   "units": ["", "m/s^2", "rad/s", "degC", "rpm", "m/s", "%", "deg*1e-7", "m", "deg", "count", "ue", "unix_s", "bitmask"],
   "value_types": ["none", "f32", "i32", "u32", "bool", "status", "raw"],

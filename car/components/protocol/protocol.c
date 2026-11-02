@@ -264,8 +264,8 @@ const char *lbr_node_name(uint8_t node_id)
             return "corner_bl";
         case LBR_NODE_CORNER_BR:
             return "corner_br";
-        case LBR_NODE_DASHBOARD:
-            return "dashboard";
+        case LBR_NODE_COCKPIT:
+            return "cockpit";
         default:
             return "?";
     }

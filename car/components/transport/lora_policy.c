@@ -7,11 +7,11 @@
 #include "lbr/transport.h"
 
 const lbr_lora_item_t lbr_lora_default_items[] = {
-    {LBR_SIG_ENGINE_RPM, 500},     {LBR_SIG_CVT_RPM, 500},        {LBR_SIG_GPS_SPEED, 1000},
-    {LBR_SIG_TEMP_CVT, 1000},      {LBR_SIG_TEMP_BRAKE_FL, 2000}, {LBR_SIG_TEMP_BRAKE_FR, 2000},
-    {LBR_SIG_TEMP_BRAKE_BL, 2000}, {LBR_SIG_TEMP_BRAKE_BR, 2000}, {LBR_SIG_FUEL_LEVEL, 5000},
-    {LBR_SIG_GPS_LATITUDE, 2000},  {LBR_SIG_GPS_LONGITUDE, 2000}, {LBR_SIG_GPS_FIX, 5000},
-    {LBR_SIG_DASH_BATTERY, 10000},
+    {LBR_SIG_ENGINE_RPM, 500},        {LBR_SIG_CVT_RPM, 500},        {LBR_SIG_GPS_SPEED, 1000},
+    {LBR_SIG_TEMP_CVT, 1000},         {LBR_SIG_TEMP_BRAKE_FL, 2000}, {LBR_SIG_TEMP_BRAKE_FR, 2000},
+    {LBR_SIG_TEMP_BRAKE_BL, 2000},    {LBR_SIG_TEMP_BRAKE_BR, 2000}, {LBR_SIG_FUEL_LEVEL, 5000},
+    {LBR_SIG_GPS_LATITUDE, 2000},     {LBR_SIG_GPS_LONGITUDE, 2000}, {LBR_SIG_GPS_FIX, 5000},
+    {LBR_SIG_COCKPIT_BATTERY, 10000},
 };
 const size_t lbr_lora_default_item_count =
     sizeof lbr_lora_default_items / sizeof lbr_lora_default_items[0];

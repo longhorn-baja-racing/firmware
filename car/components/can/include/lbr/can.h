@@ -151,7 +151,7 @@ bool lbr_can_decode_command(const lbr_can_frame_t *f, uint8_t *code, uint8_t arg
 #define LBR_HB_ERR_STORAGE    0x10u /* an expected log is not being written */
 #define LBR_HB_ERR_SIM        0x20u /* simulated sensor data: not measurements */
 #define LBR_HB_ERR_LOSS       0x40u /* samples, frames, or records were lost this period */
-#define LBR_HB_ERR_LINK       0x80u /* a wireless link (the cockpit dashboard) is down */
+#define LBR_HB_ERR_LINK       0x80u /* a wireless link (the cockpit display) is down */
 
 /* HEARTBEAT (0x700 + n, dlc 2): 0 state (lbr_node_state_t), 1 error flags. */
 bool lbr_can_encode_heartbeat(uint8_t node, uint8_t state, uint8_t err_flags, lbr_can_frame_t *out);

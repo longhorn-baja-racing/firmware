@@ -10,11 +10,11 @@
  *
  * The high byte groups signals like the CAN id map (DAQ-WIRING.md section 7):
  * 0x01 driver inputs, 0x02 powertrain, 0x03 IMU, 0x04 stress, 0x05
- * temperature, 0x06 Central (GPS, dashboard link), 0x07 events. Where and how
+ * temperature, 0x06 Central (GPS, cockpit link), 0x07 events. Where and how
  * each signal travels on CAN is the frame table (frames.c), not this file.
  * Values are sensor-frame: per-node mounting transforms are session metadata
  * applied by the dashboard. Any edit here changes lbr_catalog_hash() and must
- * be mirrored in lbr-dashboard via the exported catalog fixture
+ * be mirrored in the dashboard app via the exported catalog fixture
  * (dev/tests/fixtures/catalog.json).
  *
  * Intentionally no include guard: this file is expanded several times.
@@ -81,7 +81,7 @@ LBR_SIGNAL(TEMP_BRAKE_BL,     0x0502, F32,    DEG_C,       "BL brake temperature
 LBR_SIGNAL(TEMP_BRAKE_BR,     0x0503, F32,    DEG_C,       "BR brake temperature")
 LBR_SIGNAL(TEMP_CVT,          0x0504, F32,    DEG_C,       "CVT temperature")
 
-/* 0x06xx Central Controller: GPS (WGS84) and the dashboard link */
+/* 0x06xx Central Controller: GPS (WGS84) and the cockpit link */
 LBR_SIGNAL(GPS_LATITUDE,      0x0600, I32,    DEG_E7,      "Latitude, 1e-7 degree")
 LBR_SIGNAL(GPS_LONGITUDE,     0x0601, I32,    DEG_E7,      "Longitude, 1e-7 degree")
 LBR_SIGNAL(GPS_ALTITUDE,      0x0602, F32,    METER,       "Altitude above mean sea level")
@@ -91,8 +91,8 @@ LBR_SIGNAL(GPS_FIX,           0x0605, STATUS, NONE,        "Fix type: 0 none, 1 
 LBR_SIGNAL(GPS_SATELLITES,    0x0606, U32,    COUNT,       "Satellites used in fix")
 LBR_SIGNAL(GPS_HDOP,          0x0607, F32,    NONE,        "Horizontal dilution of precision")
 LBR_SIGNAL(GPS_UTC,           0x0608, U32,    UNIX_S,      "UTC time of fix, Unix seconds (wall-clock anchor only)")
-LBR_SIGNAL(DASH_BATTERY,      0x0610, F32,    PERCENT,     "Dashboard battery")
-LBR_SIGNAL(DASH_LINK,         0x0611, BOOL,   NONE,        "Dashboard WiFi link OK")
+LBR_SIGNAL(COCKPIT_BATTERY,   0x0610, F32,    PERCENT,     "Cockpit display battery")
+LBR_SIGNAL(COCKPIT_LINK,      0x0611, BOOL,   NONE,        "Cockpit display WiFi link OK")
 
 /* 0x07xx Events / faults (any node). Value: code in bits 0..15, argument in bits 16..31. */
 LBR_SIGNAL(EVENT,             0x0700, STATUS, NONE,        "Event code (see lbr_event_code_t)")

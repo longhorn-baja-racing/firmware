@@ -37,8 +37,8 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/transport/packet.c"
     "${LBR_COMPONENTS}/transport/lora_policy.c"
     "${LBR_COMPONENTS}/wlink/wlink.c"
-    "${LBR_COMPONENTS}/wlink/dash_link.c"
-    "${LBR_COMPONENTS}/wlink/dash_core.c"
+    "${LBR_COMPONENTS}/wlink/cockpit_link.c"
+    "${LBR_COMPONENTS}/wlink/cockpit_core.c"
     "${LBR_COMPONENTS}/gateway/gw_core.c"
     "${LBR_COMPONENTS}/gateway/gw_config.c"
     "${LBR_COMPONENTS}/gateway/status.c"
@@ -71,7 +71,7 @@ target_sources(lbr_core PRIVATE "${LBR_COMPONENTS}/node/value_table.c")
 
 # Every node's plan (pure data) is compiled in, so the frame-table rules and
 # the system-wide CAN budget are checked against the real configurations.
-set(LBR_NODE_PLANS imu powertrain driver_input temperature stress central dashboard corner)
+set(LBR_NODE_PLANS imu powertrain driver_input temperature stress central cockpit corner)
 add_library(lbr_plans STATIC)
 foreach(node IN LISTS LBR_NODE_PLANS)
     target_sources(lbr_plans PRIVATE "${LBR_ROOT}/car/nodes/${node}/main/${node}_plan.c")
@@ -88,7 +88,7 @@ foreach(name IN LISTS LBR_TESTS)
     add_test(NAME ${name} COMMAND test_${name})
 endforeach()
 
-# Golden fixtures shared with lbr-dashboard. CTest checks the committed files
+# Golden fixtures shared with the dashboard app. CTest checks the committed files
 # still match the codecs; the "fixtures" target regenerates them on purpose.
 add_executable(gen_fixtures gen_fixtures.c)
 target_link_libraries(gen_fixtures PRIVATE lbr_core)
