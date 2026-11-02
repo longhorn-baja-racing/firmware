@@ -15,12 +15,15 @@ never from tables in this file.
 
 Usage:
   lbr_decode.py log FILE.lbr [--json]
+  lbr_decode.py csv FILE.lbr [--out FILE.csv]
   lbr_decode.py stream FILE [--json]
   lbr_decode.py serial PORT [--baud N] [--cmd "STAT"|"LIST"|"DUMP name"] [--out FILE]
   lbr_decode.py --selftest [FIXTURES_DIR]
 """
 
 import argparse
+import csv
+import io
 import json
 import os
 import struct
@@ -491,6 +494,166 @@ def decode_stream(cat, data):
 
 
 # --------------------------------------------------------------------------
+# CSV export (docs/protocol.md, "CSV export"). The .LBR log stays the
+# authoritative record; the CSV is a lossless-for-data, tabular view of it.
+
+CSV_VERSION = 1
+CSV_COLUMNS = ["t_s", "kind", "node", "name", "value", "unit", "status", "synced", "seq"]
+SESSION_FIELDS = ["format_version", "protocol_version", "fw_version", "catalog_hash",
+                  "config_crc", "reset_reason", "boot_count", "start_time_us"]
+
+
+class CatalogMismatch(Exception):
+    pass
+
+
+def csv_time(t_us):
+    """Exact decimal seconds of a microsecond count (no float rounding)."""
+    return "%d.%06d" % divmod(t_us, 1000000)
+
+
+def csv_f32(bits):
+    """Shortest decimal that reads back as the same IEEE single."""
+    x = struct.unpack("<f", struct.pack("<I", bits))[0]
+    if x != x or x in (float("inf"), float("-inf")):
+        return repr(x)
+    for prec in range(6, 10):
+        text = "%.*g" % (prec, x)
+        if f32_bits(float(text)) == bits:
+            return text
+    return "%.9g" % x
+
+
+class CsvExporter:
+    """Writes one row per sample, event, heartbeat/health field, loss, and
+    text record, in log order. Nothing in the log is dropped silently: frames
+    left out (time sync) are counted in the closing integrity rows."""
+
+    def __init__(self, cat, out):
+        self.cat = cat
+        self.w = csv.writer(out, lineterminator="\n")
+        self.dec = BusDecoder(cat)
+        self.t_us = 0  # latest shared time seen, for records that carry none
+        self.logger = ""
+        self.catalog_checked = 0
+        self.time_sync_frames = self.time_follow_up_frames = 0
+        self.commands = {c["code"]: c["name"] for c in cat.raw["commands"]}
+        self.err_flags = cat.raw["heartbeat_err_flags"]
+        self.w.writerow(CSV_COLUMNS)
+        self.row(0, "format", "", "lbr_csv_version", CSV_VERSION)
+
+    def node(self, n):
+        return self.cat.nodes.get(n, "node%d" % n)
+
+    def row(self, t_us, kind, node, name, value="", unit="", status="", synced="", seq=""):
+        self.w.writerow([csv_time(t_us), kind, node, name, value, unit, status, synced, seq])
+
+    def sample(self, d):
+        info = self.cat.signals.get(d["signal"])
+        kind, unit, status, value = "sample", info["unit"] if info else "", "ok", ""
+        name = d["name"] if info else "signal_0x%04x" % d["signal"]
+        bits = int(d["value_bits"], 16)
+        if not d["valid"]:
+            status = d["reason"]
+        elif "event" in d:
+            kind, name, value, unit = d["name"].lower(), d["event"], d["event_arg"], ""
+        elif d["type"] == "f32":
+            value = csv_f32(bits)
+        elif d["type"] == "i32":
+            value = struct.unpack("<i", struct.pack("<I", bits))[0]
+        else:
+            value = bits  # u32, bool (0/1), status, raw
+        self.row(d["t_us"], kind, self.node(d["source"]), name, value, unit, status,
+                 int(d["synced"]), d["seq"])
+
+    def can_frame(self, f):
+        t = self.t_us = f["t_us"]
+        node = self.node(f["sender"])
+        if "samples" in f:
+            for smp in f["samples"]:
+                self.sample(smp)
+        elif "heartbeat" in f:
+            hb = f["heartbeat"]
+            names = [k for k, bit in self.err_flags.items() if hb["err_flags"] & bit]
+            self.row(t, "heartbeat", node, "state", hb["state"])
+            self.row(t, "heartbeat", node, "err_flags", hb["err_flags"], "bitmask",
+                     "|".join(names) or "ok")
+        elif "health_page" in f:
+            fields = {}
+            decode_health_page(f["health_page"], bytes.fromhex(f["data"]), fields)
+            for k, v in fields.items():
+                self.row(t, "health", node, k, v)
+        elif "time_sync" in f:
+            self.time_sync_frames += 1
+        elif "time_follow_up" in f:
+            self.time_follow_up_frames += 1
+        elif "command" in f:
+            c = f["command"]
+            self.row(t, "command", node, self.commands.get(c["code"], "code%d" % c["code"]), c["args"])
+        else:  # not LBR traffic, an unknown id, or a malformed frame: keep the raw bytes
+            ident = ("0x%08X" if f["flags"] & REC_FLAG_EXT else "0x%03X") % f["id"]
+            self.row(t, "can_raw", node, ident, f["data"])
+
+    def record(self, offset, rtype, p):
+        r = decode_log_record(self.cat, self.dec, offset, rtype, p)
+        kind = r["type"]
+        if kind == "SESSION":
+            self.t_us = r["start_time_us"]
+            self.logger = self.node(r["node_id"])
+            if r["catalog_hash"] != self.cat.raw["catalog_hash"]:
+                raise CatalogMismatch("log catalog hash %u != catalog.json %u: pass --catalog with the"
+                                      " catalog of the firmware that wrote this log"
+                                      % (r["catalog_hash"], self.cat.raw["catalog_hash"]))
+            self.catalog_checked = 1
+            for k in SESSION_FIELDS:
+                self.row(self.t_us, "session", self.logger, k, r[k])
+            for line in r["config_text"].splitlines():
+                k, sep, v = line.partition("=")
+                self.row(self.t_us, "config", self.logger, k if sep else "", v if sep else line)
+        elif kind == "SAMPLE":
+            self.sample(r["sample"])
+            if r["sample"]["synced"]:
+                self.t_us = r["sample"]["t_us"]
+        elif kind == "HEALTH":
+            h = dict(r["health"])
+            node = self.node(h.pop("node_id"))
+            for k, v in h.items():
+                self.row(self.t_us, "health", node, k, v)
+        elif kind == "CAN_FRAME":
+            self.can_frame(r["frame"])
+        elif kind == "LOSS":
+            self.t_us = r["t_us"]
+            self.row(self.t_us, "loss", self.logger, "dropped_records", r["dropped_records"])
+            self.row(self.t_us, "loss", self.logger, "dropped_bytes", r["dropped_bytes"])
+        elif kind == "TEXT":
+            self.row(self.t_us, "text", self.logger, "text", r["text"])
+        elif kind == "END":
+            self.t_us = r["t_us"]
+            self.row(self.t_us, "end", self.logger, "records_written", r["records_written"])
+        else:
+            self.row(self.t_us, "unknown_record", self.logger, "type%d" % rtype, p.hex())
+
+    def finish(self, reader, records):
+        for k, v in (("records", records), ("corrupt_regions", reader.corrupt_regions),
+                     ("skipped_bytes", reader.skipped_bytes),
+                     ("truncated_tail", reader.truncated_tail),
+                     ("time_sync_frames", self.time_sync_frames),
+                     ("time_follow_up_frames", self.time_follow_up_frames),
+                     ("catalog_checked", self.catalog_checked)):
+            self.row(self.t_us, "integrity", self.logger, k, v)
+
+
+def export_csv(cat, data, out):
+    r = LogReader(data)
+    x = CsvExporter(cat, out)
+    n = 0
+    for offset, rtype, p in r:
+        x.record(offset, rtype, p)
+        n += 1
+    x.finish(r, n)
+
+
+# --------------------------------------------------------------------------
 # Self test against the golden fixtures
 
 
@@ -524,6 +687,10 @@ def selftest(fixtures):
 
     checks.append(("session log", decode_log(cat, read("session.lbr")) == expect("session.json")))
     checks.append(("usb stream", decode_stream(cat, read("stream_usb.bin")) == expect("stream_usb.json")))
+
+    out = io.StringIO()
+    export_csv(cat, read("session.lbr"), out)
+    checks.append(("csv export", out.getvalue() == read("session.csv").decode("utf-8")))
 
     for name, ok in checks:
         print("%s %s" % ("PASS" if ok else "FAIL", name))
@@ -565,6 +732,19 @@ def cmd_stream(cat, path, as_json):
         out = decode_stream(cat, f.read())
     json.dump(out, sys.stdout, indent=1) if as_json else print(
         "%d packets, %d bad frames" % (len(out["packets"]), out["bad_frames"]))
+
+
+def cmd_csv(cat, path, out_path):
+    out_path = out_path or os.path.splitext(path)[0] + ".csv"
+    with open(path, "rb") as f:
+        data = f.read()
+    try:
+        with open(out_path, "w", encoding="utf-8", newline="") as out:
+            export_csv(cat, data, out)
+    except CatalogMismatch as e:
+        os.remove(out_path)
+        sys.exit("%s: %s" % (path, e))
+    print("wrote %s" % out_path)
 
 
 def cmd_serial(cat, port, baud, cmd, out_path):
@@ -619,7 +799,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--selftest", nargs="?", const=DEFAULT_FIXTURES, metavar="FIXTURES_DIR")
     ap.add_argument("--catalog", default=os.path.join(DEFAULT_FIXTURES, "catalog.json"))
-    ap.add_argument("mode", nargs="?", choices=["log", "stream", "serial"])
+    ap.add_argument("mode", nargs="?", choices=["log", "csv", "stream", "serial"])
     ap.add_argument("target", nargs="?")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--baud", type=int, default=921600)
@@ -634,6 +814,8 @@ def main():
     cat = Catalog(args.catalog)
     if args.mode == "log":
         cmd_log(cat, args.target, args.json)
+    elif args.mode == "csv":
+        cmd_csv(cat, args.target, args.out)
     elif args.mode == "stream":
         cmd_stream(cat, args.target, args.json)
     else:

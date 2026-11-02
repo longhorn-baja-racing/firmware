@@ -94,7 +94,14 @@ add_executable(gen_fixtures gen_fixtures.c)
 target_link_libraries(gen_fixtures PRIVATE lbr_core)
 lbr_apply_warnings(gen_fixtures)
 add_test(NAME fixtures COMMAND gen_fixtures check "${LBR_ROOT}/dev/tests/fixtures")
+# session.csv is the reference decoder's CSV export of session.lbr (docs/protocol.md,
+# "CSV export"); the decoder self test checks it alongside the binary fixtures.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(LBR_DECODE "${LBR_ROOT}/dev/tools/lbr_decode.py")
 add_custom_target(fixtures
     COMMAND gen_fixtures write "${LBR_ROOT}/dev/tests/fixtures"
+    COMMAND Python3::Interpreter -I "${LBR_DECODE}" csv "${LBR_ROOT}/dev/tests/fixtures/session.lbr"
+            --out "${LBR_ROOT}/dev/tests/fixtures/session.csv"
     DEPENDS gen_fixtures
     COMMENT "Regenerating golden fixtures in dev/tests/fixtures")
+add_test(NAME decoder COMMAND Python3::Interpreter -I "${LBR_DECODE}" --selftest)

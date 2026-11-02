@@ -158,6 +158,58 @@ record with the exact count is written ahead of the next record that fits.
 Session files are `/sdcard/lbr/NNNNNNNN.LBR`, numbered upward per boot; the firmware never
 formats a card or overwrites a session.
 
+## CSV export (lbr-csv version 1)
+
+The SD card holds `.LBR` logs only: they are CRC-checked, survive a power cut mid-write, and
+carry the session's config and versions. CSV is the export format for debugging and for the
+dashboard app: `python3 dev/tools/lbr_decode.py csv 00000012.LBR` writes `00000012.csv`, with
+every record of the log as rows (a long table, not one column per signal, so signals at
+different rates need no resampling and nothing is filled in). Each signal in it is a channel
+the dashboard app can plot.
+
+Columns, in this order, with a header row:
+
+| column | meaning |
+| --- | --- |
+| `t_s` | shared time base, seconds with exactly 6 decimals (integer microseconds, no float rounding) |
+| `kind` | what the row is (below) |
+| `node` | node name from the catalog (`nodeN` if unknown); the logger for session/loss/text rows |
+| `name` | signal name, event name, or field name |
+| `value` | number, or text for `text`/`command`/`can_raw`; **empty when unavailable**, never 0 |
+| `unit` | catalog unit (`m/s^2`, `deg*1e-7`, ...); empty for unitless values |
+| `status` | samples: `ok` or the unavailable reason (`NOT_FITTED`, `SENSOR_FAULT`, ...); heartbeats: error flag names joined with `\|` |
+| `synced` | samples and events: `1` if `t_s` is on the shared time base, `0` if on the node's own clock |
+| `seq` | samples and events: the stream's sequence number (CAN data frames: the grid index) |
+
+| `kind` | rows |
+| --- | --- |
+| `format` | first row: `lbr_csv_version` = 1 |
+| `session` | the SESSION record: `format_version`, `protocol_version`, `fw_version`, `catalog_hash`, `config_crc`, `reset_reason`, `boot_count`, `start_time_us` |
+| `config` | one row per `key=value` line of the session config text |
+| `sample` | a measurement, from a SAMPLE record or decoded from a CAN data frame |
+| `event`, `fault` | `name` = event name, `value` = its argument |
+| `heartbeat` | `state` and `err_flags` per heartbeat frame |
+| `health` | one row per heartbeat field, from HEALTH records and CAN health pages |
+| `command` | Central command frames: `name` = command, `value` = argument bytes (hex) |
+| `can_raw` | any other frame (unknown id, wrong length, extended id): `name` = id, `value` = data (hex) |
+| `loss` | LOSS records: `dropped_records`, `dropped_bytes` |
+| `text`, `end` | TEXT records; the END record's `records_written` |
+| `unknown_record` | a record type this decoder does not know: `name` = type, `value` = payload (hex) |
+| `integrity` | last rows: `records`, `corrupt_regions`, `skipped_bytes`, `truncated_tail`, `time_sync_frames`, `time_follow_up_frames` (counted, not listed), `catalog_checked` |
+
+Rules:
+
+- Rows are in log order. Per channel (`node`, `name`) time increases, but rows of different
+  channels can be slightly out of time order; sort per channel, not globally.
+- Health, text, and unknown records carry no time of their own: they get the time of the
+  latest record before them.
+- Rows with `synced` = 0 are on a node's free-running clock; do not plot them against the
+  shared axis.
+- The export refuses a log whose catalog hash differs from the catalog it decodes with (pass
+  the right one with `--catalog`), so names are never put on the wrong signals.
+- `dev/tests/fixtures/session.csv` is the export of `session.lbr` and pins this format; the
+  dashboard app's CSV import must read it.
+
 ## Transport packets
 
 Every live link (USB, WiFi, LoRa) and every cockpit datagram carries the same packet:
@@ -242,11 +294,14 @@ that tracks offset and rate:
 `dev/tests/fixtures/` holds binary fixtures produced by the firmware codecs, each with the expected
 decode as JSON: `catalog.json`, `samples.bin`, `health.bin`, `can_capture.bin`, `session.lbr`,
 `stream_usb.bin`. CTest fails if a fixture no longer matches the codecs; `dev/tools/lbr_decode.py
---selftest` is an independent decoder that must reproduce every expected JSON. The dashboard app
-should run the same fixtures through its decoder in its own CI.
+--selftest` is an independent decoder that must reproduce every expected JSON and `session.csv`
+(the CSV export of `session.lbr`; the `fixtures` target regenerates it too, and ctest runs the
+self test as `decoder`). The dashboard app should run the same fixtures through its decoder in
+its own CI.
 
 ## Still to agree with the dashboard app (#14)
 
 - [ ] where the canonical copy of this spec and the catalog lives (this repo generates it today)
 - [ ] the dashboard's fixture replay test, wired into its CI
+- [ ] the dashboard app importing `session.csv` (CSV export above) and `.LBR` directly
 - [ ] session/topology metadata beyond `key=value` config text (e.g. mounting transforms)

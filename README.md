@@ -120,6 +120,9 @@ counters rather than blocking one another indefinitely.
 - The Central's microSD log is the **authoritative** record: all frames seen on the bus (including the Central's own), plus events, health, and session metadata.
 - **Do not put an SD card on every node.** Local node logging is reserved for the few nodes whose native sample rate exceeds what the shared CAN bus should carry, or whose data is too critical to risk losing. The 2026 plans publish every sample on CAN, so no node logs locally.
 - When a node logs locally, its log uses the same versioned record/health model as the Central's log so the two can be reconciled afterward.
+- The card holds binary `.LBR` logs (CRC-checked, recoverable after a power cut). For debugging and
+  plotting, export one to CSV with `dev/tools/lbr_decode.py csv` (format in
+  [`docs/protocol.md`](docs/protocol.md), "CSV export"); the dashboard app plots those channels.
 
 ## CAN bus
 
@@ -381,6 +384,7 @@ The simulated Central writes real files to `sim-out/` (or `--out`): SD session l
 
 ```sh
 python3 dev/tools/lbr_decode.py log sim-out/00000001.LBR
+python3 dev/tools/lbr_decode.py csv sim-out/00000001.LBR      # -> sim-out/00000001.csv
 python3 dev/tools/lbr_decode.py stream sim-out/usb_stream.bin
 ```
 
@@ -429,6 +433,7 @@ python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0                     # live v
 python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd LIST          # session files on the SD card
 python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd "DUMP 00000012.LBR" --out run.lbr
 python3 dev/tools/lbr_decode.py log run.lbr                             # decode a session log
+python3 dev/tools/lbr_decode.py csv run.lbr                             # export it to run.csv
 ```
 
 ### Troubleshooting
