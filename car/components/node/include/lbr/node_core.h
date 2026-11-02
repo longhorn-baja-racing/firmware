@@ -11,6 +11,7 @@
 #include "lbr/logging.h"
 #include "lbr/node.h"
 #include "lbr/timebase.h"
+#include "lbr/update.h"
 
 /*
  * Sensor-node logic, independent of the platform.
@@ -60,6 +61,10 @@ typedef struct {
 
     /* One line of diagnostic text (no newline). */
     void (*log)(void *ctx, lbr_log_level_t level, const char *text);
+
+    /* Flash access for firmware updates over CAN (lbr/update.h). NULL: this
+     * platform cannot update; update requests are answered with NO_SLOT. */
+    const lbr_upd_ota_t *ota;
 } lbr_node_hal_t;
 
 /* Facts about this boot that the platform knows. */
@@ -109,6 +114,7 @@ typedef struct lbr_node_core {
     size_t                n_early;
     uint32_t              early_dropped;
     lbr_time_sync_rx_t    sync; /* touched only by the CAN RX caller */
+    lbr_upd_node_t        upd;  /* firmware update receiver; CAN RX caller only */
 
     atomic_uint   acquired;
     atomic_uint   published;
@@ -146,8 +152,9 @@ void lbr_node_core_slot_tick(lbr_node_core_t *c, size_t i);
 /* Shared time of slot i's next grid point (the platform waits for it). */
 uint64_t lbr_node_core_slot_next_due(lbr_node_core_t *c, size_t i);
 
-/* A received CAN frame with its local receive time. Consumes time sync and
- * commands; passes everything else to cfg->on_frame. */
+/* A received CAN frame with its local receive time. Consumes time sync,
+ * commands, and firmware update traffic; passes everything else to
+ * cfg->on_frame. */
 void lbr_node_core_on_frame(lbr_node_core_t *c, const lbr_can_frame_t *f, uint64_t rx_local_us);
 
 /* One heartbeat period: build the record, publish the heartbeat and its

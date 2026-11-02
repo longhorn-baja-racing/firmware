@@ -18,11 +18,15 @@ uint8_t lbr_can_sender(uint32_t id)
     if (id > LBR_CAN_ID_MAX) {
         return 0;
     }
-    if (id == LBR_CAN_ID_TIME_SYNC || id == LBR_CAN_ID_TIME_FOLLOW_UP || id == LBR_CAN_ID_COMMAND) {
+    if (id == LBR_CAN_ID_TIME_SYNC || id == LBR_CAN_ID_TIME_FOLLOW_UP || id == LBR_CAN_ID_COMMAND ||
+        id == LBR_CAN_ID_UPDATE_CTRL || id == LBR_CAN_ID_UPDATE_DATA) {
         return LBR_NODE_CENTRAL;
     }
     if (id > LBR_CAN_ID_EVENT_BASE && id <= LBR_CAN_ID_EVENT_BASE + LBR_NODE_CAN_MAX) {
         return (uint8_t)(id - LBR_CAN_ID_EVENT_BASE);
+    }
+    if (id > LBR_CAN_ID_UPDATE_STATUS && id <= LBR_CAN_ID_UPDATE_STATUS + LBR_NODE_CAN_MAX) {
+        return (uint8_t)(id - LBR_CAN_ID_UPDATE_STATUS);
     }
     if (id > LBR_CAN_ID_HEARTBEAT_BASE && id <= LBR_CAN_ID_HEARTBEAT_BASE + LBR_NODE_CAN_MAX) {
         return (uint8_t)(id - LBR_CAN_ID_HEARTBEAT_BASE);

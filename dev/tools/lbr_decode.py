@@ -266,9 +266,10 @@ def can_sender(cat, can_id):
     ids = cat.ids
     if can_id > 0x7FF:
         return 0
-    if can_id in (ids["time_sync"], ids["time_follow_up"], ids["command"]):
+    if can_id in (ids["time_sync"], ids["time_follow_up"], ids["command"], ids["update_ctrl"],
+                  ids["update_data"]):
         return central_id(cat)
-    for base in (ids["event_base"], ids["heartbeat_base"]):
+    for base in (ids["event_base"], ids["heartbeat_base"], ids["update_status_base"]):
         if base < can_id <= base + ids["can_node_max"]:
             return can_id - base
     if can_id >= ids["health_base"] + 16:
@@ -310,6 +311,18 @@ def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
         d["time_follow_up"] = {"seq": data[0], "tx_us": struct.unpack_from("<Q", data)[0] >> 8}
     elif can_id == ids["command"] and dlc == 8:
         d["command"] = {"code": data[0], "args": data[1:8].hex()}
+    elif can_id == ids["update_ctrl"] and dlc == 8:
+        d["update_ctrl"] = {"op": data[0], "target": data[1], "args": data[2:8].hex()}
+    elif can_id == ids["update_data"] and dlc == 8:
+        d["update_data"] = {"k_lo": data[0]}
+    elif is_can_node(cat, can_id - ids["update_status_base"]) and dlc == 8:
+        u = {"op": data[0], "result": data[1], "state": data[2]}
+        ops = cat.raw["update"]["ops"]
+        if data[0] < len(ops) and ops[data[0]] == "INFO":
+            u.update({"pending": data[3] != 0, "hash": struct.unpack_from(">I", data, 4)[0]})
+        else:
+            u.update({"next_k": data[3] | data[4] << 8 | data[5] << 16, "version": data[6]})
+        d["update_status"] = u
     elif can_id >= ids["health_base"] + 16 and dlc == 8:
         node, page = (can_id - ids["health_base"]) >> 4, can_id & 0xF
         if is_can_node(cat, node) and page < HEALTH_PAGES:
@@ -536,7 +549,8 @@ class CsvExporter:
         self.t_us = 0  # latest shared time seen, for records that carry none
         self.logger = ""
         self.catalog_checked = 0
-        self.time_sync_frames = self.time_follow_up_frames = 0
+        self.time_sync_frames = self.time_follow_up_frames = self.update_data_frames = 0
+        self.upd = cat.raw["update"]
         self.commands = {c["code"]: c["name"] for c in cat.raw["commands"]}
         self.err_flags = cat.raw["heartbeat_err_flags"]
         self.w.writerow(CSV_COLUMNS)
@@ -544,6 +558,10 @@ class CsvExporter:
 
     def node(self, n):
         return self.cat.nodes.get(n, "node%d" % n)
+
+    def upd_name(self, table, code):
+        names = self.upd[table]
+        return names[code] if code < len(names) and names[code] else "%s%d" % (table[:-1], code)
 
     def row(self, t_us, kind, node, name, value="", unit="", status="", synced="", seq=""):
         self.w.writerow([csv_time(t_us), kind, node, name, value, unit, status, synced, seq])
@@ -590,6 +608,16 @@ class CsvExporter:
         elif "command" in f:
             c = f["command"]
             self.row(t, "command", node, self.commands.get(c["code"], "code%d" % c["code"]), c["args"])
+        elif "update_ctrl" in f:
+            u = f["update_ctrl"]
+            target = "ALL" if u["target"] == 0xFF else self.node(u["target"])
+            self.row(t, "update", node, self.upd_name("ops", u["op"]), target)
+        elif "update_data" in f:
+            self.update_data_frames += 1
+        elif "update_status" in f:
+            u = f["update_status"]
+            self.row(t, "update", node, self.upd_name("ops", u["op"]),
+                     self.upd_name("results", u["result"]), "", self.upd_name("states", u["state"]))
         else:  # not LBR traffic, an unknown id, or a malformed frame: keep the raw bytes
             ident = ("0x%08X" if f["flags"] & REC_FLAG_EXT else "0x%03X") % f["id"]
             self.row(t, "can_raw", node, ident, f["data"])
@@ -639,6 +667,7 @@ class CsvExporter:
                      ("truncated_tail", reader.truncated_tail),
                      ("time_sync_frames", self.time_sync_frames),
                      ("time_follow_up_frames", self.time_follow_up_frames),
+                     ("update_data_frames", self.update_data_frames),
                      ("catalog_checked", self.catalog_checked)):
             self.row(self.t_us, "integrity", self.logger, k, v)
 

@@ -69,4 +69,5 @@ t_s,kind,node,name,value,unit,status,synced,seq
 9.000000,integrity,central,truncated_tail,9,,,,
 9.000000,integrity,central,time_sync_frames,0,,,,
 9.000000,integrity,central,time_follow_up_frames,0,,,,
+9.000000,integrity,central,update_data_frames,0,,,,
 9.000000,integrity,central,catalog_checked,1,,,,

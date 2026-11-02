@@ -9,6 +9,7 @@
 #include "esp_random.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "central_plan.h"
@@ -23,6 +24,7 @@
 #include "lbr/nodes.h"
 #include "lbr/timebase.h"
 #include "lbr/transport_links.h"
+#include "lbr/update.h"
 #include "lbr/version.h"
 #include "lbr/wlink.h"
 #include "lbr/wlink_esp.h"
@@ -66,6 +68,10 @@ typedef struct {
 } acq_task_t;
 
 static acq_task_t s_acq_tasks[CENTRAL_SLOT_COUNT];
+
+/* Firmware-update replies from the nodes, for the USB relay. */
+#define UPD_STATUS_QUEUE 16
+static QueueHandle_t s_upd_status;
 
 /* Cockpit datagrams over the pit access point. */
 static lbr_udp_t            *s_cockpit_udp;
@@ -173,6 +179,10 @@ static void rx_task(void *arg)
         esp_task_wdt_reset();
         if (lbr_can_bus_receive(&rx, 500)) {
             lbr_gw_core_on_rx(&s_core, &rx.frame, rx.rx_local_us);
+            lbr_upd_status_t st;
+            if (s_upd_status != NULL && lbr_upd_decode_status(&rx.frame, &st)) {
+                xQueueSend(s_upd_status, &st, 0); /* full: the relay times out and asks again */
+            }
         }
     }
 }
@@ -265,6 +275,52 @@ static size_t hook_status(char *buf, size_t cap)
     char name[LBR_SD_NAME_MAX];
     lbr_log_service_file_name(name);
     return lbr_gw_core_status(&s_core, name, buf, cap);
+}
+
+/* Firmware-update relay: USB "UPD" lines onto the bus (lbr/update.h). */
+static bool upd_send(void *ctx, const lbr_can_frame_t *f)
+{
+    (void)ctx;
+    return lbr_gw_core_send(&s_core, f);
+}
+
+static bool upd_wait_status(void *ctx, uint32_t timeout_ms, lbr_upd_status_t *out)
+{
+    (void)ctx;
+    return s_upd_status != NULL &&
+           xQueueReceive(s_upd_status, out, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+static void upd_flush_status(void *ctx)
+{
+    (void)ctx;
+    if (s_upd_status != NULL) {
+        xQueueReset(s_upd_status);
+    }
+}
+
+static void upd_sleep_ms(void *ctx, uint32_t ms)
+{
+    (void)ctx;
+    vTaskDelay(pdMS_TO_TICKS(ms) > 0 ? pdMS_TO_TICKS(ms) : 1);
+}
+
+static uint32_t upd_now_ms(void *ctx)
+{
+    (void)ctx;
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+static size_t hook_update(const char *line, char *reply, size_t cap)
+{
+    static const lbr_upd_relay_hal_t hal = {
+        .send         = upd_send,
+        .wait_status  = upd_wait_status,
+        .flush_status = upd_flush_status,
+        .sleep_ms     = upd_sleep_ms,
+        .now_ms       = upd_now_ms,
+    };
+    return lbr_upd_relay_line(&hal, line, reply, cap);
 }
 
 static void hook_before_reboot(void)
@@ -430,6 +486,7 @@ static void start_links(lbr_gw_links_t *links)
         .config_get    = gw_store_get,
         .config_put    = gw_store_put,
         .before_reboot = hook_before_reboot,
+        .update        = hook_update,
     };
     if (s_gw.usb_enable && (links->usb = lbr_link_usb_start(&hooks)) == NULL) {
         ESP_LOGE(TAG, "USB link unavailable");
@@ -457,6 +514,7 @@ void central_run(void)
     for (int i = 0; i < LBR_GW_LOCK_COUNT_; i++) {
         s_locks[i] = xSemaphoreCreateMutex();
     }
+    s_upd_status = xQueueCreate(UPD_STATUS_QUEUE, sizeof(lbr_upd_status_t));
     lbr_time_set_master();
 
     /* Validate configuration before the session starts. */

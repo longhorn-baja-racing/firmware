@@ -30,7 +30,10 @@
 
 #define UART_PORT     UART_NUM_0
 #define RX_BUF        1024
-#define CMD_LINE_MAX  80
+#define CMD_LINE_MAX  768 /* a firmware-update DATA line (lbr/update.h) */
+#define UPD_REPLY_MAX 256
+#define UPD_QUIET_US  5000000 /* telemetry pause after each UPD command */
+#define RX_TASK_STACK 6144    /* the command task also runs the update relay */
 #define DUMP_READ     4096
 #define DUMP_REC_DATA 200
 #define LOG_LINE_MAX  200
@@ -42,12 +45,17 @@ static uint8_t           s_enc[LBR_COBS_MAX_ENCODED(LBR_PKT_MAX_SIZE) + 1];
 static uint8_t           s_pkt_copy[LBR_PKT_MAX_SIZE];
 static uint32_t          s_seq;
 static atomic_bool       s_ready;
+static _Atomic uint64_t  s_quiet_until; /* while updating: replies only */
 static atomic_uint       s_sent, s_dropped, s_bytes, s_errors;
 
 /* Encode and queue one packet. `wait` lets bulk dumps wait for space. */
 static int usb_write(const uint8_t *pkt, size_t len, bool wait)
 {
-    if (!atomic_load(&s_ready) || len > LBR_PKT_MAX_SIZE) {
+    if (!atomic_load(&s_ready) || len > LBR_PKT_MAX_SIZE ||
+        (!wait && lbr_time_now_us() < atomic_load(&s_quiet_until))) {
+        /* During a firmware update the line carries the update dialogue
+         * only: live telemetry and log text are dropped (and counted) so
+         * replies are never stuck behind them. The SD log is unaffected. */
         atomic_fetch_add(&s_dropped, 1);
         return -1;
     }
@@ -206,6 +214,12 @@ static void handle_line(char *line)
         if (lbr_sd_list(on_list, NULL) < 0) {
             reply_text("ERR no card");
         }
+    } else if (strcmp(line, "UPD") == 0 && arg != NULL && s_hooks.update != NULL) {
+        static char reply[UPD_REPLY_MAX];
+        atomic_store(&s_quiet_until, lbr_time_now_us() + UPD_QUIET_US);
+        s_hooks.update(arg, reply, sizeof reply);
+        atomic_store(&s_quiet_until, lbr_time_now_us() + UPD_QUIET_US);
+        reply_text(reply);
     } else if (strcmp(line, "DUMP") == 0 && arg != NULL) {
         char    *off  = strchr(arg, ' ');
         uint32_t from = 0;
@@ -215,15 +229,15 @@ static void handle_line(char *line)
         }
         do_dump(arg, from);
     } else {
-        reply_text("ERR unknown command (STAT, LIST, DUMP <name> [offset])");
+        reply_text("ERR unknown command (STAT, LIST, DUMP <name> [offset], UPD ...)");
     }
 }
 
 static void rx_task(void *arg)
 {
     (void)arg;
-    char   line[CMD_LINE_MAX];
-    size_t len = 0;
+    static char line[CMD_LINE_MAX];
+    size_t      len = 0;
     for (;;) {
         uint8_t c;
         if (uart_read_bytes(UART_PORT, &c, 1, portMAX_DELAY) != 1) {
@@ -260,7 +274,7 @@ lbr_transport_t *lbr_link_usb_start(const lbr_link_hooks_t *hooks)
         uart_driver_install(UART_PORT, RX_BUF, CONFIG_LBR_USB_TX_BUFFER_KB * 1024, 0, NULL, 0) !=
             ESP_OK ||
         uart_param_config(UART_PORT, &cfg) != ESP_OK ||
-        xTaskCreate(rx_task, "lbr_usb_rx", 4096, NULL, 5, NULL) != pdPASS) {
+        xTaskCreate(rx_task, "lbr_usb_rx", RX_TASK_STACK, NULL, 5, NULL) != pdPASS) {
         return NULL;
     }
     /* Route console writes (printf, stdio) through the driver too, so they

@@ -114,6 +114,13 @@ static void acq_event(void *ctx, lbr_event_code_t code, uint16_t arg, bool fault
     lbr_node_core_event(ctx, code, arg, fault);
 }
 
+/* Firmware update replies (UPDATE_STATUS) go straight to the bus. */
+static bool upd_send(void *ctx, const lbr_can_frame_t *f)
+{
+    lbr_node_core_t *c = ctx;
+    return c->can_up && c->hal.can_send(c->hal.ctx, f);
+}
+
 /* ------------------------------------------------------------------------ */
 /* Bring-up                                                                  */
 
@@ -136,6 +143,9 @@ bool lbr_node_core_init(lbr_node_core_t *c, const lbr_node_config_t *cfg, const 
     }
     lbr_node_config_text(cfg, c->config_text, sizeof c->config_text);
     c->config_crc = lbr_crc32(c->config_text, strlen(c->config_text));
+    /* Updates work even with a rejected configuration: that is how a bad
+     * build gets replaced without opening the car. */
+    lbr_upd_node_init(&c->upd, cfg->node_id, hal->ota, upd_send, c);
 
     say(c, LBR_LOG_LVL_INFO, "%s (0x%02x) fw %u.%u.%u protocol %u boot #%lu reset %d%s",
         lbr_node_name(cfg->node_id), cfg->node_id, LBR_FW_VERSION_MAJOR, LBR_FW_VERSION_MINOR,
@@ -270,6 +280,9 @@ void lbr_node_core_on_frame(lbr_node_core_t *c, const lbr_can_frame_t *f, uint64
         } else {
             atomic_store(&c->sync_unmatched, c->sync.unmatched);
         }
+        return;
+    }
+    if (lbr_upd_node_on_frame(&c->upd, f)) {
         return;
     }
     if (lbr_can_decode_command(f, &code, args)) {

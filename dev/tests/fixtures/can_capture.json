@@ -21,5 +21,9 @@
   {"t_us": 50336348, "flags": 2, "id": 2, "sender": 6, "dlc": 8, "data": "0912110003000000", "time_follow_up": {"seq": 9, "tx_us": 50336018}},
   {"t_us": 50336448, "flags": 2, "id": 16, "sender": 6, "dlc": 8, "data": "012a000000000000", "command": {"code": 1, "args": "2a000000000000"}},
   {"t_us": 50337148, "flags": 0, "id": 1824, "sender": 2, "dlc": 8, "data": "48ee000000012000", "health_page": 0},
+  {"t_us": 50337248, "flags": 2, "id": 17, "sender": 6, "dlc": 8, "data": "010500100e000000", "update_ctrl": {"op": 1, "target": 5, "args": "00100e000000"}},
+  {"t_us": 50337348, "flags": 2, "id": 18, "sender": 6, "dlc": 8, "data": "00e9060220341208", "update_data": {"k_lo": 0}},
+  {"t_us": 50337448, "flags": 0, "id": 53, "sender": 5, "dlc": 8, "data": "0200010101000100", "update_status": {"op": 2, "result": 0, "state": 1, "next_k": 257, "version": 1}},
+  {"t_us": 50337548, "flags": 0, "id": 49, "sender": 1, "dlc": 8, "data": "060000019f86d081", "update_status": {"op": 6, "result": 0, "state": 0, "pending": true, "hash": 2676412545}},
   {"t_us": 50338148, "flags": 1, "id": 419361024, "sender": 0, "dlc": 3, "data": "010203"}
 ]}

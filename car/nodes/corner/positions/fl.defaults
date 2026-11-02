@@ -1,0 +1,4 @@
+# Corner position overlay used by dev/tools/lbr_deploy.py (build dir build-corner_fl,
+# config sdkconfig.corner_fl). Each wheel hub gets its own image: the position
+# fixes its CAN node id.
+CONFIG_LBR_CORNER_FL=y

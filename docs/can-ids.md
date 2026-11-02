@@ -21,7 +21,10 @@ them (`rx_foreign`).
 | 0x001 | Central | `TIME_SYNC` | 10 Hz | 8 |
 | 0x002 | Central | `TIME_FOLLOW_UP` | 10 Hz | 8 |
 | 0x010 | Central | `COMMAND` | on event | 8 |
+| 0x011 | Central | `UPDATE_CTRL` | parked only | 8 |
+| 0x012 | Central | `UPDATE_DATA` | parked only | 8 |
 | 0x020 + n | node n (1..10) | `EVENT` / `FAULT` | on event | 8 |
+| 0x030 + n | node n (1..10) | `UPDATE_STATUS` | parked only | 8 |
 | 0x100 .. 0x60A | per table | data frames (below) | per table | per table |
 | 0x700 + n | node n | `HEARTBEAT` | 1 Hz | 2 |
 | 0x700 + 16 n + p | node n | `HEALTH` page p (0..11) | 1 Hz | 8 |
@@ -138,7 +141,44 @@ Heartbeat error flags: bit 0 `NOT_SYNCED`, bit 1 `SENSOR` (a slot faulted or unc
 cockpit's WiFi link is down).
 
 Sensor nodes program their TWAI filter to ids 0x000..0x01F: they only receive the Central's time
-sync and commands. The Central receives everything.
+sync, commands, and firmware updates. The Central receives everything.
+
+## Firmware update
+
+Sensor nodes are updated over the bus, through the Central, with the car parked
+([`deploying.md`](deploying.md) is the operator guide; the code is `car/components/update`). The
+laptop drives every step over the Central's USB link (`UPD` lines); the Central relays each one and
+waits for the node's answer. Update traffic is logged like any other frame.
+
+| Id | Frame | Payload |
+| --- | --- | --- |
+| 0x011 | `UPDATE_CTRL` | 0 op, 1 target node (0xFF = all, for `ACTIVATE` and `ABORT` only), 2..7 args |
+| 0x012 | `UPDATE_DATA` | 0 low 8 bits of frame index k, 1..7 image bytes 7k .. 7k+6 (zero padded after the last byte) |
+| 0x030 + n | `UPDATE_STATUS` | 0 op answered, 1 result, 2 state, 3..7: for `INFO` 3 = 1 if the running image is not yet confirmed, 4..7 first 4 bytes of its SHA-256 (big endian); otherwise 3..5 next frame k expected (u24), 6 update protocol version (1), 7 = 0 |
+
+Ops: 1 `BEGIN` (args 0..2 image size u24), 2 `QUERY`, 3 `END` (args 0..3 CRC-32 of the image),
+4 `ACTIVATE`, 5 `ABORT`, 6 `INFO`. States: 0 `IDLE`, 1 `RECEIVING`, 2 `STAGED`. Results: 0 `OK`,
+1 `ERR_STATE`, 2 `ERR_SIZE`, 3 `ERR_LENGTH`, 4 `ERR_CRC`, 5 `ERR_IMAGE`, 6 `ERR_WRONG_FW`,
+7 `ERR_FLASH`, 8 `ERR_NO_SLOT`, 9 `ERR_OP`. All of these are exported in `catalog.json`
+(`can_ids`, `update`).
+
+- `BEGIN` opens the node's spare OTA slot (the running firmware is never touched). Data frames
+  follow in order of k; after each burst the Central sends `QUERY`, and the answer's `next` is where
+  the next burst starts. A node that sees a frame out of sequence (its receive queue overflowed)
+  ignores data until that `QUERY`, so a resend always starts at the first missing byte.
+- `END` checks the CRC-32, then the image itself (header, chip, SHA-256) and that it is firmware for
+  this kind of node (same ESP-IDF project). Only then is it `STAGED`.
+- `ACTIVATE` to `ALL` boots every staged node at once, so the bus never runs a mix of old and new
+  firmware longer than a reboot. Unstaged nodes ignore it.
+- The new image must sync to the Central's clock within 60 s or the node rolls back to its previous
+  firmware. On its first boot it also checks the board's stored node id (written on every normal
+  boot) and rolls back at once if the image is for a different node, e.g. corner_fr firmware sent to
+  the corner_fl board.
+
+A transfer is not counted in the bus budget: it only runs parked. It takes up to about half the
+bus (bursts of 8 data frames, about 2 ms on the wire, then a 2 ms gap). `UPDATE_DATA` outranks every
+data frame, so sensor frames may queue or drop (counted, `LOSS` in the heartbeat) while it runs;
+time sync (0x001, 0x002) still wins arbitration.
 
 ## Central log record (22 bytes)
 

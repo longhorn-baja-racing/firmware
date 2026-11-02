@@ -89,10 +89,11 @@
     {"id": 1538, "name": "GPS_STATUS", "sender": 6, "rate_hz": 10, "dlc": 8, "counter_offset": null, "fields": [{"signal": 1544, "name": "GPS_UTC", "offset": 0, "enc": "u32", "scale": 1}, {"signal": 1541, "name": "GPS_FIX", "offset": 4, "enc": "u8", "scale": 1}, {"signal": 1542, "name": "GPS_SATELLITES", "offset": 5, "enc": "u8", "scale": 1}, {"signal": 1543, "name": "GPS_HDOP", "offset": 6, "enc": "u16", "scale": 0.00999999978}]},
     {"id": 1546, "name": "COCKPIT_STATUS", "sender": 6, "rate_hz": 1, "dlc": 2, "counter_offset": null, "fields": [{"signal": 1552, "name": "COCKPIT_BATTERY", "offset": 0, "enc": "u8", "scale": 1}, {"signal": 1553, "name": "COCKPIT_LINK", "offset": 1, "enc": "u8", "scale": 1}]}
   ],
-  "can_ids": {"time_sync": 1, "time_follow_up": 2, "command": 16, "event_base": 32, "heartbeat_base": 1792, "health_base": 1792, "can_node_max": 10, "time_sync_hz": 10, "bitrate": 500000},
+  "can_ids": {"time_sync": 1, "time_follow_up": 2, "command": 16, "event_base": 32, "heartbeat_base": 1792, "health_base": 1792, "update_ctrl": 17, "update_data": 18, "update_status_base": 48, "can_node_max": 10, "time_sync_hz": 10, "bitrate": 500000},
   "encodings": ["i16", "u16", "u8", "i32", "u32"],
   "heartbeat_err_flags": {"NOT_SYNCED": 1, "SENSOR": 2, "CAN": 4, "CONFIG": 8, "STORAGE": 16, "SIM": 32, "LOSS": 64, "LINK": 128},
   "commands": [{"code": 1, "name": "SESSION_START"}, {"code": 2, "name": "SESSION_STOP"}, {"code": 3, "name": "MARK"}],
+  "update": {"version": 1, "ops": ["", "BEGIN", "QUERY", "END", "ACTIVATE", "ABORT", "INFO"], "results": ["OK", "ERR_STATE", "ERR_SIZE", "ERR_LENGTH", "ERR_CRC", "ERR_IMAGE", "ERR_WRONG_FW", "ERR_FLASH", "ERR_NO_SLOT", "ERR_OP"], "states": ["IDLE", "RECEIVING", "STAGED"]},
   "nodes": [
     {"id": 1, "name": "imu"},
     {"id": 2, "name": "powertrain"},

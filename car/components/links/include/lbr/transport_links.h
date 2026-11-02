@@ -24,12 +24,17 @@ typedef struct {
     int (*config_put)(const char *text, size_t len, char *err, size_t err_len);
     /* Called before an OTA reboot: close the session log cleanly. */
     void (*before_reboot)(void);
+    /* One firmware-update command (the text after "UPD "): runs it on the
+     * bus and writes a one-line reply (lbr_upd_relay_line). Returns length. */
+    size_t (*update)(const char *line, char *reply, size_t cap);
 } lbr_link_hooks_t;
 
 /* USB serial on UART0. Host commands (one per line):
  *   STAT                  status text
  *   LIST                  FILE_INFO records for every session file
  *   DUMP <name> [offset]  FILE_CHUNK records, then FILE_END
+ *   UPD <node> <op> ...   firmware update step over CAN (lbr/update.h);
+ *                         live telemetry pauses for 5 s after each one
  * Everything the gateway sends is a COBS-framed packet; ESP log output is
  * carried as TEXT records (see lbr_usb_log_vprintf). */
 lbr_transport_t *lbr_link_usb_start(const lbr_link_hooks_t *hooks);

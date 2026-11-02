@@ -178,7 +178,8 @@ and flashing. Read-only telemetry from the vehicle's perspective for the initial
 
 Short-range, high-bandwidth, power-hungry. The Central's access point (5 GHz by default, 2.4 GHz
 fallback) serves the pit: near-full-rate live view when the car is stationary or passing pit,
-plus **OTA firmware updates** and configuration push.
+plus **OTA firmware updates** of the Central and configuration push. Routine deploys use USB and
+CAN instead ([`docs/deploying.md`](docs/deploying.md)); the cockpit is never flashed over WiFi.
 
 ### Cockpit display - 5 GHz WiFi on the car
 
@@ -256,6 +257,7 @@ car/                          # ON THE CAR: everything that is flashed to an ESP
     can/                      #     CAN id map, field codec, sync-tracking decoder; TWAI adapter
     timebase/                 #     shared time sync servo
     logging/                  #     recoverable log format, bounded queue, SD service
+    update/                   #     firmware update over CAN: node receiver, Central relay, OTA glue
     sensors/                  #     driver interface, configurable inputs, NMEA GPS
     node/                     #     plans/validation, grid-locked acquisition, sensor-node runtime
     transport/                #     packet framing, LoRa policy
@@ -264,6 +266,7 @@ car/                          # ON THE CAR: everything that is flashed to an ESP
     gateway/                  #     the Central's logic, runtime config, status text
   nodes/                      #   one ESP-IDF app per physical node (DAQ-WIRING.md)
     sdkconfig.common          #     settings shared by every node
+    partitions_ota.csv        #     two app slots (CAN updates) for every sensor node
     central/                  #     CAN logger, time master, GPS, LoRa, cockpit link (ESP32-C5)
     imu/                      #     chassis IMU (ESP32-C5)
     powertrain/ driver_input/ temperature/ stress/   # sensor controllers (ESP32)
@@ -275,8 +278,9 @@ dev/                          # DEVELOPMENT ONLY: never built into firmware
   tests/host/                 #   unit tests of the pure logic + fixture generator
   tests/fixtures/             #   golden fixtures shared with the dashboard app
   ci/                         #   CI-only sdkconfig overlays (not pin maps)
-  tools/lbr_decode.py         #   reference decoder: logs, streams, USB serial, fixture self-test
-docs/                         # protocol, CAN ids, hardware, sensors
+  tools/lbr_decode.py         #   reference decoder: logs, CSV export, streams, USB serial, self-test
+  tools/lbr_deploy.py         #   build and deploy: USB flash, updates over CAN (docs/deploying.md)
+docs/                         # protocol, CAN ids, hardware, sensors, deploying
 .idf-version                  # the one ESP-IDF release every build must use
 .github/workflows/ci.yml
 ```
@@ -425,6 +429,9 @@ done
   set to FL, FR, BL, and BR (CAN nodes 7..10).
 - **Link check** (what CI also builds; placeholder pins, not a pin map):
   `idf.py -DLBR_SDKCONFIG_EXTRA=$PWD/../../../dev/ci/sdkconfig.linkcheck build` from a node directory.
+
+**Putting a release on the car** (USB for the Central, over CAN for the sensor nodes, USB for the
+cockpit) is a separate checklist: follow [`docs/deploying.md`](docs/deploying.md) step by step.
 
 ### 5. Bench tools (real Central)
 

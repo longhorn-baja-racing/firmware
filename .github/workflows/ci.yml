@@ -73,6 +73,8 @@ jobs:
             xargs -0 clang-tidy -p build-dev --quiet
       - name: Reference decoder replays the golden fixtures
         run: python3 -I dev/tools/lbr_decode.py --selftest
+      - name: Deploy tool loads
+        run: python3 -I dev/tools/lbr_deploy.py list
 
   idf-version:
     name: ESP-IDF pin

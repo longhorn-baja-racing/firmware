@@ -3,4 +3,6 @@
 CONFIG_IDF_TARGET="esp32c5"
 
 # WiFi + lwIP make the app close to 1 MB; use the 1.5 MB single-app table.
+# The cockpit is updated over USB only (docs/deploying.md), so it needs no
+# second slot; this overrides the OTA table in sdkconfig.common.
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

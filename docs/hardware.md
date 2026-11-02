@@ -70,7 +70,9 @@ link"). Every other node is on CAN only.
 
 ## Board and memory
 
-- 4 MB flash assumed by `car/nodes/sdkconfig.common`; the Central uses two 1.875 MB OTA slots.
+- 4 MB flash assumed by `car/nodes/sdkconfig.common`. Every node except the cockpit has two 1.875 MB
+  app slots (`car/nodes/partitions_ota.csv`, the Central its own copy) for updates without a cable
+  ([`deploying.md`](deploying.md)); the cockpit has one 1.5 MB slot and is updated over USB only.
   Confirm the modules.
 - The Central runs WiFi, BLE, CAN, SD, LoRa, and GPS together; its WiFi IRAM optimizations are
   moved to flash (`car/nodes/central/sdkconfig.defaults`).

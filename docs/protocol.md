@@ -191,11 +191,12 @@ Columns, in this order, with a header row:
 | `heartbeat` | `state` and `err_flags` per heartbeat frame |
 | `health` | one row per heartbeat field, from HEALTH records and CAN health pages |
 | `command` | Central command frames: `name` = command, `value` = argument bytes (hex) |
+| `update` | firmware update (parked, [`can-ids.md`](can-ids.md)): from the Central `name` = op, `value` = target node; from a node `name` = op answered, `value` = result, `status` = its state. Data frames are counted, not listed |
 | `can_raw` | any other frame (unknown id, wrong length, extended id): `name` = id, `value` = data (hex) |
 | `loss` | LOSS records: `dropped_records`, `dropped_bytes` |
 | `text`, `end` | TEXT records; the END record's `records_written` |
 | `unknown_record` | a record type this decoder does not know: `name` = type, `value` = payload (hex) |
-| `integrity` | last rows: `records`, `corrupt_regions`, `skipped_bytes`, `truncated_tail`, `time_sync_frames`, `time_follow_up_frames` (counted, not listed), `catalog_checked` |
+| `integrity` | last rows: `records`, `corrupt_regions`, `skipped_bytes`, `truncated_tail`, `time_sync_frames`, `time_follow_up_frames`, `update_data_frames` (counted, not listed), `catalog_checked` |
 
 Rules:
 

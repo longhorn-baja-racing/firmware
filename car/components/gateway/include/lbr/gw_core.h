@@ -191,5 +191,10 @@ void lbr_gw_core_event(lbr_gw_core_t *c, lbr_event_code_t code, uint16_t arg, bo
 /* COMMAND frame to every node (lbr_command_t). */
 void lbr_gw_core_command(lbr_gw_core_t *c, uint8_t code, const uint8_t args[7]);
 
+/* Queue one of the Central's own frames (the firmware-update relay) and
+ * record it like any other. false, and nothing logged, if CAN is down or the
+ * TX queue had no room: the caller retries. */
+bool lbr_gw_core_send(lbr_gw_core_t *c, const lbr_can_frame_t *f);
+
 /* Status text for the links (STAT, HTTP, BLE). */
 size_t lbr_gw_core_status(lbr_gw_core_t *c, const char *log_name, char *buf, size_t cap);

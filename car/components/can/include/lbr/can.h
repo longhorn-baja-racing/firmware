@@ -20,7 +20,10 @@
  *   0x001         TIME_SYNC       Central, 10 Hz
  *   0x002         TIME_FOLLOW_UP  Central, after each TIME_SYNC
  *   0x010         COMMAND         Central, on event
+ *   0x011         UPDATE_CTRL     Central, firmware update (parked only, lbr/update.h)
+ *   0x012         UPDATE_DATA     Central, firmware update image bytes
  *   0x020 + n     EVENT / FAULT   node n (1..10), on event
+ *   0x030 + n     UPDATE_STATUS   node n, reply to UPDATE_CTRL
  *   0x700 + n     HEARTBEAT       node n, 1 Hz: state, error flags
  *   0x700 + 16n + p  HEALTH page p (0..11) of node n, 1 Hz
  *
@@ -32,7 +35,10 @@
 #define LBR_CAN_ID_TIME_SYNC      0x001u
 #define LBR_CAN_ID_TIME_FOLLOW_UP 0x002u
 #define LBR_CAN_ID_COMMAND        0x010u
+#define LBR_CAN_ID_UPDATE_CTRL    0x011u
+#define LBR_CAN_ID_UPDATE_DATA    0x012u
 #define LBR_CAN_ID_EVENT_BASE     0x020u /* + node id */
+#define LBR_CAN_ID_UPDATE_STATUS  0x030u /* + node id */
 #define LBR_CAN_ID_HEARTBEAT_BASE 0x700u /* + node id */
 #define LBR_CAN_ID_HEALTH_BASE    0x700u /* + 16 * node id + page (node id >= 1) */
 #define LBR_CAN_ID_MAX            0x7FFu

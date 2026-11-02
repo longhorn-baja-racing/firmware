@@ -190,6 +190,15 @@ void lbr_gw_core_command(lbr_gw_core_t *c, uint8_t code, const uint8_t args[7])
     gw_tx(c, &f);
 }
 
+bool lbr_gw_core_send(lbr_gw_core_t *c, const lbr_can_frame_t *f)
+{
+    if (!c->can_up || !c->hal.can_send(c->hal.ctx, f)) {
+        return false;
+    }
+    handle_frame(c, f, c->hal.now_us(c->hal.ctx), true);
+    return true;
+}
+
 static void acq_event(void *ctx, lbr_event_code_t code, uint16_t arg, bool fault)
 {
     lbr_gw_core_event(ctx, code, arg, fault);
