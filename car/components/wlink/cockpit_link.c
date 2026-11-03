@@ -11,9 +11,12 @@
 /* Pure Central-side cockpit link; see lbr/cockpit_link.h. */
 
 const lbr_signal_id_t lbr_cockpit_signals[] = {
-    LBR_SIG_ENGINE_RPM,    LBR_SIG_CVT_RPM,       LBR_SIG_GPS_SPEED,     LBR_SIG_FUEL_LEVEL,
-    LBR_SIG_TEMP_CVT,      LBR_SIG_TEMP_BRAKE_FL, LBR_SIG_TEMP_BRAKE_FR, LBR_SIG_TEMP_BRAKE_BL,
-    LBR_SIG_TEMP_BRAKE_BR, LBR_SIG_BRAKE_PEDAL,   LBR_SIG_GAS_PEDAL,     LBR_SIG_FAULT,
+    LBR_SIG_ENGINE_RPM,    LBR_SIG_GPS_SPEED,     LBR_SIG_FUEL_LEVEL,
+    LBR_SIG_TEMP_CVT,      LBR_SIG_TEMP_BRAKE_FL, LBR_SIG_TEMP_BRAKE_FR,
+    LBR_SIG_TEMP_BRAKE_BL, LBR_SIG_TEMP_BRAKE_BR, LBR_SIG_STRESS_1,
+    LBR_SIG_STRESS_2,      LBR_SIG_STRESS_3,      LBR_SIG_STRESS_4,
+    LBR_SIG_STRESS_5,      LBR_SIG_STRESS_6,      LBR_SIG_STRESS_7,
+    LBR_SIG_STRESS_8,
 };
 const size_t lbr_cockpit_signal_count = sizeof lbr_cockpit_signals / sizeof lbr_cockpit_signals[0];
 
