@@ -1,5 +1,5 @@
 # packet.c and lora_policy.c are pure (host-tested): the one packet framing
-# every live link and wireless link uses. The radio links themselves are in
+# every live link and the cockpit link use. The radio links themselves are in
 # the links component (Central only).
 idf_component_register(
     SRCS "packet.c" "lora_policy.c"

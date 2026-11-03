@@ -20,19 +20,29 @@ static void test_sender_map(void)
     CHECK_EQ_U(lbr_can_sender(0x023), LBR_NODE_DRIVER_INPUT);
     CHECK_EQ_U(lbr_can_sender(0x100), LBR_NODE_DRIVER_INPUT);
     CHECK_EQ_U(lbr_can_sender(0x201), LBR_NODE_POWERTRAIN);
-    CHECK_EQ_U(lbr_can_sender(0x304), LBR_NODE_IMU); /* BL accel: the IMU Controller sends it */
+    CHECK_EQ_U(lbr_can_sender(0x304), LBR_NODE_CORNER_BL); /* BL accel: its wheel hub node */
+    CHECK_EQ_U(lbr_can_sender(0x309), LBR_NODE_IMU);
+    CHECK_EQ_U(lbr_can_sender(0x02A), LBR_NODE_CORNER_BR);
     CHECK_EQ_U(lbr_can_sender(0x401), LBR_NODE_STRESS);
     CHECK_EQ_U(lbr_can_sender(0x501), LBR_NODE_TEMPERATURE);
     CHECK_EQ_U(lbr_can_sender(0x60A), LBR_NODE_CENTRAL);
     CHECK_EQ_U(lbr_can_sender(0x701), LBR_NODE_IMU);
     CHECK_EQ_U(lbr_can_sender(0x706), LBR_NODE_CENTRAL);
-    CHECK_EQ_U(lbr_can_sender(0x780 + 16 * 5 + 11), LBR_NODE_STRESS);
-    /* Unassigned ids, page 12+, and anything above 11 bits are not LBR. */
+    CHECK_EQ_U(lbr_can_sender(0x707), LBR_NODE_CORNER_FL);
+    CHECK_EQ_U(lbr_can_sender(0x70A), LBR_NODE_CORNER_BR);
+    CHECK_EQ_U(lbr_can_sender(0x700 + 16 * 5 + 11), LBR_NODE_STRESS);
+    CHECK_EQ_U(lbr_can_sender(0x700 + 16 * 10), LBR_NODE_CORNER_BR);
+    /* Unassigned ids, the cockpit (not on CAN), page 12+, and anything
+     * above 11 bits are not LBR. */
     CHECK_EQ_U(lbr_can_sender(0x000), 0u);
     CHECK_EQ_U(lbr_can_sender(0x020), 0u);
-    CHECK_EQ_U(lbr_can_sender(0x027), 0u);
-    CHECK_EQ_U(lbr_can_sender(0x707), 0u);
-    CHECK_EQ_U(lbr_can_sender(0x780 + 16 * 2 + 12), 0u);
+    CHECK_EQ_U(lbr_can_sender(0x02B), 0u);
+    CHECK_EQ_U(lbr_can_sender(0x30A), 0u);
+    CHECK_EQ_U(lbr_can_sender(0x700), 0u);
+    CHECK_EQ_U(lbr_can_sender(0x70B), 0u);
+    CHECK_EQ_U(lbr_can_sender(0x70F), 0u);
+    CHECK_EQ_U(lbr_can_sender(0x700 + 16 * 2 + 12), 0u);
+    CHECK_EQ_U(lbr_can_sender(0x700 + 16 * 11), 0u);
     CHECK_EQ_U(lbr_can_sender(0x7FF), 0u);
     CHECK_EQ_U(lbr_can_sender(0x1ABCDEF), 0u);
     /* Worst-case standard frame: 34 + 64 bits, 24 stuff bits, 13 trailer. */
@@ -109,8 +119,8 @@ static void test_field_codec(void)
     lbr_can_field_decode(&i32, p, &o);
     CHECK(o.valid && o.type == LBR_VAL_I32 && o.v.i32 == -973456789);
     lbr_field_def_t u8 = {
-        .signal = LBR_SIG_DASH_LINK, .offset = 1, .enc = LBR_ENC_U8, .scale = 1.0f};
-    lbr_sample_t b = {.signal = LBR_SIG_DASH_LINK, .type = LBR_VAL_BOOL, .valid = true};
+        .signal = LBR_SIG_COCKPIT_LINK, .offset = 1, .enc = LBR_ENC_U8, .scale = 1.0f};
+    lbr_sample_t b = {.signal = LBR_SIG_COCKPIT_LINK, .type = LBR_VAL_BOOL, .valid = true};
     b.v.b          = true;
     CHECK(lbr_can_field_encode(&u8, &b, p));
     CHECK_EQ_U(p[1], 1);
@@ -166,9 +176,9 @@ static void test_data_frame_roundtrip(void)
         CHECK(o[i].synced && !o[i].seq_inferred);
     }
 
-    /* Forwarded corner data: the origin is the corner, not the sender. */
+    /* Suspension IMU data: the wheel hub node samples and sends it. */
     const lbr_frame_def_t *fl = lbr_frame_def(0x301);
-    CHECK(fl != NULL && fl->origin == LBR_NODE_CORNER_FL && fl->sender == LBR_NODE_IMU);
+    CHECK(fl != NULL && fl->sender == LBR_NODE_CORNER_FL);
     lbr_sample_t g[3] = {f32_sample(LBR_SIG_IMU_FL_GYRO_X, 1.0f),
                          f32_sample(LBR_SIG_IMU_FL_GYRO_Y, -2.0f),
                          f32_sample(LBR_SIG_IMU_FL_GYRO_Z, 40.0f)};
@@ -232,6 +242,9 @@ static void test_event_frame(void)
     CHECK_EQ_U(o.v.u32 >> 16, 3u);
     /* Only CAN nodes send events; data frames are not events. */
     s.source = LBR_NODE_CORNER_FL;
+    CHECK(lbr_can_encode_event(&s, &f));
+    CHECK_EQ_U(f.id, 0x027);
+    s.source = LBR_NODE_COCKPIT;
     CHECK(!lbr_can_encode_event(&s, &f));
     f.id = 0x100;
     CHECK(!lbr_can_decode_event(&f, 0, &o));
@@ -299,12 +312,12 @@ static void test_heartbeat_and_health(void)
     CHECK_EQ_U(lbr_can_decode_heartbeat(&f, &state, &flags), LBR_NODE_STRESS);
     CHECK_EQ_U(state, LBR_NODE_DEGRADED);
     CHECK_EQ_U(flags, LBR_HB_ERR_SENSOR);
-    CHECK(!lbr_can_encode_heartbeat(LBR_NODE_DASHBOARD, 0, 0, &f));
+    CHECK(!lbr_can_encode_heartbeat(LBR_NODE_COCKPIT, 0, 0, &f));
 
     lbr_health_record_t h = {.uptime_ms = 1234, .state = LBR_NODE_RUN, .can_bus_off_count = 3};
     lbr_health_record_t o = {0};
     CHECK(lbr_can_encode_health_page(LBR_NODE_POWERTRAIN, &h, 0, &f));
-    CHECK_EQ_U(f.id, 0x7A0);
+    CHECK_EQ_U(f.id, 0x720);
     CHECK_EQ_I(lbr_can_decode_health_page(&f, &o), 0);
     CHECK_EQ_U(o.node_id, LBR_NODE_POWERTRAIN);
     CHECK_EQ_U(o.uptime_ms, 1234u);
@@ -312,6 +325,11 @@ static void test_heartbeat_and_health(void)
     CHECK_EQ_I(lbr_can_decode_health_page(&f, &o), 3);
     CHECK_EQ_U(o.can_bus_off_count, 3u);
     CHECK(!lbr_can_encode_health_page(1, &h, LBR_HEALTH_PAGE_COUNT, &f));
+    CHECK(!lbr_can_encode_health_page(LBR_NODE_COCKPIT, &h, 0, &f));
+    CHECK(lbr_can_encode_health_page(LBR_NODE_CORNER_BR, &h, 11, &f));
+    CHECK_EQ_U(f.id, 0x7AB);
+    CHECK_EQ_I(lbr_can_decode_health_page(&f, &o), 11);
+    CHECK_EQ_U(o.node_id, LBR_NODE_CORNER_BR);
     lbr_can_encode_heartbeat(LBR_NODE_IMU, 0, 0, &f);
     CHECK_EQ_I(lbr_can_decode_health_page(&f, &o), -1);
 }
@@ -341,23 +359,19 @@ static void test_bus_decoder(void)
     /* The Central's own data is always on the shared base. */
     CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_CENTRAL));
 
-    /* Corners: the IMU Controller synced, and the corner's CORNER_SYNCED bit. */
-    CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_FR));
-    lbr_sample_t st[6];
-    for (int i = 0; i < 4; i++) {
-        st[i] = f32_sample((lbr_signal_id_t)(LBR_SIG_CORNER_FL_BATTERY + i), 80.0f);
-    }
-    st[4] = (lbr_sample_t){.signal = LBR_SIG_CORNER_LINK, .type = LBR_VAL_U32, .valid = true};
-    st[5] = (lbr_sample_t){.signal = LBR_SIG_CORNER_SYNCED, .type = LBR_VAL_U32, .valid = true};
-    st[4].v.u32 = 0x0F;
-    st[5].v.u32 = 0x02; /* FR only */
-    lbr_can_encode_data(lbr_frame_def(0x30A), st, 1, &f);
-    CHECK_EQ_U(lbr_bus_decode(&d, &f, 1000000, out, 8), 6u);
-    CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_FR)); /* IMU itself not heard */
-    lbr_can_encode_heartbeat(LBR_NODE_IMU, LBR_NODE_RUN, 0, &hb);
+    /* A wheel hub node is tracked by its own heartbeat, like any CAN node. */
+    lbr_sample_t a[3] = {f32_sample(LBR_SIG_IMU_FR_ACCEL_X, 1.0f),
+                         f32_sample(LBR_SIG_IMU_FR_ACCEL_Y, 0.0f),
+                         f32_sample(LBR_SIG_IMU_FR_ACCEL_Z, 9.8f)};
+    lbr_can_encode_data(lbr_frame_def(0x302), a, 100, &f);
+    CHECK_EQ_U(lbr_bus_decode(&d, &f, 1000000, out, 8), 3u);
+    CHECK(!out[0].synced && out[0].source == LBR_NODE_CORNER_FR);
+    lbr_can_encode_heartbeat(LBR_NODE_CORNER_FR, LBR_NODE_RUN, 0, &hb);
     lbr_bus_decode(&d, &hb, 1000000, out, 8);
-    CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_FR));
+    CHECK_EQ_U(lbr_bus_decode(&d, &f, 1000000, out, 8), 3u);
+    CHECK(out[2].synced);
     CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_FL));
+    CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_COCKPIT));
 
     /* Events decode to one sample; foreign frames to none. */
     lbr_sample_t e = {.signal    = LBR_SIG_EVENT,
@@ -401,38 +415,28 @@ static void test_bus_decoder_forgets_sync(void)
     lbr_bus_decode(&d, &f, 10, out, 8);
     CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_POWERTRAIN));
 
-    /* Lost (and found) nodes, CAN or corner, named by the event's arg. */
+    /* Lost (and found) nodes, named by the event's arg. */
     e.source = LBR_NODE_CENTRAL;
     e.v.u32  = lbr_event_value(LBR_EVT_NODE_FOUND, LBR_NODE_POWERTRAIN);
     lbr_can_encode_event(&e, &f);
     lbr_bus_decode(&d, &f, 10, out, 8);
     CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_POWERTRAIN));
 
-    lbr_sample_t st[6];
-    for (int i = 0; i < 4; i++) {
-        st[i] = f32_sample((lbr_signal_id_t)(LBR_SIG_CORNER_FL_BATTERY + i), 80.0f);
-    }
-    st[4] = (lbr_sample_t){.signal = LBR_SIG_CORNER_LINK, .type = LBR_VAL_U32, .valid = true};
-    st[5] = (lbr_sample_t){.signal = LBR_SIG_CORNER_SYNCED, .type = LBR_VAL_U32, .valid = true};
-    st[4].v.u32 = 0x0F;
-    st[5].v.u32 = 0x0F;
-    lbr_can_encode_data(lbr_frame_def(0x30A), st, 1, &f);
+    lbr_can_encode_heartbeat(LBR_NODE_CORNER_BL, LBR_NODE_RUN, 0, &f);
     lbr_bus_decode(&d, &f, 10, out, 8);
-    lbr_can_encode_heartbeat(LBR_NODE_IMU, LBR_NODE_RUN, 0, &f);
+    lbr_can_encode_heartbeat(LBR_NODE_CORNER_FL, LBR_NODE_RUN, 0, &f);
     lbr_bus_decode(&d, &f, 10, out, 8);
     CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_BL));
-    e.source = LBR_NODE_IMU;
-    e.v.u32  = lbr_event_value(LBR_EVT_NODE_LOST, LBR_NODE_CORNER_BL);
+    e.v.u32 = lbr_event_value(LBR_EVT_NODE_LOST, LBR_NODE_CORNER_BL);
     lbr_can_encode_event(&e, &f);
     lbr_bus_decode(&d, &f, 10, out, 8);
     CHECK(!lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_BL));
     CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_CORNER_FL)); /* the others keep theirs */
-    CHECK(lbr_bus_decoder_synced(&d, LBR_NODE_IMU));
 }
 
 static void test_frame_record(void)
 {
-    lbr_can_frame_t f = {.id = 0x30A, .dlc = 3, .data = {1, 2, 3, 9, 9, 9, 9, 9}};
+    lbr_can_frame_t f = {.id = 0x501, .dlc = 3, .data = {1, 2, 3, 9, 9, 9, 9, 9}};
     uint8_t         buf[LBR_CAN_FRAME_REC_SIZE];
     CHECK_EQ_U(lbr_can_frame_rec_encode(777, LBR_CAN_REC_FLAG_OWN_TX, &f, buf, sizeof buf),
                LBR_CAN_FRAME_REC_SIZE);

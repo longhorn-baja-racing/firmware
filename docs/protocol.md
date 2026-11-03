@@ -1,6 +1,6 @@
 # Protocol
 
-Protocol version **3** (`LBR_PROTOCOL_VERSION`), log format version **1**
+Protocol version **4** (`LBR_PROTOCOL_VERSION`), log format version **1**
 (`LBR_LOG_FORMAT_VERSION`).
 
 The dashboard and firmware implement **one versioned protocol/log specification**. This file is
@@ -21,16 +21,15 @@ All multi-byte fields are **little-endian**. All text is ASCII.
 - **Explicit unavailability.** A missing measurement is a sample with `valid = false` and a
   reason code in the value slot (on CAN, a reserved raw value per encoding), never a zero.
 - **Shared time base.** Every timestamp is microseconds on the Central's monotonic clock (epoch:
-  Central boot), distributed over CAN (and over WiFi to the corner nodes). Sampling is locked to
-  a grid of that clock, so a sample's time follows from its grid index. Never packet-arrival
-  time.
+  Central boot), distributed over CAN to every node. Sampling is locked to a grid of that clock,
+  so a sample's time follows from its grid index. Never packet-arrival time.
 - **Count every loss.** Queues are bounded and never block; every dropped sample, frame, record,
   or packet is counted and reported (heartbeats, `LOSS` records, sequence gaps).
 
 ## Catalog
 
 `catalog.json` carries, for every signal: `id`, `name`, value `type`, `unit`, and a description;
-the frame table (`frames`: id, name, sender, origin, rate, dlc, counter offset, and per field the
+the frame table (`frames`: id, name, sender, rate, dlc, counter offset, and per field the
 signal, byte offset, encoding, scale); the system ids, heartbeat flags, and command codes; the node
 table; unit, type, and encoding name lists; event codes; and unavailable-reason names. Signal ids
 are grouped like the CAN map, in the high byte:
@@ -39,15 +38,15 @@ are grouped like the CAN map, in the high byte:
 | --- | --- | --- |
 | `0x01xx` | Driver inputs | `driver_input` |
 | `0x02xx` | Powertrain: engine and CVT speed, fuel | `powertrain` |
-| `0x03xx` | IMUs (four corners, chassis), corner status | `imu` (corner samples taken by `corner_*`) |
+| `0x03xx` | IMUs: four suspension (wheel hubs), chassis | `corner_fl` .. `corner_br`, `imu` |
 | `0x04xx` | Stress sensors | `stress` |
 | `0x05xx` | Temperatures | `temperature` |
-| `0x06xx` | GPS, dashboard link | `central` |
+| `0x06xx` | GPS, cockpit link | `central` |
 | `0x07xx` | Events / faults | any CAN node |
 
 **Catalog hash** (`lbr_catalog_hash`): CRC-32 over, for each signal in id order,
 `id u16, type index u8, unit index u8, name, NUL`, then for each frame in id order
-`id u16, sender u8, origin u8, rate u16, dlc u8, counter offset u8 (0xFF none), field count u8`,
+`id u16, sender u8, rate u16, dlc u8, counter offset u8 (0xFF none), field count u8`,
 each field `signal u16, offset u8, encoding index u8, scale f32 bits`, and `name, NUL`. It travels
 in heartbeats (page 2) and every session record, so a node or decoder built against a different
 catalog or frame table is detected.
@@ -89,7 +88,7 @@ Used in logs (`SAMPLE` records, local node logs) and transport packets.
 
 `synced = 0` means the producing node had not yet been disciplined to the Central: its timestamp
 is node-local and must not be aligned with other data. `source` is the node that took the sample
-(a corner node for forwarded IMU data). For a sample decoded from CAN, `seq` is the low 32 bits of
+(for CAN data, the frame's sender). For a sample decoded from CAN, `seq` is the low 32 bits of
 its grid index and `t_mono_us` the grid time; `seq_inferred = 1` means the frame carries no
 counter, so seq and time were inferred from the receive time.
 
@@ -110,7 +109,7 @@ resets or saturates within a session; receivers compare with modular arithmetic
 ## Heartbeat (health) record
 
 Twelve 8-byte pages; layout in `car/components/health/include/lbr/health.h`. On CAN each page is one
-frame at 0x780 + 16 n + p, next to the 2-byte `HEARTBEAT` summary at 0x700 + n (state and error
+frame at 0x700 + 16 n + p, next to the 2-byte `HEARTBEAT` summary at 0x700 + n (state and error
 flags, see `can-ids.md`); in logs and packets the record is `node_id u8` followed by all twelve
 pages (97 bytes). Reserved fields are zero and a decoder rejects a page where they are not.
 `*_age_ms = 0xFFFFFFFF` means "not applicable" (e.g. no SD card on that node).
@@ -143,7 +142,7 @@ then the exact validated configuration as `key=value` lines (`config_crc` is its
 
 The Central's authoritative log holds `CAN_FRAME` records: every frame on the bus, byte-exact,
 with its receive time, including the Central's own transmissions (flag bit 1: time sync, events,
-GPS, dashboard status). Decoding is deterministic from those bytes plus the frame table: a reader
+GPS, cockpit status). Decoding is deterministic from those bytes plus the frame table: a reader
 replays the frames in order through the sync-tracking rules of `can-ids.md`, so the log never
 depends on the firmware's decoder. Local node logs (a plan with `local_log`; none in the 2026
 car) hold `SAMPLE` records at full rate.
@@ -159,16 +158,68 @@ record with the exact count is written ahead of the next record that fits.
 Session files are `/sdcard/lbr/NNNNNNNN.LBR`, numbered upward per boot; the firmware never
 formats a card or overwrites a session.
 
+## CSV export (lbr-csv version 1)
+
+The SD card holds `.LBR` logs only: they are CRC-checked, survive a power cut mid-write, and
+carry the session's config and versions. CSV is the export format for debugging and for the
+dashboard app: `python3 dev/tools/lbr_decode.py csv 00000012.LBR` writes `00000012.csv`, with
+every record of the log as rows (a long table, not one column per signal, so signals at
+different rates need no resampling and nothing is filled in). Each signal in it is a channel
+the dashboard app can plot.
+
+Columns, in this order, with a header row:
+
+| column | meaning |
+| --- | --- |
+| `t_s` | shared time base, seconds with exactly 6 decimals (integer microseconds, no float rounding) |
+| `kind` | what the row is (below) |
+| `node` | node name from the catalog (`nodeN` if unknown); the logger for session/loss/text rows |
+| `name` | signal name, event name, or field name |
+| `value` | number, or text for `text`/`command`/`can_raw`; **empty when unavailable**, never 0 |
+| `unit` | catalog unit (`m/s^2`, `deg*1e-7`, ...); empty for unitless values |
+| `status` | samples: `ok` or the unavailable reason (`NOT_FITTED`, `SENSOR_FAULT`, ...); heartbeats: error flag names joined with `\|` |
+| `synced` | samples and events: `1` if `t_s` is on the shared time base, `0` if on the node's own clock |
+| `seq` | samples and events: the stream's sequence number (CAN data frames: the grid index) |
+
+| `kind` | rows |
+| --- | --- |
+| `format` | first row: `lbr_csv_version` = 1 |
+| `session` | the SESSION record: `format_version`, `protocol_version`, `fw_version`, `catalog_hash`, `config_crc`, `reset_reason`, `boot_count`, `start_time_us` |
+| `config` | one row per `key=value` line of the session config text |
+| `sample` | a measurement, from a SAMPLE record or decoded from a CAN data frame |
+| `event`, `fault` | `name` = event name, `value` = its argument |
+| `heartbeat` | `state` and `err_flags` per heartbeat frame |
+| `health` | one row per heartbeat field, from HEALTH records and CAN health pages |
+| `command` | Central command frames: `name` = command, `value` = argument bytes (hex) |
+| `update` | firmware update (parked, [`can-ids.md`](can-ids.md)): from the Central `name` = op, `value` = target node; from a node `name` = op answered, `value` = result, `status` = its state. Data frames are counted, not listed |
+| `can_raw` | any other frame (unknown id, wrong length, extended id): `name` = id, `value` = data (hex) |
+| `loss` | LOSS records: `dropped_records`, `dropped_bytes` |
+| `text`, `end` | TEXT records; the END record's `records_written` |
+| `unknown_record` | a record type this decoder does not know: `name` = type, `value` = payload (hex) |
+| `integrity` | last rows: `records`, `corrupt_regions`, `skipped_bytes`, `truncated_tail`, `time_sync_frames`, `time_follow_up_frames`, `update_data_frames` (counted, not listed), `catalog_checked` |
+
+Rules:
+
+- Rows are in log order. Per channel (`node`, `name`) time increases, but rows of different
+  channels can be slightly out of time order; sort per channel, not globally.
+- Health, text, and unknown records carry no time of their own: they get the time of the
+  latest record before them.
+- Rows with `synced` = 0 are on a node's free-running clock; do not plot them against the
+  shared axis.
+- The export refuses a log whose catalog hash differs from the catalog it decodes with (pass
+  the right one with `--catalog`), so names are never put on the wrong signals.
+- `dev/tests/fixtures/session.csv` is the export of `session.lbr` and pins this format; the
+  dashboard app's CSV import must read it.
+
 ## Transport packets
 
-Every live link (USB, WiFi, LoRa) and every wireless datagram (corner and dashboard links)
-carries the same packet:
+Every live link (USB, WiFi, LoRa) and every cockpit datagram carries the same packet:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 1 | version (1) |
-| 1 | 1 | link: 0 LoRa, 1 USB, 2 WiFi, 3 BLE, 4 corner, 5 dashboard |
-| 2 | 1 | source node (the Central on its links; the sender on wireless links) |
+| 1 | 1 | link: 0 LoRa, 1 USB, 2 WiFi, 3 BLE, 4 cockpit |
+| 2 | 1 | source node (the Central on its links; the sender on the cockpit link) |
 | 3 | 1 | record count |
 | 4 | 4 | packet seq, per link |
 | 8 | 8 | `t_us` when the packet was built |
@@ -176,9 +227,8 @@ carries the same packet:
 | end | 4 | CRC-32/IEEE over everything before it |
 
 Record types are the log's, plus `HEALTH_LITE` (0x08: `node u8, state u8, flags u16,
-sensor_status u32`), the wireless records `IMU_BATCH` (0x09), `TIME_REQ` (0x0A), `TIME_RESP`
-(0x0B) (below), and the dump records `FILE_INFO` (0x10), `FILE_CHUNK` (0x11: `offset u32, data`),
-`FILE_END` (0x12: `bytes u32, crc32 u32, name`).
+sensor_status u32`), and the dump records `FILE_INFO` (0x10), `FILE_CHUNK` (0x11: `offset u32,
+data`), `FILE_END` (0x12: `bytes u32, crc32 u32, name`).
 
 - **USB and WiFi** are byte streams: each packet is COBS-encoded and followed by `0x00`. A
   receiver splits at `0x00`, so it resynchronizes after any corruption (boot-ROM text and panic
@@ -192,40 +242,26 @@ sensor_status u32`), the wireless records `IMU_BATCH` (0x09), `TIME_REQ` (0x0A),
 
 A gap in the per-link `seq` at the receiver means packets lost in transit; packets the Central
 could not enqueue are counted in its heartbeat (`transport_error_count`). Over WiFi (UDP) packets
-can also arrive reordered, so the wireless receivers keep a 32-packet window (`lbr_seq_window_t`):
-a packet counts as lost only when it leaves the window unseen, a late one fills its hole, a repeat
-is dropped, and a packet older than the window means the sender restarted its count. Only packets
-newer than any so far update displayed values, so an older one never overwrites a newer one.
+can also arrive reordered, so the cockpit link's receivers keep a 32-packet window
+(`lbr_seq_window_t`): a packet counts as lost only when it leaves the window unseen, a late one
+fills its hole, a repeat is dropped, and a packet older than the window means the sender
+restarted its count. Only packets newer than any so far update displayed values, so an older one
+never overwrites a newer one.
 
-## Wireless links
+## Cockpit link
 
-Over 5 GHz WiFi UDP (DAQ-WIRING.md section 8; `car/components/wlink/include/lbr/wlink.h`), one
-transport packet per datagram, no COBS:
+The cockpit display is the only node off the CAN bus. Over 5 GHz WiFi UDP (DAQ-WIRING.md
+section 8; `car/components/wlink/include/lbr/wlink.h`), one transport packet per datagram, no COBS:
 
-- **Corner -> IMU Controller** (link 4, port 47801): `IMU_BATCH` records, `k0 u32, n u8, battery
-  u8, flags u8 (bit 0 synced, bit 1 IMU healthy, bit 2 simulated, bits 3..7 timeline), sample size
-  u8`, then n samples, each the corner's IMU frame payloads without their counters, already in the
-  frame-table encoding. Each datagram repeats the previous batch ahead of the new one; the IMU
-  Controller forwards each grid index once and counts the ones that never arrive (64-sample
-  window). A batch holds contiguous samples taken in one sync state only. The timeline (5 bits,
-  wrapping) counts the corner's clock jumps (first sync, step, new epoch) and restarts at 0 on
-  boot; when it changes, k jumps with it, so the IMU Controller counts the old window's holes as
-  lost and starts a new window. A batch of the previous timeline arriving within 200 ms of the
-  change was reordered in transit: dropped and counted (`stale`), not a new timeline. After a link
-  timeout, a first batch far behind the window (a corner that rebooted meanwhile) also starts a
-  new window.
-- **Corner clock**: `TIME_REQ` (`t1 u64`, corner local time) and `TIME_RESP` (`t1, t2, t3 u64`
-  shared times at the IMU Controller's reception and reply, `epoch u16`, `flags u8` bit 0 server
-  synced). The corner takes shared time at reception as t3 + rtt / 2 with
-  rtt = (t4 - t1) - (t3 - t2), ignores replies with rtt above 20 ms or more than 1.5 ms above the
-  best recent rtt (which ages by 200 us per request, so it follows a slower link), and feeds the
-  time servo. The offset error is up to rtt / 2 when the two directions are uneven, so a slow
-  exchange is not allowed to step the clock.
-- **Central -> dashboard** (link 5, port 47802, broadcast on the Central's access point, every
-  `dash_period_ms`): a `SAMPLE` record per display signal (latest value; stale ones as `NO_DATA`)
+- **Central -> cockpit** (link 4, port 47801, broadcast on the Central's access point, every
+  `cockpit_period_ms`): a `SAMPLE` record per display signal (latest value; stale ones as `NO_DATA`)
   and a `HEALTH_LITE` per CAN node.
-- **Dashboard -> Central** (link 5, port 47803, once a second): `SAMPLE` records (`DASH_BATTERY`).
-  The Central puts its battery and the link state on CAN (`DASH_STATUS`, 0x60A).
+- **Cockpit -> Central** (link 4, port 47802, once a second): `SAMPLE` records (`COCKPIT_BATTERY`).
+  The Central puts its battery and the link state on CAN (`COCKPIT_STATUS`, 0x60A).
+
+The cockpit keeps no shared clock: it only shows ages. After a receive timeout, or a packet
+older than its window (the sender restarted its count), a receiver restarts its window and counts
+the packets the old one still held unseen as lost.
 
 USB host commands, one per line: `STAT`, `LIST`, `DUMP <name> [offset]`.
 
@@ -239,19 +275,19 @@ that tracks offset and rate:
 - corrections under 2 ms are slewed; larger ones are stepped and counted (`time_step_count`);
 - shared time never runs backwards within an epoch (a backwards correction holds the clock);
 - a Central reboot changes the 16-bit epoch, and nodes re-anchor to the new timeline;
-- the IMU Controller relays the shared time to the corner nodes over WiFi (above); acquisition on
-  every node treats a step or new epoch as a new timeline, not as missed samples.
+- acquisition on every node treats a step or new epoch as a new timeline, not as missed samples.
 
 ## Compatibility rules
 
 - Decoders must ignore record types they do not know (skip by length) and must keep samples of
   unknown signals (type `raw`) rather than dropping them.
 - Adding a signal, a frame, a node id, an event code, or a record type is backward compatible:
-  the catalog hash changes and old ids keep their meaning. Protocol 3 renumbered the catalog for
-  the DAQ-WIRING node set; logs of protocol 2 need a protocol 2 decoder. Changing any layout in this file is incompatible: bump
+  the catalog hash changes and old ids keep their meaning. Logs of an earlier protocol version
+  need that version's decoder (the version is in every session record). Changing any layout in
+  this file is incompatible: bump
   `LBR_PROTOCOL_VERSION` (and `LBR_LOG_FORMAT_VERSION` for the log), regenerate the fixtures, and
-  update `lbr-dashboard` in step.
-- Every node and the dashboard report their protocol version and catalog hash; a mismatch is a
+  update the dashboard app in step.
+- Every node and the cockpit report their protocol version and catalog hash; a mismatch is a
   configuration error to surface, not to guess around.
 
 ## Golden fixtures
@@ -259,11 +295,14 @@ that tracks offset and rate:
 `dev/tests/fixtures/` holds binary fixtures produced by the firmware codecs, each with the expected
 decode as JSON: `catalog.json`, `samples.bin`, `health.bin`, `can_capture.bin`, `session.lbr`,
 `stream_usb.bin`. CTest fails if a fixture no longer matches the codecs; `dev/tools/lbr_decode.py
---selftest` is an independent decoder that must reproduce every expected JSON. `lbr-dashboard`
-should run the same fixtures through its decoder in its own CI.
+--selftest` is an independent decoder that must reproduce every expected JSON and `session.csv`
+(the CSV export of `session.lbr`; the `fixtures` target regenerates it too, and ctest runs the
+self test as `decoder`). The dashboard app should run the same fixtures through its decoder in
+its own CI.
 
-## Still to agree with lbr-dashboard (#14)
+## Still to agree with the dashboard app (#14)
 
 - [ ] where the canonical copy of this spec and the catalog lives (this repo generates it today)
 - [ ] the dashboard's fixture replay test, wired into its CI
+- [ ] the dashboard app importing `session.csv` (CSV export above) and `.LBR` directly
 - [ ] session/topology metadata beyond `key=value` config text (e.g. mounting transforms)

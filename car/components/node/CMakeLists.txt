@@ -3,7 +3,7 @@
 idf_component_register(
     SRCS "acq.c" "node_config.c" "node_core.c" "node_table.c" "value_table.c" "node_esp.c"
     INCLUDE_DIRS "include"
-    REQUIRES protocol can sensors health util logging timebase
+    REQUIRES protocol can sensors health util logging timebase update
     PRIV_REQUIRES esp_timer freertos log esp_system heap
 )
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/warnings.cmake")

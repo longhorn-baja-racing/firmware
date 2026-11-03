@@ -111,7 +111,7 @@ static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_
     }
     for (size_t i = 0; i < n; i++) {
         lbr_lora_policy_offer_sample(&c->lora_policy, &samples[i]);
-        lbr_value_table_offer(&c->dash_values, &samples[i], t_us);
+        lbr_value_table_offer(&c->cockpit_values, &samples[i], t_us);
     }
     uint8_t source = lbr_can_sender(f->id);
     if (!own_tx && f->id == LBR_CAN_ID_HEALTH_BASE + 16u * source + LBR_HEALTH_PAGE_COUNT - 1u) {
@@ -190,6 +190,15 @@ void lbr_gw_core_command(lbr_gw_core_t *c, uint8_t code, const uint8_t args[7])
     gw_tx(c, &f);
 }
 
+bool lbr_gw_core_send(lbr_gw_core_t *c, const lbr_can_frame_t *f)
+{
+    if (!c->can_up || !c->hal.can_send(c->hal.ctx, f)) {
+        return false;
+    }
+    handle_frame(c, f, c->hal.now_us(c->hal.ctx), true);
+    return true;
+}
+
 static void acq_event(void *ctx, lbr_event_code_t code, uint16_t arg, bool fault)
 {
     lbr_gw_core_event(ctx, code, arg, fault);
@@ -211,11 +220,11 @@ void lbr_gw_core_init(lbr_gw_core_t *c, const lbr_gw_hal_t *hal, const lbr_gw_co
     lbr_bus_decoder_init(&c->decoder);
     lbr_lora_policy_init(&c->lora_policy, lbr_lora_default_items, lbr_lora_default_item_count,
                          2000);
-    lbr_value_table_init(&c->dash_values, LBR_GW_DASH_STALE_US);
-    for (size_t i = 0; i < lbr_dash_signal_count; i++) {
-        lbr_value_table_watch(&c->dash_values, lbr_dash_signals[i], 0);
+    lbr_value_table_init(&c->cockpit_values, LBR_GW_COCKPIT_STALE_US);
+    for (size_t i = 0; i < lbr_cockpit_signal_count; i++) {
+        lbr_value_table_watch(&c->cockpit_values, lbr_cockpit_signals[i], 0);
     }
-    lbr_dash_link_init(&c->dash);
+    lbr_cockpit_link_init(&c->cockpit);
 }
 
 void lbr_gw_core_start(lbr_gw_core_t *c, lbr_logger_t *log, const lbr_gw_links_t *links,
@@ -371,40 +380,41 @@ void lbr_gw_core_unlock_state(void *core)
     unlock(core, LBR_GW_LOCK_STATE);
 }
 
-void lbr_gw_core_dash_tick(lbr_gw_core_t *c)
+void lbr_gw_core_cockpit_tick(lbr_gw_core_t *c)
 {
     uint8_t pkt[LBR_PKT_MAX_SIZE];
     size_t  n = 0;
     lock(c, LBR_GW_LOCK_STATE);
     uint64_t now    = c->hal.now_us(c->hal.ctx);
-    int      change = lbr_dash_link_tick(&c->dash, now);
-    if (c->links.dash != NULL) {
-        n = lbr_dash_link_build(&c->dash, now, NODE_ID, &c->dash_values, &c->nodes, pkt,
-                                sizeof pkt);
+    int      change = lbr_cockpit_link_tick(&c->cockpit, now);
+    if (c->links.cockpit != NULL) {
+        n = lbr_cockpit_link_build(&c->cockpit, now, NODE_ID, &c->cockpit_values, &c->nodes, pkt,
+                                   sizeof pkt);
     }
     unlock(c, LBR_GW_LOCK_STATE);
-    if (n > 0 && c->links.dash->send(c->links.dash, pkt, n) == 0) {
-        atomic_fetch_add(&c->dash_sent, 1);
+    if (n > 0 && c->links.cockpit->send(c->links.cockpit, pkt, n) == 0) {
+        atomic_fetch_add(&c->cockpit_sent, 1);
     }
     if (change > 0) {
-        lbr_gw_core_event(c, LBR_EVT_NODE_FOUND, LBR_NODE_DASHBOARD, false);
+        lbr_gw_core_event(c, LBR_EVT_NODE_FOUND, LBR_NODE_COCKPIT, false);
     } else if (change < 0) {
-        lbr_gw_core_event(c, LBR_EVT_NODE_LOST, LBR_NODE_DASHBOARD, true);
+        lbr_gw_core_event(c, LBR_EVT_NODE_LOST, LBR_NODE_COCKPIT, true);
     }
 }
 
-void lbr_gw_core_on_dash_packet(lbr_gw_core_t *c, const uint8_t *buf, size_t len,
-                                uint64_t rx_local_us)
+void lbr_gw_core_on_cockpit_packet(lbr_gw_core_t *c, const uint8_t *buf, size_t len,
+                                   uint64_t rx_local_us)
 {
     lock(c, LBR_GW_LOCK_STATE);
-    lbr_dash_link_on_packet(&c->dash, buf, len, c->hal.local_to_shared(c->hal.ctx, rx_local_us));
+    lbr_cockpit_link_on_packet(&c->cockpit, buf, len,
+                               c->hal.local_to_shared(c->hal.ctx, rx_local_us));
     unlock(c, LBR_GW_LOCK_STATE);
 }
 
 static void link_totals(const lbr_gw_core_t *c, uint32_t *dropped, uint32_t *errors)
 {
     lbr_transport_t *links[] = {c->links.usb, c->links.wifi, c->links.lora, c->links.ble,
-                                c->links.dash};
+                                c->links.cockpit};
     *dropped                 = 0;
     *errors                  = 0;
     for (size_t i = 0; i < sizeof links / sizeof links[0]; i++) {
@@ -446,9 +456,9 @@ static void build_health(lbr_gw_core_t *c, lbr_health_record_t *h, uint8_t *err_
     }
     uint32_t all_sensors = (1u << n_acq) - 1u;
     lock(c, LBR_GW_LOCK_STATE);
-    bool dash_up = c->dash.up;
+    bool cockpit_up = c->cockpit.up;
     unlock(c, LBR_GW_LOCK_STATE);
-    bool dash_down = c->cfg.dash_enable && c->links.dash != NULL && !dash_up;
+    bool cockpit_down = c->cfg.cockpit_enable && c->links.cockpit != NULL && !cockpit_up;
 
     lbr_node_state_t state = LBR_NODE_RUN;
     if (!c->can_up) {
@@ -506,7 +516,7 @@ static void build_health(lbr_gw_core_t *c, lbr_health_record_t *h, uint8_t *err_
     e |= log_open ? 0u : LBR_HB_ERR_STORAGE;
     e |= c->sim ? LBR_HB_ERR_SIM : 0u;
     e |= loss != c->prev_loss ? LBR_HB_ERR_LOSS : 0u;
-    e |= dash_down ? LBR_HB_ERR_LINK : 0u;
+    e |= cockpit_down ? LBR_HB_ERR_LINK : 0u;
     c->prev_loss = loss;
     *err_flags   = e;
 }

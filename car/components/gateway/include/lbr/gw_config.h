@@ -22,8 +22,8 @@ typedef struct {
     uint16_t lora_duty_permille; /* long-run airtime ceiling */
     uint16_t stream_batch_ms;    /* USB/WiFi packet batching window */
     uint16_t node_timeout_ms;    /* silent this long => NODE_LOST */
-    bool     dash_enable;        /* push display data to the cockpit dashboard */
-    uint16_t dash_period_ms;     /* one dashboard datagram this often (10-20 Hz) */
+    bool     cockpit_enable;     /* push display data to the cockpit display */
+    uint16_t cockpit_period_ms;  /* one cockpit datagram this often (10-20 Hz) */
 } lbr_gw_config_t;
 
 void lbr_gw_config_defaults(lbr_gw_config_t *c);

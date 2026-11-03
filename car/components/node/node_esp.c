@@ -12,6 +12,7 @@
 #include "lbr/node_core.h"
 #include "lbr/sensor_io.h"
 #include "lbr/timebase.h"
+#include "lbr/update_esp.h"
 #include "sdkconfig.h"
 
 /*
@@ -135,11 +136,6 @@ static const lbr_node_hal_t k_hal = {
     .log             = hal_log,
 };
 
-struct lbr_node_core *lbr_node_running_core(void)
-{
-    return s_started ? &s_core : NULL;
-}
-
 void lbr_node_emit_event(lbr_event_code_t code, uint16_t arg, bool fault)
 {
     if (!s_started) {
@@ -203,6 +199,9 @@ static void health_task(void *arg)
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(s_core.cfg->health_period_ms));
         esp_task_wdt_reset();
         lbr_node_core_heartbeat(&s_core, NULL);
+        /* A freshly updated image confirms itself once it is on the bus and
+         * synced (or rolls back after LBR_UPDATE_CONFIRM_TIMEOUT_S). */
+        lbr_update_esp_confirm_tick(s_core.can_up && lbr_time_is_synced());
     }
 }
 
@@ -226,6 +225,9 @@ void lbr_node_bind_io(const lbr_node_plan_t *plan, size_t slot, lbr_sensor_t *se
 
 void lbr_node_run(const lbr_node_config_t *cfg)
 {
+    /* Before anything else: reject an updated image meant for another node. */
+    lbr_update_esp_boot(cfg->node_id);
+
     s_evt_lock                   = xSemaphoreCreateMutex();
     lbr_can_bus_config_t can_cfg = lbr_can_bus_default_config();
     lbr_node_boot_t      boot    = {
@@ -233,7 +235,9 @@ void lbr_node_run(const lbr_node_config_t *cfg)
         .boot_count   = lbr_health_boot_count(),
         .can_bitrate  = can_cfg.bitrate,
     };
-    bool valid = lbr_node_core_init(&s_core, cfg, &k_hal, &boot);
+    lbr_node_hal_t hal = k_hal;
+    hal.ota            = lbr_update_esp_ota();
+    bool valid         = lbr_node_core_init(&s_core, cfg, &hal, &boot);
 
     can_cfg.accept_all = cfg->listen_all;
     lbr_can_err_t can  = lbr_can_bus_start(&can_cfg);
@@ -259,9 +263,6 @@ void lbr_node_run(const lbr_node_config_t *cfg)
 
     lbr_node_core_start(&s_core, can == LBR_CAN_OK, can == LBR_CAN_ERR_PINS_UNSET, log);
     s_started = true;
-    if (cfg->on_started != NULL) {
-        cfg->on_started(cfg->on_started_ctx);
-    }
 
     if (valid) {
         for (size_t i = 0; i < cfg->n_acq && i < LBR_NODE_MAX_SENSORS; i++) {

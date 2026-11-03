@@ -6,7 +6,7 @@
 /*
  * Stable signal identifiers (schema-driven protocol), generated from
  * signals.def. These values are part of the wire/log/CAN protocol and MUST
- * stay synchronized with lbr-dashboard.
+ * stay synchronized with the dashboard app.
  */
 typedef enum {
     LBR_SIG_UNKNOWN = 0x0000,

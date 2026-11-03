@@ -11,6 +11,7 @@
 #include "lbr/logging.h"
 #include "lbr/node.h"
 #include "lbr/timebase.h"
+#include "lbr/update.h"
 
 /*
  * Sensor-node logic, independent of the platform.
@@ -60,6 +61,10 @@ typedef struct {
 
     /* One line of diagnostic text (no newline). */
     void (*log)(void *ctx, lbr_log_level_t level, const char *text);
+
+    /* Flash access for firmware updates over CAN (lbr/update.h). NULL: this
+     * platform cannot update; update requests are answered with NO_SLOT. */
+    const lbr_upd_ota_t *ota;
 } lbr_node_hal_t;
 
 /* Facts about this boot that the platform knows. */
@@ -109,6 +114,7 @@ typedef struct lbr_node_core {
     size_t                n_early;
     uint32_t              early_dropped;
     lbr_time_sync_rx_t    sync; /* touched only by the CAN RX caller */
+    lbr_upd_node_t        upd;  /* firmware update receiver; CAN RX caller only */
 
     atomic_uint   acquired;
     atomic_uint   published;
@@ -118,8 +124,6 @@ typedef struct lbr_node_core {
     atomic_ullong last_sample_us;
     atomic_uint   sync_unmatched;
     atomic_uint   commands;
-    atomic_uint   app_loss;  /* losses the app counted (lbr_node_core_count_loss) */
-    atomic_uint   app_flags; /* LBR_HB_ERR_* the app raises (lbr_node_core_set_app_flags) */
 
     /* Heartbeat caller only. */
     uint32_t prev_acquired, prev_published, prev_logged;
@@ -148,8 +152,9 @@ void lbr_node_core_slot_tick(lbr_node_core_t *c, size_t i);
 /* Shared time of slot i's next grid point (the platform waits for it). */
 uint64_t lbr_node_core_slot_next_due(lbr_node_core_t *c, size_t i);
 
-/* A received CAN frame with its local receive time. Consumes time sync and
- * commands; passes everything else to cfg->on_frame. */
+/* A received CAN frame with its local receive time. Consumes time sync,
+ * commands, and firmware update traffic; passes everything else to
+ * cfg->on_frame. */
 void lbr_node_core_on_frame(lbr_node_core_t *c, const lbr_can_frame_t *f, uint64_t rx_local_us);
 
 /* One heartbeat period: build the record, publish the heartbeat and its
@@ -161,14 +166,3 @@ void lbr_node_core_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg
 
 /* Callback shape for lbr_log_service on_event, routed to a core. */
 void lbr_node_core_on_log_event(lbr_node_core_t *c, uint16_t code, bool fault);
-
-/* Send a frame the app built (the IMU Controller forwarding corner data);
- * counted as published. False if it was not queued (counted by the
- * controller). */
-bool lbr_node_core_send(lbr_node_core_t *c, const lbr_can_frame_t *f);
-
-/* App-level heartbeat error flags (e.g. LBR_HB_ERR_LINK), and losses the app
- * detected (e.g. corner samples that never arrived), reported in
- * transport_error_count. */
-void lbr_node_core_set_app_flags(lbr_node_core_t *c, uint8_t flags);
-void lbr_node_core_count_loss(lbr_node_core_t *c, uint32_t n);

@@ -20,9 +20,12 @@
  *   0x001         TIME_SYNC       Central, 10 Hz
  *   0x002         TIME_FOLLOW_UP  Central, after each TIME_SYNC
  *   0x010         COMMAND         Central, on event
- *   0x020 + n     EVENT / FAULT   node n (1..6), on event
+ *   0x011         UPDATE_CTRL     Central, firmware update (parked only, lbr/update.h)
+ *   0x012         UPDATE_DATA     Central, firmware update image bytes
+ *   0x020 + n     EVENT / FAULT   node n (1..10), on event
+ *   0x030 + n     UPDATE_STATUS   node n, reply to UPDATE_CTRL
  *   0x700 + n     HEARTBEAT       node n, 1 Hz: state, error flags
- *   0x780 + 16n + p  HEALTH page p (0..11) of node n, 1 Hz
+ *   0x700 + 16n + p  HEALTH page p (0..11) of node n, 1 Hz
  *
  * Each id has exactly one transmitter, as classic CAN requires, so the
  * sender of any frame follows from its id (lbr_can_sender). Extended-id and
@@ -32,9 +35,12 @@
 #define LBR_CAN_ID_TIME_SYNC      0x001u
 #define LBR_CAN_ID_TIME_FOLLOW_UP 0x002u
 #define LBR_CAN_ID_COMMAND        0x010u
+#define LBR_CAN_ID_UPDATE_CTRL    0x011u
+#define LBR_CAN_ID_UPDATE_DATA    0x012u
 #define LBR_CAN_ID_EVENT_BASE     0x020u /* + node id */
+#define LBR_CAN_ID_UPDATE_STATUS  0x030u /* + node id */
 #define LBR_CAN_ID_HEARTBEAT_BASE 0x700u /* + node id */
-#define LBR_CAN_ID_HEALTH_BASE    0x780u /* + 16 * node id + page */
+#define LBR_CAN_ID_HEALTH_BASE    0x700u /* + 16 * node id + page (node id >= 1) */
 #define LBR_CAN_ID_MAX            0x7FFu
 
 /* Central TIME_SYNC + FOLLOW_UP pairs per second (fixed by the protocol). */
@@ -83,7 +89,7 @@ uint64_t lbr_can_grid_index(uint16_t counter, uint64_t rx_shared_us, uint32_t pe
 
 /*
  * Decode a data frame into one sample per field (at most `cap`). Samples get
- * source = the frame's origin, seq = grid index k, t_mono_us = k * period,
+ * source = the frame's sender, seq = grid index k, t_mono_us = k * period,
  * and `synced` as given (see lbr_bus_decoder_t). Returns the number of
  * samples, 0 if `f` is not a data frame of the table or its dlc is wrong.
  */
@@ -151,7 +157,7 @@ bool lbr_can_decode_command(const lbr_can_frame_t *f, uint8_t *code, uint8_t arg
 #define LBR_HB_ERR_STORAGE    0x10u /* an expected log is not being written */
 #define LBR_HB_ERR_SIM        0x20u /* simulated sensor data: not measurements */
 #define LBR_HB_ERR_LOSS       0x40u /* samples, frames, or records were lost this period */
-#define LBR_HB_ERR_LINK       0x80u /* a wireless link (corner, dashboard) is down */
+#define LBR_HB_ERR_LINK       0x80u /* a wireless link (the cockpit display) is down */
 
 /* HEARTBEAT (0x700 + n, dlc 2): 0 state (lbr_node_state_t), 1 error flags. */
 bool lbr_can_encode_heartbeat(uint8_t node, uint8_t state, uint8_t err_flags, lbr_can_frame_t *out);
@@ -169,29 +175,25 @@ int lbr_can_decode_health_page(const lbr_can_frame_t *f, lbr_health_record_t *h)
 
 /*
  * Turns any LBR frame into samples, tracking what a frame alone does not
- * say: whether its origin node's clock was synced. A CAN node is synced
- * while its latest heartbeat lacks LBR_HB_ERR_NOT_SYNCED; a corner node
- * while the IMU Controller is synced and the latest CORNER_STATUS sets the
- * corner's CORNER_SYNCED bit; the Central always (it is the time master).
- * Nothing heard yet means not synced, and a node's BOOT event, or a
- * NODE_LOST / NODE_FOUND event about it, means not synced until its next
- * heartbeat or CORNER_STATUS says otherwise.
+ * say: whether its sender's clock was synced. A node is synced while its
+ * latest heartbeat lacks LBR_HB_ERR_NOT_SYNCED; the Central always (it is
+ * the time master). Nothing heard yet means not synced, and a node's BOOT
+ * event, or a NODE_LOST / NODE_FOUND event about it, means not synced until
+ * its next heartbeat says otherwise.
  */
 typedef struct {
     bool    hb_seen[LBR_NODE_CAN_MAX + 1];
     uint8_t hb_flags[LBR_NODE_CAN_MAX + 1];
-    bool    corner_seen;
-    uint8_t corner_synced; /* CORNER_SYNCED bits */
 } lbr_bus_decoder_t;
 
 void lbr_bus_decoder_init(lbr_bus_decoder_t *d);
 
-/* True if samples taken by `origin` are on the shared time base. */
-bool lbr_bus_decoder_synced(const lbr_bus_decoder_t *d, uint8_t origin);
+/* True if samples taken by `node` are on the shared time base. */
+bool lbr_bus_decoder_synced(const lbr_bus_decoder_t *d, uint8_t node);
 
 /* Decode a frame: data frames give one sample per field, EVENT/FAULT one
- * sample; heartbeats and CORNER_STATUS also update the sync state. Returns
- * the number of samples written (at most `cap`). */
+ * sample; heartbeats update the sync state. Returns the number of samples
+ * written (at most `cap`). */
 size_t lbr_bus_decode(lbr_bus_decoder_t *d, const lbr_can_frame_t *f, uint64_t rx_shared_us,
                       lbr_sample_t *out, size_t cap);
 

@@ -5,18 +5,14 @@
 #include <stdint.h>
 
 /*
- * WiFi + UDP for the wireless links (ESP32-C5 only; not built on host).
+ * WiFi + UDP for the cockpit link (ESP32-C5 only; not built on host).
  *
- * One WiFi role per node: the IMU Controller is the access point of the
- * corner network, the Central the access point of the pit/dashboard network
- * (started by its pit link, lbr_link_wifi_start); corners and the dashboard
- * join as stations. The band is CONFIG_LBR_WIFI_5GHZ (5 GHz by default,
- * 2.4 GHz fallback, DAQ-WIRING.md section 8). Sends never block: a datagram
- * the stack cannot take is dropped and counted by the caller, who sees false.
+ * The Central is the access point of the pit/cockpit network (started by
+ * its pit link, lbr_link_wifi_start); the cockpit joins it as a station.
+ * The band is CONFIG_LBR_WIFI_5GHZ (5 GHz by default, 2.4 GHz fallback,
+ * DAQ-WIRING.md section 8). Sends never block: a datagram the stack cannot
+ * take is dropped and counted by the caller, who sees false.
  */
-
-/* Start an access point (no-op if the pit link already started one). */
-bool lbr_wifi_start_ap(const char *ssid, const char *password, int channel);
 
 /* Join an access point; reconnects by itself when the link drops. */
 bool lbr_wifi_start_sta(const char *ssid, const char *password);

@@ -28,10 +28,6 @@ typedef struct {
  * (everything except time sync and commands). Runs in the CAN RX task. */
 typedef void (*lbr_node_frame_cb)(const lbr_can_frame_t *f, uint64_t rx_shared_us, void *ctx);
 
-/* Called once by lbr_node_run after the core started and before the
- * acquisition tasks run (e.g. the IMU Controller starts its corner link). */
-typedef void (*lbr_node_started_cb)(void *ctx);
-
 typedef struct {
     uint8_t          node_id; /* lbr_node_id_t: a CAN node other than the Central */
     const lbr_acq_t *acq;
@@ -45,9 +41,6 @@ typedef struct {
     bool              listen_all;
     lbr_node_frame_cb on_frame;
     void             *on_frame_ctx;
-
-    lbr_node_started_cb on_started;
-    void               *on_started_ctx;
 } lbr_node_config_t;
 
 /* ------------------------------------------------------------------------ */
@@ -95,9 +88,10 @@ void lbr_node_build(const lbr_node_plan_t *plan, lbr_sensor_fill_t unbound, lbr_
 /*
  * Check a plan against the frame table. `can` is true for nodes that
  * transmit on CAN (their slot signals must travel in frames they send, at
- * the slot rate, all fields from that slot); false for wireless nodes (each
- * signal must be in the table with this node as origin, or be a field a
- * forwarder sends for it). Returns 0, or <0 with a reason in `err`.
+ * the slot rate, all fields from that slot); false for the cockpit, which
+ * is off the bus (each signal must travel in a frame of the table at the
+ * slot rate, sent for it by the Central). Returns 0, or <0 with a reason in
+ * `err`.
  */
 int lbr_plan_check(const lbr_node_plan_t *plan, bool can, char *err, size_t err_len);
 
@@ -151,7 +145,3 @@ void lbr_node_bind_io(const lbr_node_plan_t *plan, size_t slot, lbr_sensor_t *se
 
 /* Publish an event or fault (LBR_SIG_EVENT / LBR_SIG_FAULT) from app code. */
 void lbr_node_emit_event(lbr_event_code_t code, uint16_t arg, bool fault);
-
-/* The running node's core (for app code started from on_started). */
-struct lbr_node_core;
-struct lbr_node_core *lbr_node_running_core(void);

@@ -8,12 +8,12 @@
 
 /*
  * Shared protocol definitions (firmware side of the spec in docs/protocol.md).
- * Every byte layout here is little-endian and MUST match lbr-dashboard; the
+ * Every byte layout here is little-endian and MUST match the dashboard app; the
  * golden fixtures in dev/tests/fixtures pin it down.
  */
 
-/* Bump on any incompatible change; must match lbr-dashboard. */
-#define LBR_PROTOCOL_VERSION 3u
+/* Bump on any incompatible change; must match the dashboard app. */
+#define LBR_PROTOCOL_VERSION 4u
 
 /* Value representation. The catalog fixes the type of every known signal;
  * LBR_VAL_RAW is only produced by a decoder that does not know the signal. */
@@ -75,7 +75,7 @@ typedef enum {
     LBR_EVT_SD_WRITE_ERROR   = 0x0031,
     LBR_EVT_SD_MOUNTED       = 0x0032,
     LBR_EVT_QUEUE_OVERFLOW   = 0x0040, /* arg: queue id */
-    LBR_EVT_NODE_LOST        = 0x0050, /* arg: node id (Central: CAN nodes; IMU: corners) */
+    LBR_EVT_NODE_LOST        = 0x0050, /* arg: node id (Central: CAN nodes, cockpit) */
     LBR_EVT_NODE_FOUND       = 0x0051, /* arg: node id */
     LBR_EVT_CAN_PINS_UNSET   = 0x0060, /* CAN GPIO still TBD in Kconfig */
 } lbr_event_code_t;
@@ -95,8 +95,8 @@ static inline uint32_t lbr_event_value(lbr_event_code_t code, uint16_t arg)
  * index on the stream's time grid (see frames.h): rebuilt from the frame's
  * 16-bit counter, or inferred from the receive time when the frame carries
  * no counter (`seq_inferred`; gaps cannot be detected for such streams).
- * `source` is the node that took the sample (a corner node for forwarded
- * IMU data), not necessarily the CAN transmitter.
+ * `source` is the node that took the sample (for CAN data, the frame's
+ * sender).
  */
 typedef struct {
     uint64_t         t_mono_us; /* when: shared monotonic time base, microseconds */
@@ -161,13 +161,11 @@ typedef enum {
     LBR_REC_LOSS        = 0x05, /* records/bytes dropped before this point */
     LBR_REC_TEXT        = 0x06, /* ASCII diagnostic text */
     LBR_REC_END         = 0x07, /* log only: clean close marker */
-    LBR_REC_HEALTH_LITE = 0x08, /* transport only: compact LoRa / dashboard health */
-    LBR_REC_IMU_BATCH   = 0x09, /* corner link only: IMU samples (wlink.h) */
-    LBR_REC_TIME_REQ    = 0x0A, /* wireless links only: clock request (wlink.h) */
-    LBR_REC_TIME_RESP   = 0x0B, /* wireless links only: clock reply (wlink.h) */
-    LBR_REC_FILE_INFO   = 0x10, /* transport only: log listing entry */
-    LBR_REC_FILE_CHUNK  = 0x11, /* transport only: log dump data */
-    LBR_REC_FILE_END    = 0x12, /* transport only: dump complete */
+    LBR_REC_HEALTH_LITE = 0x08, /* transport only: compact LoRa / cockpit health */
+
+    LBR_REC_FILE_INFO  = 0x10, /* transport only: log listing entry */
+    LBR_REC_FILE_CHUNK = 0x11, /* transport only: log dump data */
+    LBR_REC_FILE_END   = 0x12, /* transport only: dump complete */
 } lbr_record_type_t;
 
 /*

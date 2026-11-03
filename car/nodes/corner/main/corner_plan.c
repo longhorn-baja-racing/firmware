@@ -3,12 +3,14 @@
 #include "lbr/nodes.h"
 
 /*
- * corner nodes (Mini ESP32-C5 on the moving suspension, own battery): one
- * suspension IMU each, sent over 5 GHz WiFi to the IMU Controller, which
- * forwards it onto CAN (DAQ-WIRING.md sections 4 and 8).
+ * corner nodes, the wheel hub controllers (Mini ESP32-C5, CAN nodes 7..10):
+ * one suspension IMU each, sent onto CAN in that corner's IMU frames
+ * (DAQ-WIRING.md section 4).
  *
- * Pure data, compiled into the host tests: each signal must be in the CAN
- * frame table at the slot's rate (the IMU Controller sends the frames).
+ * Pure data, compiled into the host tests: each slot's signals must travel in
+ * frames of the CAN frame table (car/components/protocol/frames.c) that this
+ * node sends at the slot's rate, and the whole bus must stay inside its
+ * budget. Change a rate in both places and the tests say whether it fits.
  */
 
 #define IMU_SIGNALS(p)                                                                             \
@@ -21,20 +23,10 @@ static const lbr_signal_id_t k_imu[4][6] = {
     IMU_SIGNALS(IMU_BL),
     IMU_SIGNALS(IMU_BR),
 };
-static const lbr_signal_id_t k_battery[4][1] = {
-    {LBR_SIG_CORNER_FL_BATTERY},
-    {LBR_SIG_CORNER_FR_BATTERY},
-    {LBR_SIG_CORNER_BL_BATTERY},
-    {LBR_SIG_CORNER_BR_BATTERY},
-};
 
 #define SLOTS(i)                                                                                   \
     {                                                                                              \
         [CORNER_SLOT_IMU] = {.name = "imu", .signals = k_imu[i], .n_signals = 6, .rate_hz = 100},  \
-        [CORNER_SLOT_BATTERY] = {.name      = "battery",                                           \
-                                 .signals   = k_battery[i],                                        \
-                                 .n_signals = 1,                                                   \
-                                 .rate_hz   = 1},                                                  \
     }
 
 static const lbr_slot_t k_slots[4][CORNER_SLOT_COUNT] = {SLOTS(0), SLOTS(1), SLOTS(2), SLOTS(3)};

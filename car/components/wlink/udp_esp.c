@@ -13,7 +13,7 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
-/* ESP32-C5 WiFi + UDP for the wireless links; see lbr/wlink_esp.h. */
+/* ESP32-C5 WiFi + UDP for the cockpit link; see lbr/wlink_esp.h. */
 
 static const char *TAG = "lbr_wlink";
 
@@ -60,48 +60,6 @@ void lbr_wifi_apply_band(void)
 #endif
 }
 
-bool lbr_wifi_start_ap(const char *ssid, const char *password, int channel)
-{
-    if (s_wifi_up) {
-        return true;
-    }
-    if (strlen(password) < 8) {
-        ESP_LOGW(TAG, "access point \"%s\" off: its password must be 8+ characters", ssid);
-        return false;
-    }
-    if (!base_init() || esp_netif_create_default_wifi_ap() == NULL) {
-        ESP_LOGE(TAG, "netif init failed");
-        return false;
-    }
-    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
-    wifi_config_t      ap   = {
-        .ap = {.channel        = (uint8_t)channel,
-               .authmode       = WIFI_AUTH_WPA2_PSK,
-               .max_connection = 8,
-               .pmf_cfg        = {.required = false}},
-    };
-    strncpy((char *)ap.ap.ssid, ssid, sizeof ap.ap.ssid);
-    strncpy((char *)ap.ap.password, password, sizeof ap.ap.password);
-    ap.ap.ssid_len = (uint8_t)strnlen(ssid, sizeof ap.ap.ssid);
-    if (esp_wifi_init(&init) != ESP_OK || esp_wifi_set_mode(WIFI_MODE_AP) != ESP_OK) {
-        ESP_LOGE(TAG, "WiFi init failed");
-        return false;
-    }
-    if (esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK || esp_wifi_start() != ESP_OK) {
-        ESP_LOGE(TAG, "access point start failed");
-        return false;
-    }
-    /* The band can only be set once WiFi runs; then put the channel back in
-     * case the band change moved it. */
-    lbr_wifi_apply_band();
-    if (esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK) {
-        ESP_LOGE(TAG, "access point channel %d not valid for the band", channel);
-    }
-    s_wifi_up = true;
-    ESP_LOGI(TAG, "access point \"%s\" up on channel %d", ssid, channel);
-    return true;
-}
-
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
@@ -146,7 +104,7 @@ bool lbr_wifi_start_sta(const char *ssid, const char *password)
         ESP_LOGE(TAG, "station start failed");
         return false;
     }
-    /* Low latency over power: the IMU stream is 20 datagrams a second. */
+    /* Low latency over power: the display stream is 10 datagrams a second. */
     esp_wifi_set_ps(WIFI_PS_NONE);
     s_wifi_up = true;
     return true;

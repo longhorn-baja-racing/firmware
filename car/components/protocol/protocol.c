@@ -256,8 +256,6 @@ const char *lbr_node_name(uint8_t node_id)
             return "stress";
         case LBR_NODE_CENTRAL:
             return "central";
-        case LBR_NODE_DASHBOARD:
-            return "dashboard";
         case LBR_NODE_CORNER_FL:
             return "corner_fl";
         case LBR_NODE_CORNER_FR:
@@ -266,6 +264,8 @@ const char *lbr_node_name(uint8_t node_id)
             return "corner_bl";
         case LBR_NODE_CORNER_BR:
             return "corner_br";
+        case LBR_NODE_COCKPIT:
+            return "cockpit";
         default:
             return "?";
     }

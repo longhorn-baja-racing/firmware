@@ -4,7 +4,7 @@
  */
 #include <stdlib.h>
 
-#include "lbr/dash_link.h"
+#include "lbr/cockpit_link.h"
 #include "lbr/gw_core.h"
 #include "lbr/wlink.h"
 #include "lbr/node_core.h"
@@ -307,7 +307,7 @@ static void test_node_boot_and_acquire(void)
     CHECK_EQ_U(lbr_can_decode_heartbeat(&r.fake.tx[from], &state, &flags), LBR_NODE_POWERTRAIN);
     CHECK_EQ_U(state, LBR_NODE_RUN);
     CHECK_EQ_U(flags, 0u);
-    CHECK_EQ_U(r.fake.tx[from + 1].id, 0x780u + 16u * LBR_NODE_POWERTRAIN);
+    CHECK_EQ_U(r.fake.tx[from + 1].id, 0x700u + 16u * LBR_NODE_POWERTRAIN);
     CHECK_EQ_U(h.state, LBR_NODE_RUN);
     CHECK((h.flags & LBR_HF_TIME_SYNCED) != 0);
     CHECK_EQ_U(h.sensor_status, 1);
@@ -429,23 +429,6 @@ static void test_node_app_hooks(void)
     f.id = 0x300;
     lbr_node_core_on_frame(&r.core, &f, r.fake.mono);
     CHECK_EQ_I(s_app_frames, 1);
-
-    /* Forwarded frames count as published; app flags and losses reach the
-     * heartbeat. */
-    unsigned pub = r.core.published;
-    CHECK(lbr_node_core_send(&r.core, &f));
-    CHECK_EQ_U(r.core.published, pub + 1u);
-    lbr_node_core_set_app_flags(&r.core, LBR_HB_ERR_LINK);
-    lbr_node_core_count_loss(&r.core, 5);
-    lbr_health_record_t h;
-    size_t              from = r.fake.n_tx;
-    lbr_node_core_heartbeat(&r.core, &h);
-    uint8_t state, flags;
-    lbr_can_decode_heartbeat(&r.fake.tx[from], &state, &flags);
-    CHECK((flags & LBR_HB_ERR_LINK) != 0);
-    CHECK((flags & LBR_HB_ERR_LOSS) != 0);
-    CHECK_EQ_U(h.transport_error_count, 5u);
-    CHECK_EQ_U(h.state, LBR_NODE_DEGRADED);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -493,13 +476,13 @@ typedef struct {
     lbr_gw_core_t   core;
     lbr_logger_t    log;
     mem_t           disk;
-    fake_link_t     usb_l, lora_l, dash_l;
-    lbr_transport_t usb, lora, dash;
-    lbr_sensor_t    dash_status;
+    fake_link_t     usb_l, lora_l, cockpit_l;
+    lbr_transport_t usb, lora, cockpit;
+    lbr_sensor_t    cockpit_status;
     lbr_acq_t       acq;
 } gw_rig_t;
 
-static const lbr_signal_id_t k_dash_status[] = {LBR_SIG_DASH_BATTERY, LBR_SIG_DASH_LINK};
+static const lbr_signal_id_t k_cockpit_status[] = {LBR_SIG_COCKPIT_BATTERY, LBR_SIG_COCKPIT_LINK};
 
 static uint8_t s_disk[512 * 1024];
 static uint8_t s_q[64 * 1024];
@@ -507,7 +490,7 @@ static uint8_t s_chunk[LBR_LOG_MAX_RECORD + 512];
 
 static void gw_rig_start(gw_rig_t *r)
 {
-    lbr_gw_links_t links = {.usb = &r->usb, .lora = &r->lora, .dash = &r->dash};
+    lbr_gw_links_t links = {.usb = &r->usb, .lora = &r->lora, .cockpit = &r->cockpit};
     lbr_gw_core_start(&r->core, &r->log, &links, true, false);
     lbr_gw_core_slot_start(&r->core, 0);
 }
@@ -537,8 +520,8 @@ static void gw_rig_setup(gw_rig_t *r)
         (lbr_transport_t){.name = "usb", .kind = LBR_LINK_USB, .send = fl_send, .ctx = &r->usb_l};
     r->lora = (lbr_transport_t){
         .name = "lora", .kind = LBR_LINK_LORA, .send = fl_send, .ctx = &r->lora_l};
-    r->dash = (lbr_transport_t){
-        .name = "dash", .kind = LBR_LINK_DASH, .send = fl_send, .ctx = &r->dash_l};
+    r->cockpit = (lbr_transport_t){
+        .name = "cockpit", .kind = LBR_LINK_COCKPIT, .send = fl_send, .ctx = &r->cockpit_l};
 
     lbr_gw_hal_t hal = {
         .ctx             = &r->fake,
@@ -556,8 +539,8 @@ static void gw_rig_setup(gw_rig_t *r)
     };
     lbr_gw_config_t cfg;
     lbr_gw_config_defaults(&cfg);
-    /* The Central's dashboard-status slot reads the core's own link state. */
-    r->acq             = (lbr_acq_t){.sensor = &r->dash_status, .rate_hz = 1};
+    /* The Central's cockpit-status slot reads the core's own link state. */
+    r->acq             = (lbr_acq_t){.sensor = &r->cockpit_status, .rate_hz = 1};
     lbr_gw_boot_t boot = {
         .reset_reason = LBR_RESET_POWER_ON,
         .boot_count   = 3,
@@ -568,8 +551,9 @@ static void gw_rig_setup(gw_rig_t *r)
         .n_acq        = 1,
     };
     lbr_gw_core_init(&r->core, &hal, &cfg, &boot);
-    lbr_sensor_dash_link(&r->dash_status, "dash_status", k_dash_status, 2, &r->core.dash,
-                         lbr_gw_core_lock_state, lbr_gw_core_unlock_state, &r->core);
+    lbr_sensor_cockpit_link(&r->cockpit_status, "cockpit_status", k_cockpit_status, 2,
+                            &r->core.cockpit, lbr_gw_core_lock_state, lbr_gw_core_unlock_state,
+                            &r->core);
 }
 
 static void gw_rig_init(gw_rig_t *r)
@@ -626,9 +610,9 @@ static void test_gw_logs_everything_first(void)
     CHECK(hdr.count >= 3);
     CHECK_EQ_I(r.fake.locks_held, 0);
 
-    /* The decoded value reaches the dashboard's view. */
+    /* The decoded value reaches the cockpit's view. */
     lbr_sample_t got;
-    CHECK_EQ_I(lbr_value_table_get(&r.core.dash_values, LBR_SIG_ENGINE_RPM, r.fake.mono, &got),
+    CHECK_EQ_I(lbr_value_table_get(&r.core.cockpit_values, LBR_SIG_ENGINE_RPM, r.fake.mono, &got),
                LBR_VALUE_OK);
     CHECK(got.v.f32 == 3100.0f);
 }
@@ -636,11 +620,11 @@ static void test_gw_logs_everything_first(void)
 typedef struct {
     int  samples, lites;
     bool rpm;
-} dash_seen_t;
+} cockpit_seen_t;
 
-static void on_dash_rec(uint8_t type, const uint8_t *p, size_t len, void *ctx)
+static void on_cockpit_rec(uint8_t type, const uint8_t *p, size_t len, void *ctx)
 {
-    dash_seen_t *d = ctx;
+    cockpit_seen_t *d = ctx;
     if (type == LBR_REC_SAMPLE) {
         lbr_sample_t s;
         if (lbr_sample_decode(p, len, &s) > 0) {
@@ -652,12 +636,12 @@ static void on_dash_rec(uint8_t type, const uint8_t *p, size_t len, void *ctx)
     }
 }
 
-static void test_gw_dashboard_link(void)
+static void test_gw_cockpit_link(void)
 {
     static gw_rig_t r;
     gw_rig_init(&r);
 
-    /* Before the dashboard is heard: DASH_STATUS says link down, battery NO_DATA. */
+    /* Before the cockpit is heard: COCKPIT_STATUS says link down, battery NO_DATA. */
     r.fake.mono = 2000000;
     size_t from = r.fake.n_tx;
     lbr_gw_core_slot_tick(&r.core, 0);
@@ -668,27 +652,27 @@ static void test_gw_dashboard_link(void)
     CHECK(!s[0].valid && s[0].v.u32 == LBR_UNAVAIL_NO_DATA);
     CHECK(s[1].valid && !s[1].v.b);
 
-    /* The dashboard reports 76 % battery. */
+    /* The cockpit reports 76 % battery. */
     uint8_t           pkt[128];
     lbr_pkt_builder_t b;
-    lbr_sample_t      batt = {.signal = LBR_SIG_DASH_BATTERY,
-                              .source = LBR_NODE_DASHBOARD,
+    lbr_sample_t      batt = {.signal = LBR_SIG_COCKPIT_BATTERY,
+                              .source = LBR_NODE_COCKPIT,
                               .type   = LBR_VAL_F32,
                               .valid  = true,
                               .v.f32  = 76.0f};
     uint8_t           rec[LBR_SAMPLE_WIRE_SIZE];
     lbr_sample_encode(&batt, rec, sizeof rec);
-    lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_DASH, LBR_NODE_DASHBOARD, 0, 0);
+    lbr_pkt_begin(&b, pkt, sizeof pkt, LBR_LINK_COCKPIT, LBR_NODE_COCKPIT, 0, 0);
     lbr_pkt_add(&b, LBR_REC_SAMPLE, rec, sizeof rec);
     size_t n = lbr_pkt_finish(&b);
-    lbr_gw_core_on_dash_packet(&r.core, pkt, n, r.fake.mono);
+    lbr_gw_core_on_cockpit_packet(&r.core, pkt, n, r.fake.mono);
     from = r.fake.n_tx;
-    lbr_gw_core_dash_tick(&r.core);
+    lbr_gw_core_cockpit_tick(&r.core);
     CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_EVENT, LBR_EVT_NODE_FOUND), 1);
 
     r.fake.mono = 3000000;
-    lbr_gw_core_on_dash_packet(&r.core, pkt, n, r.fake.mono); /* it keeps reporting */
-    lbr_gw_core_dash_tick(&r.core);
+    lbr_gw_core_on_cockpit_packet(&r.core, pkt, n, r.fake.mono); /* it keeps reporting */
+    lbr_gw_core_cockpit_tick(&r.core);
     from = r.fake.n_tx;
     lbr_gw_core_slot_tick(&r.core, 0);
     at = find_frame(&r.fake, from, 0x60A);
@@ -705,21 +689,21 @@ static void test_gw_dashboard_link(void)
     lbr_can_frame_t f;
     lbr_can_encode_data(lbr_frame_def(0x200), v, r.fake.mono / 10000u, &f);
     lbr_gw_core_on_rx(&r.core, &f, r.fake.mono);
-    int sends = r.dash_l.sends;
-    lbr_gw_core_dash_tick(&r.core);
-    CHECK_EQ_I(r.dash_l.sends, sends + 1);
+    int sends = r.cockpit_l.sends;
+    lbr_gw_core_cockpit_tick(&r.core);
+    CHECK_EQ_I(r.cockpit_l.sends, sends + 1);
     lbr_pkt_header_t hdr;
-    dash_seen_t      seen = {0};
-    CHECK(lbr_pkt_parse(r.dash_l.last, r.dash_l.last_len, &hdr, on_dash_rec, &seen));
-    CHECK_EQ_U(hdr.link, LBR_LINK_DASH);
+    cockpit_seen_t   seen = {0};
+    CHECK(lbr_pkt_parse(r.cockpit_l.last, r.cockpit_l.last_len, &hdr, on_cockpit_rec, &seen));
+    CHECK_EQ_U(hdr.link, LBR_LINK_COCKPIT);
     CHECK_EQ_U(hdr.source, LBR_NODE_CENTRAL);
     CHECK(seen.rpm);
     CHECK(seen.lites >= 1);
 
     /* Silence: the link goes down, counted as a lost node. */
-    r.fake.mono += LBR_WLINK_DASH_TIMEOUT_US + 1000;
+    r.fake.mono += LBR_WLINK_COCKPIT_TIMEOUT_US + 1000;
     from = r.fake.n_tx;
-    lbr_gw_core_dash_tick(&r.core);
+    lbr_gw_core_cockpit_tick(&r.core);
     CHECK_EQ_I(count_events(&r.fake, from, LBR_SIG_FAULT, LBR_EVT_NODE_LOST), 1);
     lbr_health_record_t h;
     from = r.fake.n_tx;
@@ -763,7 +747,7 @@ static void test_gw_node_lost_and_lora(void)
     static gw_rig_t r;
     gw_rig_init(&r);
     lbr_health_record_t nh = {.node_id = LBR_NODE_TEMPERATURE, .state = LBR_NODE_RUN};
-    r.core.links.dash      = NULL; /* no dashboard in this test */
+    r.core.links.cockpit   = NULL; /* no cockpit in this test */
     lbr_can_frame_t f;
     lbr_can_encode_health_page(LBR_NODE_TEMPERATURE, &nh, 0, &f);
     lbr_gw_core_on_rx(&r.core, &f, r.fake.mono);
@@ -843,7 +827,7 @@ int main(void)
     RUN(test_node_app_hooks);
     RUN(test_gw_logs_everything_first);
     RUN(test_gw_time_sync);
-    RUN(test_gw_dashboard_link);
+    RUN(test_gw_cockpit_link);
     RUN(test_gw_node_lost_and_lora);
     RUN(test_early_events);
     TEST_MAIN_END();

@@ -37,13 +37,13 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/transport/packet.c"
     "${LBR_COMPONENTS}/transport/lora_policy.c"
     "${LBR_COMPONENTS}/wlink/wlink.c"
-    "${LBR_COMPONENTS}/wlink/corner_core.c"
-    "${LBR_COMPONENTS}/wlink/corner_rx.c"
-    "${LBR_COMPONENTS}/wlink/dash_link.c"
-    "${LBR_COMPONENTS}/wlink/dash_core.c"
+    "${LBR_COMPONENTS}/wlink/cockpit_link.c"
+    "${LBR_COMPONENTS}/wlink/cockpit_core.c"
     "${LBR_COMPONENTS}/gateway/gw_core.c"
     "${LBR_COMPONENTS}/gateway/gw_config.c"
     "${LBR_COMPONENTS}/gateway/status.c"
+    "${LBR_COMPONENTS}/update/update.c"
+    "${LBR_COMPONENTS}/update/upd_relay.c"
     port_host.c
 )
 target_include_directories(lbr_core PUBLIC
@@ -58,6 +58,7 @@ target_include_directories(lbr_core PUBLIC
     "${LBR_COMPONENTS}/transport/include"
     "${LBR_COMPONENTS}/wlink/include"
     "${LBR_COMPONENTS}/gateway/include"
+    "${LBR_COMPONENTS}/update/include"
     "${CMAKE_CURRENT_LIST_DIR}"
 )
 target_link_libraries(lbr_core PUBLIC m)
@@ -73,7 +74,7 @@ target_sources(lbr_core PRIVATE "${LBR_COMPONENTS}/node/value_table.c")
 
 # Every node's plan (pure data) is compiled in, so the frame-table rules and
 # the system-wide CAN budget are checked against the real configurations.
-set(LBR_NODE_PLANS imu powertrain driver_input temperature stress central dashboard corner)
+set(LBR_NODE_PLANS imu powertrain driver_input temperature stress central cockpit corner)
 add_library(lbr_plans STATIC)
 foreach(node IN LISTS LBR_NODE_PLANS)
     target_sources(lbr_plans PRIVATE "${LBR_ROOT}/car/nodes/${node}/main/${node}_plan.c")
@@ -82,7 +83,8 @@ endforeach()
 target_link_libraries(lbr_plans PUBLIC lbr_core)
 lbr_apply_warnings(lbr_plans)
 
-set(LBR_TESTS util protocol health can timebase logging sensors node plans transport gateway wlink cores)
+set(LBR_TESTS util protocol health can timebase logging sensors node plans transport gateway wlink cores
+    update)
 foreach(name IN LISTS LBR_TESTS)
     add_executable(test_${name} test_${name}.c)
     target_link_libraries(test_${name} PRIVATE lbr_core lbr_plans)
@@ -90,13 +92,20 @@ foreach(name IN LISTS LBR_TESTS)
     add_test(NAME ${name} COMMAND test_${name})
 endforeach()
 
-# Golden fixtures shared with lbr-dashboard. CTest checks the committed files
+# Golden fixtures shared with the dashboard app. CTest checks the committed files
 # still match the codecs; the "fixtures" target regenerates them on purpose.
 add_executable(gen_fixtures gen_fixtures.c)
 target_link_libraries(gen_fixtures PRIVATE lbr_core)
 lbr_apply_warnings(gen_fixtures)
 add_test(NAME fixtures COMMAND gen_fixtures check "${LBR_ROOT}/dev/tests/fixtures")
+# session.csv is the reference decoder's CSV export of session.lbr (docs/protocol.md,
+# "CSV export"); the decoder self test checks it alongside the binary fixtures.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(LBR_DECODE "${LBR_ROOT}/dev/tools/lbr_decode.py")
 add_custom_target(fixtures
     COMMAND gen_fixtures write "${LBR_ROOT}/dev/tests/fixtures"
+    COMMAND Python3::Interpreter -I "${LBR_DECODE}" csv "${LBR_ROOT}/dev/tests/fixtures/session.lbr"
+            --out "${LBR_ROOT}/dev/tests/fixtures/session.csv"
     DEPENDS gen_fixtures
     COMMENT "Regenerating golden fixtures in dev/tests/fixtures")
+add_test(NAME decoder COMMAND Python3::Interpreter -I "${LBR_DECODE}" --selftest)
