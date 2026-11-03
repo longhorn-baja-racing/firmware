@@ -1,6 +1,10 @@
 # cockpit node (driver display, ESP32-C5, own battery; not the pit dashboard app).
 # Shared settings: car/nodes/sdkconfig.common. Generated sdkconfig is gitignored.
 CONFIG_IDF_TARGET="esp32c5"
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_FONT_MONTSERRAT_40=y
 
 # WiFi + lwIP make the app close to 1 MB; use the 1.5 MB single-app table.
 # The cockpit is updated over USB only (docs/deploying.md), so it needs no
