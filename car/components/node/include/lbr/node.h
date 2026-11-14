@@ -149,6 +149,11 @@ void lbr_node_run(const lbr_node_config_t *cfg);
 void lbr_node_bind_io(const lbr_node_plan_t *plan, size_t slot, lbr_sensor_t *sensors,
                       const char *spec);
 
+/* Print the programmer's mark (lbr/mark.h) on the console. Skipped after a
+ * panic, watchdog or brownout reset so recovery is not held up by console
+ * output. Call first thing in app_main; lbr_node_run() does it itself. */
+void lbr_node_print_mark(void);
+
 /* Publish an event or fault (LBR_SIG_EVENT / LBR_SIG_FAULT) from app code. */
 void lbr_node_emit_event(lbr_event_code_t code, uint16_t arg, bool fault);
 

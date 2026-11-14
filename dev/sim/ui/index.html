@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LBR Car Simulator</title>
+<link rel="icon" type="image/svg+xml" href="/monstera.svg">
 <style>
 :root {
   --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #30363d; --text: #e6edf3;
@@ -25,7 +26,9 @@ input[type=number] { width: 78px; }
   grid-template-columns: 1fr 380px; grid-template-areas: "top top" "car side" "bottom side"; }
 header { grid-area: top; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
   padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
-header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .3px; }
+header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .3px; display: flex;
+  align-items: center; gap: 7px; }
+header h1 img { width: 22px; height: 22px; }
 header .grp { display: flex; gap: 6px; align-items: center; }
 .clock { font-family: var(--mono); font-size: 15px; min-width: 120px; }
 .meter { width: 120px; height: 8px; border-radius: 4px; background: var(--panel2);
@@ -85,7 +88,7 @@ svg text { font-family: system-ui, sans-serif; }
 <body>
 <div class="app">
   <header>
-    <h1>LBR Car Simulator</h1>
+    <h1><img src="/monstera.svg" alt="" title="Cyrus Nil">LBR Car Simulator</h1>
     <span class="clock" id="clock">t = 0.000 s</span>
     <div class="grp">
       <button id="pause">Pause</button>
