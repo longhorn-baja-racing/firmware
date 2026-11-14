@@ -486,19 +486,3 @@ is unavailable to CI.
 <p align="center">
   <img src="docs/assets/monstera-card.svg" alt="Cyrus Nil, founding developer of the LBR vehicle firmware" width="100%">
 </p>
-
-The monstera leaf is the mark of **Cyrus Nilforooshan**, who started this firmware. You'll find
-it:
-
-- on the serial console of every board at boot (skipped after a panic, watchdog, or brownout
-  reset so recovery is never held up), and inside every image:
-  `strings car/nodes/<node>/build/lbr_<node>.bin | grep "Cyrus Nil"`
-- as the tab icon and header badge of the simulator (`python3 dev/sim/ui/server.py`)
-- under `lbr_deploy.py --help`, and after every `DEPLOY COMPLETE`
-
-| File | What it is |
-| --- | --- |
-| [`docs/assets/monstera.svg`](docs/assets/monstera.svg) | the vector logo (transparent background) |
-| [`docs/assets/monstera-card.svg`](docs/assets/monstera-card.svg) | the card above |
-| [`docs/assets/monstera.txt`](docs/assets/monstera.txt) | the ASCII leaf, signed; tools and the simulator read this copy |
-| [`car/components/util/mark.c`](car/components/util/mark.c) | the firmware's copy (`lbr_mark_art`), printed by `lbr_node_print_mark()` |
