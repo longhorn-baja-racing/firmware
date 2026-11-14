@@ -111,6 +111,7 @@ void app_main(void);
 
 void app_main(void)
 {
+    lbr_node_print_mark();
     s_lock = xSemaphoreCreateMutex();
     lbr_node_build(&lbr_plan_cockpit, LBR_NODE_UNBOUND_DRIVER, s_sensors, s_acq, &s_cfg);
     /* Battery: a divider on an ADC pin (CONFIG_LBR_IO_BATTERY), part TBD. */

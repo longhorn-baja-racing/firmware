@@ -8,6 +8,7 @@
 #include "freertos/task.h"
 #include "lbr/can_bus.h"
 #include "lbr/log_service.h"
+#include "lbr/mark.h"
 #include "lbr/node.h"
 #include "lbr/node_core.h"
 #include "lbr/sensor_io.h"
@@ -223,10 +224,25 @@ void lbr_node_bind_io(const lbr_node_plan_t *plan, size_t slot, lbr_sensor_t *se
     lbr_sensor_io(&sensors[slot], s->name, s->signals, s->n_signals, spec);
 }
 
+void lbr_node_print_mark(void)
+{
+    switch (lbr_health_reset_reason()) {
+        case LBR_RESET_PANIC:
+        case LBR_RESET_WATCHDOG:
+        case LBR_RESET_BROWNOUT:
+            return;
+        default:
+            fputs(lbr_mark_art, stdout);
+            fflush(stdout);
+            return;
+    }
+}
+
 void lbr_node_run(const lbr_node_config_t *cfg)
 {
     /* Before anything else: reject an updated image meant for another node. */
     lbr_update_esp_boot(cfg->node_id);
+    lbr_node_print_mark();
 
     s_evt_lock                   = xSemaphoreCreateMutex();
     lbr_can_bus_config_t can_cfg = lbr_can_bus_default_config();

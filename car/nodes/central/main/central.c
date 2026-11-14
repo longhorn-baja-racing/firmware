@@ -506,6 +506,8 @@ static void start_links(lbr_gw_links_t *links)
 
 void central_run(void)
 {
+    lbr_node_print_mark();
+
     esp_err_t nvs = nvs_flash_init();
     if (nvs == ESP_ERR_NVS_NO_FREE_PAGES || nvs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase();

@@ -38,6 +38,17 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 NODES = os.path.join(ROOT, "car", "nodes")
+MARK = os.path.join(ROOT, "docs", "assets", "monstera.txt")
+
+
+def mark():
+    """The programmer's mark (monstera leaf by Cyrus Nil), or "" if missing."""
+    try:
+        with open(MARK) as f:
+            return f.read()
+    except OSError:
+        return ""
+
 
 # target -> (app directory, corner position or None, chip, how it is updated)
 TARGETS = {
@@ -420,10 +431,12 @@ def cmd_can(args):
             " Central within 60 s, so the node went back to its old firmware. See"
             " docs/deploying.md, Troubleshooting.")
     print("\nDEPLOY COMPLETE: every node runs the new firmware.")
+    print("\n" + mark(), end="")
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=__doc__, epilog=mark(),
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
     p = sub.add_parser("build")
