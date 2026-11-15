@@ -43,6 +43,12 @@ it the channel reads `SENSOR_FAULT`: open or shorted sensor), `min=`/`max=` phys
 options: `active=low|high`, `pull=`, `debounce_ms=` (default 10). Full grammar:
 `car/components/sensors/include/lbr/sensor_io.h`.
 
+For battery slots, use `CONFIG_LBR_IO_BATTERY` and configure the voltage divider's measured
+endpoints as voltage-to-percent values (`mv0/v0` and `mv1/v1`). This is a two-point linear
+calibration; it does not model a chemistry-specific discharge curve. The selected pack's voltage
+versus state-of-charge curve should be measured or taken from its data sheet before setting these
+values. Keep the percent range at 0..100 so CAN encoding and warnings have consistent semantics.
+
 The spec is the channel's calibration: it is recorded verbatim in every session config
 (`sensor.<n>.params=`) and changes the config CRC. A spec that does not parse (wrong channel
 count, a pin used twice, an ADC2 pin, a pull-up on an input-only pin, an `adc` entry on a bool

@@ -4,7 +4,8 @@
 
 /*
  * corner nodes, the wheel hub controllers (Mini ESP32-C5, CAN nodes 7..10):
- * one suspension IMU each, sent onto CAN in that corner's IMU frames
+ * one suspension IMU and battery level each, sent onto CAN in that corner's
+ * IMU and battery frames
  * (DAQ-WIRING.md section 4).
  *
  * Pure data, compiled into the host tests: each slot's signals must travel in
@@ -24,9 +25,16 @@ static const lbr_signal_id_t k_imu[4][6] = {
     IMU_SIGNALS(IMU_BR),
 };
 
+static const lbr_signal_id_t k_battery[4] = {
+    LBR_SIG_CORNER_FL_BATTERY, LBR_SIG_CORNER_FR_BATTERY,
+    LBR_SIG_CORNER_BL_BATTERY, LBR_SIG_CORNER_BR_BATTERY,
+};
+
 #define SLOTS(i)                                                                                   \
     {                                                                                              \
         [CORNER_SLOT_IMU] = {.name = "imu", .signals = k_imu[i], .n_signals = 6, .rate_hz = 100},  \
+        [CORNER_SLOT_BATTERY] = {.name = "battery", .signals = &k_battery[i], .n_signals = 1,    \
+                                 .rate_hz = 1},                                                   \
     }
 
 static const lbr_slot_t k_slots[4][CORNER_SLOT_COUNT] = {SLOTS(0), SLOTS(1), SLOTS(2), SLOTS(3)};

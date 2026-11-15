@@ -224,6 +224,7 @@ typedef struct {
     double      engine_rpm, cvt_rpm;
     double      fuel_pct;
     double      batt_cockpit; /* percent */
+    double      batt_corner[4]; /* FL, FR, BL, BR percent */
     double      x_m, y_m;     /* position from the start, east/north */
     double      bump;         /* filtered terrain input */
 } sim_world_t;

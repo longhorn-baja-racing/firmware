@@ -16,7 +16,9 @@ const lbr_signal_id_t lbr_cockpit_signals[] = {
     LBR_SIG_TEMP_BRAKE_BL, LBR_SIG_TEMP_BRAKE_BR, LBR_SIG_STRESS_1,
     LBR_SIG_STRESS_2,      LBR_SIG_STRESS_3,      LBR_SIG_STRESS_4,
     LBR_SIG_STRESS_5,      LBR_SIG_STRESS_6,      LBR_SIG_STRESS_7,
-    LBR_SIG_STRESS_8,
+    LBR_SIG_STRESS_8,      LBR_SIG_COCKPIT_BATTERY,
+    LBR_SIG_CORNER_FL_BATTERY, LBR_SIG_CORNER_FR_BATTERY,
+    LBR_SIG_CORNER_BL_BATTERY, LBR_SIG_CORNER_BR_BATTERY,
 };
 const size_t lbr_cockpit_signal_count = sizeof lbr_cockpit_signals / sizeof lbr_cockpit_signals[0];
 

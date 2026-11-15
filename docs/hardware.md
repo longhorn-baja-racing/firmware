@@ -18,7 +18,7 @@ signal list of each node is fixed by its plan (`car/nodes/<name>/main/<name>_pla
 | `temperature` | ESP32 | central battery | CAN | four brake temperatures, CVT temperature | no |
 | `stress` | ESP32 | central battery | CAN | stress sensors 1..8 (bridge amplifier/ADC part) | no |
 | `central` | ESP32-C5 | central battery | CAN (end of the trunk), LoRa, USB, BLE, pit/cockpit WiFi access point | GPS (NMEA) | yes (authoritative log; hardware TBD) |
-| `corner` (x4) | Mini ESP32-C5 | central battery | CAN | suspension IMU | no |
+| `corner` (x4) | Mini ESP32-C5 | own battery | CAN | suspension IMU, battery level | no |
 | `cockpit` | ESP32-C5 | own battery | WiFi to the Central | own battery level | no |
 
 One `corner` firmware runs on all four wheel hub nodes; `CONFIG_LBR_CORNER_POSITION` (FL, FR, BL,
@@ -37,7 +37,7 @@ Set per node with `idf.py menuconfig` or in that node's `sdkconfig.defaults` onc
 | LoRa (SX127x, SPI) | `CONFIG_LBR_LORA_{SCLK,MOSI,MISO,CS,RST,DIO0}_GPIO` | central (on the C5 it shares the SD card's SPI bus: SCLK/MOSI/MISO must equal the SD pins, or LoRa start fails; own CS) |
 | USB serial | UART0 through the module's USB-UART bridge (or the C5's USB serial) | central |
 | GPS (NMEA) | `CONFIG_LBR_GPS_{UART_NUM,RX_GPIO,TX_GPIO,BAUD}` | central |
-| On-chip ADC / pulse / digital inputs | `CONFIG_LBR_IO_<SLOT>` input specs (pins inside the spec, see [`sensors.md`](sensors.md)) | powertrain, driver_input, temperature, cockpit battery |
+| On-chip ADC / pulse / digital inputs | `CONFIG_LBR_IO_<SLOT>` input specs (pins inside the spec, see [`sensors.md`](sensors.md)) | powertrain, driver_input, temperature, corner and cockpit battery |
 | Sensor buses (I2C/SPI parts) | per driver, when parts are chosen | IMUs, stress, brake temperatures |
 
 `dev/ci/sdkconfig.linkcheck` contains placeholder pins used only so CI can link every
@@ -78,8 +78,11 @@ link"). Every other node is on CAN only.
   moved to flash (`car/nodes/central/sdkconfig.defaults`).
 - The TWAI interrupt is cache-safe (`CONFIG_TWAI_ISR_CACHE_SAFE`), so CAN reception and time
   sync keep running while flash is written (OTA, config push, boot counter).
-- The cockpit, the only battery-powered node, must last a 4 hour endurance race plus margin. Its
-  WiFi runs without power save for latency; capacity, charging, and low-battery behavior are TBD.
+- The cockpit and four corner nodes are battery-powered and must last a 4 hour endurance race plus
+  margin. Battery sizing depends on measured average current; WiFi stays at `WIFI_PS_NONE` for
+  latency, and power save is not accepted unless the on-car link meets its latency target with it
+  enabled. Software reports battery levels once per second; cockpit warnings are 20% low and 10%
+  critical. Battery sizing and physical voltage calibration remain hardware decisions.
 
 ## To verify against the final schematic and harness before bring-up (#15)
 

@@ -17,11 +17,11 @@ Items marked **(proposed)** are a starting design, not settled. Items marked **T
 
 ## 3. Power
 
-- **Central battery powers:** IMU Controller, Powertrain Controller, Driver Input Controller, Temperature Controller, Stress Controller, Central Controller, and the 4 wheel hub nodes (and their wired sensors, including the GPS receiver).
-- **Own battery pack:** the Cockpit Controller (on a moving part). It has no wired connection to the rest of the car and communicates only over WiFi.
+- **Central battery powers:** IMU Controller, Powertrain Controller, Driver Input Controller, Temperature Controller, Stress Controller, and Central Controller (including the GPS receiver).
+- **Own battery packs:** the four wheel hub nodes and Cockpit Controller. The cockpit has no wired connection to the car and communicates over WiFi; each corner stays on CAN for data and time sync.
 - **(proposed)** Run power and CAN together in one 4-wire harness to each controller: battery+, GND, CAN_H, CAN_L. Each controller gets a buck regulator from battery voltage down to 5 V / 3.3 V. Battery voltage is **TBD** (likely 12 V).
 - The harness to each wheel hub node crosses the suspension travel: flex-rated cable, strain relief, and a sealed connector (**TBD** with the harness).
-- **The Cockpit Controller must last a full Baja endurance race (4 hours) plus margin.** Battery capacity, charging method, and low-battery reporting are **TBD**.
+- **Every own-battery node must last a full Baja endurance race (4 hours) plus margin.** Current draw must be measured to establish runtime. Software reports battery percentage once a second; capacity, charging, and physical voltage calibration remain hardware decisions.
 
 ## 4. Nodes and what connects to them
 
@@ -127,6 +127,10 @@ The firmware implements this map as a schema (`car/components/protocol/frames.c`
 | 0x307 | BR hub | BR IMU gyro | 100 Hz | same as 0x301 |
 | 0x308 | IMU Ctrl | Chassis IMU accel | 100 Hz | same as 0x300 |
 | 0x309 | IMU Ctrl | Chassis IMU gyro | 100 Hz | same as 0x301 |
+| 0x30A | FL hub (node 7) | FL battery | 1 Hz | 0: FL battery percent |
+| 0x30B | FR hub (node 8) | FR battery | 1 Hz | 0: FR battery percent |
+| 0x30C | BL hub (node 9) | BL battery | 1 Hz | 0: BL battery percent |
+| 0x30D | BR hub (node 10) | BR battery | 1 Hz | 0: BR battery percent |
 | 0x400 | Stress | Stress sensors 1-4 | 100 Hz | 0-7: four int16 values |
 | 0x401 | Stress | Stress sensors 5-8 | 100 Hz | 0-7: four int16 values |
 | 0x500 | Temperature | Brake temps | 10 Hz | 0-7: FL, FR, BL, BR as int16 (0.1 deg C units) |
@@ -160,7 +164,13 @@ The Cockpit Controller is the only wireless node.
 
 - **Central -> Cockpit:** 5 GHz, UDP, Central pushes display data at a modest rate (e.g. 10-20 Hz). No TCP, to avoid retransmit stalls.
 - **Band fallback:** ESP32-C5 is dual-band, so keep the band configurable (5 GHz default, 2.4 GHz fallback) and test both on the car.
-- **Battery reporting:** the cockpit reports its battery level so it can be logged and shown.
+- **Battery reporting:** the cockpit reports its battery once a second over WiFi; corner nodes each
+  report once a second over CAN. The Central logs all five battery levels, forwards them to the
+  cockpit display, and includes them in LoRa telemetry.
+- **Low battery:** the cockpit display warns at 20% and marks 10% or less critical. The thresholds
+  are software defaults and must be checked against the selected battery's usable range.
+- **WiFi power save:** keep disabled (`WIFI_PS_NONE`) for cockpit display latency. Reconsider only
+  if measured runtime is short and the on-car link still meets its latency target with power save.
 
 What the firmware does today (`car/components/wlink`, exercised by the simulator in `dev/sim`):
 

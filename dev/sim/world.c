@@ -51,6 +51,7 @@ void world_init(sim_world_t *w)
     w->fuel_pct     = 96.0;
     w->batt_cockpit = 88.0;
     for (int i = 0; i < 4; i++) {
+        w->batt_corner[i] = 96.0 - (double)i;
         w->travel[i]     = 80.0;
         w->temp_brake[i] = 31.0;
     }
@@ -136,6 +137,9 @@ void world_step(sim_t *s, double dt)
     /* Cockpit battery: a 4 h race plus margin takes it down about 15 %/h
      * here, so a long run shows the drain. */
     w->batt_cockpit = fmax(0.0, w->batt_cockpit - 0.004 * dt);
+    for (int i = 0; i < 4; i++) {
+        w->batt_corner[i] = fmax(0.0, w->batt_corner[i] - (0.0035 + i * 0.0001) * dt);
+    }
 }
 
 static double heading_deg(const sim_world_t *w)
@@ -183,6 +187,10 @@ bool world_signal_value(sim_t *s, lbr_signal_id_t sig, double *v)
     }
     if (sig >= LBR_SIG_TEMP_BRAKE_FL && sig <= LBR_SIG_TEMP_BRAKE_BR) {
         *v = w->temp_brake[sig - LBR_SIG_TEMP_BRAKE_FL];
+        return true;
+    }
+    if (sig >= LBR_SIG_CORNER_FL_BATTERY && sig <= LBR_SIG_CORNER_BR_BATTERY) {
+        *v = w->batt_corner[sig - LBR_SIG_CORNER_FL_BATTERY];
         return true;
     }
     switch (sig) {
@@ -494,6 +502,14 @@ static const wiring_t k_wiring[] = {
     {"powertrain", "fuel", SIM_SLOT_IO, "adc gpio=34 mv0=250 v0=0 mv1=2350 v1=100 lo=120 hi=2480"},
     {"temperature", "cvt", SIM_SLOT_IO,
      "adc gpio=32 curve=ntc r25=10000 beta=3950 rpull=2200 vsup=3300 lo=50 hi=3250"},
+    {"corner_fl", "battery", SIM_SLOT_IO,
+     "adc gpio=1 mv0=1600 v0=0 mv1=2100 v1=100 lo=1000 hi=2450 min=0 max=100"},
+    {"corner_fr", "battery", SIM_SLOT_IO,
+     "adc gpio=1 mv0=1600 v0=0 mv1=2100 v1=100 lo=1000 hi=2450 min=0 max=100"},
+    {"corner_bl", "battery", SIM_SLOT_IO,
+     "adc gpio=1 mv0=1600 v0=0 mv1=2100 v1=100 lo=1000 hi=2450 min=0 max=100"},
+    {"corner_br", "battery", SIM_SLOT_IO,
+     "adc gpio=1 mv0=1600 v0=0 mv1=2100 v1=100 lo=1000 hi=2450 min=0 max=100"},
     {"central", "gps", SIM_SLOT_NMEA, NULL},
     {"central", "cockpit_status", SIM_SLOT_FIRMWARE, NULL},
     {"cockpit", "battery", SIM_SLOT_IO,

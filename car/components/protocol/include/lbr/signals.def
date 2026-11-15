@@ -63,6 +63,10 @@ LBR_SIGNAL(IMU_CH_ACCEL_Z,    0x031A, F32,    M_PER_S2,    "Chassis IMU accelera
 LBR_SIGNAL(IMU_CH_GYRO_X,     0x031B, F32,    RAD_PER_S,   "Chassis IMU angular rate, sensor X")
 LBR_SIGNAL(IMU_CH_GYRO_Y,     0x031C, F32,    RAD_PER_S,   "Chassis IMU angular rate, sensor Y")
 LBR_SIGNAL(IMU_CH_GYRO_Z,     0x031D, F32,    RAD_PER_S,   "Chassis IMU angular rate, sensor Z")
+LBR_SIGNAL(CORNER_FL_BATTERY, 0x0320, F32,    PERCENT,     "FL wheel hub battery level")
+LBR_SIGNAL(CORNER_FR_BATTERY, 0x0321, F32,    PERCENT,     "FR wheel hub battery level")
+LBR_SIGNAL(CORNER_BL_BATTERY, 0x0322, F32,    PERCENT,     "BL wheel hub battery level")
+LBR_SIGNAL(CORNER_BR_BATTERY, 0x0323, F32,    PERCENT,     "BR wheel hub battery level")
 
 /* 0x04xx Stress sensors (stress). Location of each in the session config. */
 LBR_SIGNAL(STRESS_1,          0x0400, F32,    MICROSTRAIN, "Stress sensor 1")

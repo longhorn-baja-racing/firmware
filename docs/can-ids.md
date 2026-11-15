@@ -57,6 +57,7 @@ The sender of a data frame is also the node that takes its samples.
 | 0x300, 0x302, 0x304, 0x306 | `IMU_xx_ACCEL` | corner_xx | 100 | 0/2/4: ACCEL_X/Y/Z i16 0.01 m/s^2 | 6 |
 | 0x301, 0x303, 0x305, 0x307 | `IMU_xx_GYRO` | corner_xx | 100 | 0/2/4: GYRO_X/Y/Z i16 0.001 rad/s | 6 |
 | 0x308 / 0x309 | `IMU_CH_ACCEL` / `IMU_CH_GYRO` | imu | 100 | as the corners | 6 |
+| 0x30A / 0x30B / 0x30C / 0x30D | `CORNER_xx_BATTERY` | FL / FR / BL / BR corner (CAN node 7 / 8 / 9 / 10) | 1 | 0: matching `CORNER_xx_BATTERY` u8 1 % | - |
 | 0x400 / 0x401 | `STRESS_1_4` / `STRESS_5_8` | stress | 100 | 0/2/4/6: STRESS_n i16 1 ue | - |
 | 0x500 | `BRAKE_TEMPS` | temperature | 10 | 0/2/4/6: TEMP_BRAKE_FL/FR/BL/BR i16 0.1 degC | - |
 | 0x501 | `CVT_TEMP` | temperature | 10 | 0: TEMP_CVT i16 0.1 degC | - |

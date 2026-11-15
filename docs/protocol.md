@@ -257,7 +257,12 @@ section 8; `car/components/wlink/include/lbr/wlink.h`), one transport packet per
   `cockpit_period_ms`): a `SAMPLE` record per display signal (latest value; stale ones as `NO_DATA`)
   and a `HEALTH_LITE` per CAN node.
 - **Cockpit -> Central** (link 4, port 47802, once a second): `SAMPLE` records (`COCKPIT_BATTERY`).
-  The Central puts its battery and the link state on CAN (`COCKPIT_STATUS`, 0x60A).
+  The Central puts its battery and the link state on CAN (`COCKPIT_STATUS`, 0x60A), and forwards
+  it to the cockpit display and LoRa telemetry. Each corner sends its calibrated battery percentage
+  once a second on its own CAN frame (0x30A..0x30D), is logged by the Central, and is forwarded to
+  the cockpit display and LoRa telemetry. LoRa carries each battery percentage at most once every
+  10 s. The cockpit warns below 20% and marks 10% or less critical; a remote reader can apply the
+  same thresholds to the transmitted percentages.
 
 The cockpit keeps no shared clock: it only shows ages. After a receive timeout, or a packet
 older than its window (the sender restarted its count), a receiver restarts its window and counts
