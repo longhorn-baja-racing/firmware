@@ -5,7 +5,7 @@ The map is the one in [`DAQ-WIRING.md`](../DAQ-WIRING.md) section 7; this file a
 rules. The data frames are a schema declared in [`car/catalog.toml`](../car/catalog.toml) (the tables
 below are generated from it by `lbrlib/tools/lbrgen.py`), exported as the `frames` table of
 `dev/tests/fixtures/catalog.json` and folded into the catalog hash; the codec is
-`lbrlib/components/can/include/lbr/can.h`; `dev/tests/fixtures/can_capture.*` is the byte-level
+`lbrlib/components/lbr_base/include/lbr/can.h`; `dev/tests/fixtures/can_capture.*` is the byte-level
 reference.
 
 ## Frames

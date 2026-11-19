@@ -137,18 +137,23 @@ static void test_sync_pairing(void)
     CHECK(!lbr_time_sync_on_follow_up(&rx, 5, 100, &gw, &local, &epoch)); /* consumed */
 }
 
-static void test_global_wrapper(void)
+static void test_clock(void)
 {
+    lbr_clock_t c;
+    lbr_clock_init(&c, port_host_mono_us, NULL, NULL);
     port_host_set_time(1000);
-    CHECK(!lbr_time_is_synced());
-    CHECK_EQ_U(lbr_time_now_us(), 1000u);
-    lbr_time_sync_apply(77000, 1000, 3);
-    CHECK(lbr_time_is_synced());
+    CHECK(!lbr_clock_is_synced(&c));
+    CHECK_EQ_U(lbr_clock_now_us(&c), 1000u);
+    lbr_clock_sync_apply(&c, 77000, 1000, 3);
+    CHECK(lbr_clock_is_synced(&c));
     port_host_set_time(2000);
-    CHECK_EQ_U(lbr_time_now_us(), 78000u);
-    CHECK_EQ_U(lbr_time_local_to_shared(1500), 77500u);
-    lbr_time_set_master();
-    CHECK_EQ_U(lbr_time_now_us(), 2000u);
+    CHECK_EQ_U(lbr_clock_now_us(&c), 78000u);
+    CHECK_EQ_U(lbr_clock_local_to_shared(&c, 1500), 77500u);
+    lbr_time_servo_t snap;
+    lbr_clock_get_servo(&c, &snap);
+    CHECK(snap.synced);
+    lbr_clock_set_master(&c);
+    CHECK_EQ_U(lbr_clock_now_us(&c), 2000u);
 }
 
 int main(void)
@@ -160,6 +165,6 @@ int main(void)
     RUN(test_first_sync_after_long_unsynced);
     RUN(test_ignores_stale_and_master);
     RUN(test_sync_pairing);
-    RUN(test_global_wrapper);
+    RUN(test_clock);
     TEST_MAIN_END();
 }

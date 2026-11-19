@@ -1,8 +1,7 @@
 idf_component_register(
-    SRCS "main.c" "central.c" "central_plan.c" "gw_store.c"
+    SRCS "main.c" "central_plan.c"
     INCLUDE_DIRS "."
-    REQUIRES can gateway health lbr links logging logic node protocol sensors timebase transport update util wlink
-             nvs_flash app_update esp_timer esp_system freertos log
+    REQUIRES lbr_core lbr_central logic
 )
 include("${CMAKE_CURRENT_LIST_DIR}/../../../../lbrlib/cmake/warnings.cmake")
 lbr_apply_warnings(${COMPONENT_LIB})

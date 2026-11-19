@@ -20,7 +20,7 @@ can_max = 2
 
 [node.sensor]
 id = 1
-slots = ["fast", { name = "slow", signals = ["B"] }]
+slots = [{ name = "fast", input = "io", hint = "pulse inputs" }, { name = "slow", signals = ["B"] }]
 
 [node.hub]
 id = 2
@@ -96,6 +96,15 @@ class Good(unittest.TestCase):
             text = a[car / "catalog" / "include" / "lbr" / "catalog_frames.def"]
             self.assertIn('LBR_FRAME(0x100, "FAST", SENSOR, 100, 8, 6, 2)', text)
             self.assertIn("LBR_FIELD(C, 2, I16, 0.5f)", text)
+            plan = a[car / "nodes" / "sensor" / "main" / "sensor_plan.c"]
+            self.assertIn(".input     = LBR_INPUT_IO,", plan)
+            self.assertIn(".io_spec   = CONFIG_LBR_IO_FAST,", plan)
+            self.assertIn('#define CONFIG_LBR_IO_FAST ""', plan)  # host builds: empty spec
+            kconfig = a[car / "nodes" / "sensor" / "main" / "Kconfig"]
+            self.assertIn("config LBR_IO_FAST", kconfig)
+            self.assertIn("Channels, in order: A, C (frame 0x100). Typically pulse", kconfig)
+            self.assertNotIn("LBR_IO_SLOW", kconfig)  # no input: bound in main.c
+            self.assertNotIn(car / "nodes" / "hub" / "main" / "Kconfig", a)  # no io slots
             nodes = a[car / "catalog" / "include" / "lbr" / "catalog_nodes.def"]
             self.assertIn("LBR_NODE_ROLE(CENTRAL, HUB)", nodes)
             self.assertIn("LBR_NODE_ROLE(COCKPIT, RESERVED)", nodes)
@@ -145,6 +154,12 @@ class Bad(unittest.TestCase):
 
     def test_unknown_cockpit_signal(self) -> None:
         self.refused('signals = ["A"]\n"""'[:-4], 'signals = ["Z"]', "unknown signal 'Z'")
+
+    def test_unknown_input(self) -> None:
+        self.refused('input = "io"', 'input = "adc"', "input 'adc' is not one of")
+
+    def test_gps_only_on_central(self) -> None:
+        self.refused('input = "io"', 'input = "gps"', "only on the central node")
 
     def test_missing_standard_signal(self) -> None:
         self.refused('name = "FAULT"', 'name = "FAULTS"', "standard signal FAULT")

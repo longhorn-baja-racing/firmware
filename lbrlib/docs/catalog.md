@@ -15,7 +15,8 @@ python3 lbrlib/tools/lbrgen.py car/catalog.toml --check   # CI: fail if anything
 | `car/catalog/include/lbr/catalog_frames.def` | the CAN data frame table |
 | `car/catalog/include/lbr/catalog_links.def` | the LoRa subset and the cockpit display list |
 | `car/catalog/include/lbr/catalog.h` | node id limits |
-| `car/nodes/<app>/main/<app>_plan.[ch]` | each firmware's slots (`<APP>_SLOT_<NAME>`) |
+| `car/nodes/<app>/main/<app>_plan.[ch]` | each firmware's slots (`<APP>_SLOT_<NAME>`) and how each is read |
+| `car/nodes/<app>/main/Kconfig` | the menuconfig settings of its `io` slots (`CONFIG_LBR_IO_<SLOT>`) |
 | `docs/can-ids.md` (between `lbrgen` markers) | the node and data-frame tables |
 
 Never edit a generated file; edit the TOML and run the generator. The `.def` files are X-macro
@@ -54,6 +55,19 @@ slots = [
 ```
 
 A slot's rate comes from its frames (they must agree); give `rate_hz` when no frame sets it.
+
+`input` says how the slot is read, and the board binds it by itself:
+
+| `input` | Read by | Set up in |
+| --- | --- | --- |
+| `"io"` | on-chip ADC, pulse, and switch inputs | menuconfig, `CONFIG_LBR_IO_<SLOT>` (generated, with the channel list and `hint`) |
+| `"gps"` | the NMEA GPS receiver (the Central only) | menuconfig, "LBR Central GPS" |
+| `"cockpit_link"` | the cockpit's battery and link state (the Central only) | nothing |
+| none | a part driver bound in `main.c` with `lbr_bind` | your code ([drivers](drivers.md)) |
+
+```toml
+slots = [{ name = "oil", input = "io", hint = "an adc input (0.5..4.5 V pressure sender)" }]
+```
 
 ## Frames and signals
 

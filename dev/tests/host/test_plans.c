@@ -13,7 +13,7 @@
 #include "temperature_plan.h"
 
 /* Defaults the firmware ships with (CONFIG_LBR_CAN_BITRATE and
- * CONFIG_LBR_CAN_TX_QUEUE_LEN). Keep in sync with lbrlib/components/can/Kconfig. */
+ * CONFIG_LBR_CAN_TX_QUEUE_LEN). Keep in sync with lbrlib/components/lbr_hw/Kconfig. */
 #define BITRATE      500000u
 #define TX_QUEUE_LEN 64u
 
@@ -242,7 +242,7 @@ static void test_burst_fits_tx_queue(void)
 static void test_car_logic_valid(void)
 {
     char err[96] = "";
-    int  rc      = lbr_logic_check(car_tasks, car_task_count, err, sizeof err);
+    int  rc      = lbr_logic_check(car_logic.tasks, car_logic.n, err, sizeof err);
     if (rc != 0) {
         fprintf(stderr, "  car logic: %s\n", err);
     }

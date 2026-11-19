@@ -109,7 +109,7 @@ resets or saturates within a session; receivers compare with modular arithmetic
 
 ## Heartbeat (health) record
 
-Twelve 8-byte pages; layout in `lbrlib/components/health/include/lbr/health.h`. On CAN each page is one
+Twelve 8-byte pages; layout in `lbrlib/components/lbr_base/include/lbr/health.h`. On CAN each page is one
 frame at 0x700 + 16 n + p, next to the 2-byte `HEARTBEAT` summary at 0x700 + n (state and error
 flags, see `can-ids.md`); in logs and packets the record is `node_id u8` followed by all twelve
 pages (97 bytes). Reserved fields are zero and a decoder rejects a page where they are not.
@@ -267,7 +267,7 @@ data`), `FILE_END` (0x12: `bytes u32, crc32 u32, name`).
   i.e. the same data as the authoritative log, batched every `stream_batch_ms`.
 - **LoRa** sends one packet per radio packet (max 255 bytes, no COBS): faults/events first, then
   compact health, then the latest value of each in-race subset signal (see
-  `lbrlib/components/transport/include/lbr/lora_policy.h`). Downsampling happens here only; the SD log
+  `lbrlib/components/lbr_core/include/lbr/lora_policy.h`). Downsampling happens here only; the SD log
   keeps everything.
 - **BLE** is read-only GATT (status and version text), no stream.
 
@@ -282,7 +282,7 @@ never overwrites a newer one.
 ## Cockpit link
 
 The cockpit display is the only node off the CAN bus. Over 5 GHz WiFi UDP (DAQ-WIRING.md
-section 8; `lbrlib/components/wlink/include/lbr/wlink.h`), one transport packet per datagram, no COBS:
+section 8; `lbrlib/components/lbr_core/include/lbr/wlink.h`), one transport packet per datagram, no COBS:
 
 - **Central -> cockpit** (link 4, port 47801, broadcast on the Central's access point, every
   `cockpit_period_ms`): a `SAMPLE` record per display signal (latest value; stale ones as `NO_DATA`)

@@ -1,14 +1,5 @@
 menu "LBR corner node"
 
-    config LBR_IO_BATTERY
-        string "Slot 'battery' input spec"
-        default ""
-        help
-            One channel: this corner's battery level in percent. Configure an
-            ADC1 entry with calibrated voltage-to-percent endpoints. Empty means
-            not fitted. The two-point linear calibration and syntax are in
-            docs/sensors.md.
-
     choice LBR_CORNER_POSITION_CHOICE
         prompt "Position on the car"
         default LBR_CORNER_FL

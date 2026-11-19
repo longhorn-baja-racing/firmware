@@ -6,8 +6,12 @@ logging: the node runtime calls it at the slot's rate on the shared clock and do
 ## Inputs that need no code
 
 Many sensors reach a node as a voltage, a pulse train, or a switch. Those are wired by
-configuration alone. Each slot has a menuconfig string, `CONFIG_LBR_IO_<SLOT>` (menu "LBR
-<node> inputs"), with one `;`-separated entry per channel, in the slot's signal order:
+configuration alone, with no C at all:
+
+1. mark the slot `input = "io"` in `car/catalog.toml` (`hint` says what is usually wired there);
+2. run `lbrgen.py`: it writes the node's `main/Kconfig` with a `CONFIG_LBR_IO_<SLOT>` setting
+   (menu "LBR <node> inputs") that lists the slot's channels in order;
+3. set it in `idf.py menuconfig`, one `;`-separated entry per channel:
 
 ```text
 adc gpio=34 mv0=310 v0=0 mv1=2980 v1=100      two-point linear calibration (pedals, fuel sender)
@@ -17,11 +21,10 @@ din gpio=4 active=low pull=up                 a switch
 -                                             not fitted
 ```
 
-Bind the slot in `main.c` with `lbr_bind_io(n, SLOT, CONFIG_LBR_IO_<SLOT>)`; an empty setting
-leaves it unbound. The full grammar, the per-chip pin rules, and the fault windows (`lo=`/`hi=`
-for open or shorted sensors, `min=`/`max=` for out-of-range values) are in
-[`docs/sensors.md`](../../docs/sensors.md). A new slot needs its `config LBR_IO_<SLOT>` entry in
-the node's `main/Kconfig.projbuild` (copy one).
+The board binds the slot by itself; an empty setting leaves it `NOT_FITTED`. The setting is the
+channel's calibration and is recorded in every session. The full grammar, the per-chip pin
+rules, and the fault windows (`lo=`/`hi=` for open or shorted sensors, `min=`/`max=` for
+out-of-range values) are in [`docs/sensors.md`](../../docs/sensors.md).
 
 ## Writing a driver
 
@@ -112,8 +115,11 @@ value.
 ### Where drivers live
 
 A driver used by one node can live in that node's `main/`. A driver for a part several nodes
-use goes in `lbrlib/components/sensors/sensor_<part>.c` (add it to that component's
-`CMakeLists.txt`), with its table declared in a header there.
+use goes in LBRLib: its hardware access in `lbrlib/components/lbr_hw/sensor_<part>_esp.c`, any
+pure conversion math in `lbrlib/components/lbr_core/sensors/` (so host tests can check it),
+and its `lbr_driver` table declared in a header in `lbr_hw/include/lbr/`. Both components build
+every `.c` file in their directories; after adding one, run `idf.py reconfigure` (or a clean
+build) so ESP-IDF sees it. The host build picks it up by itself.
 
 ## The low-level interface
 

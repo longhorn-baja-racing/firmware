@@ -53,7 +53,7 @@ ENC_FMT = {"i16": "<h", "u16": "<H", "u8": "<B", "i32": "<i", "u32": "<I"}
 REC_NAMES = {1: "SESSION", 2: "SAMPLE", 3: "HEALTH", 4: "CAN_FRAME", 5: "LOSS", 6: "TEXT",
              7: "END", 0x20: "KEY", 0x21: "VALUE"}
 REC_KEY, REC_VALUE = 0x20, 0x21
-# Car logic output status (lbr_status, lbrlib/components/lbr/include/lbr/value.h).
+# Car logic output status (lbr_status, lbrlib/components/lbr_core/include/lbr/value.h).
 OUTPUT_STATUS = ["OK", "UNSPECIFIED", "NOT_FITTED", "NO_DATA", "SENSOR_FAULT", "OUT_OF_RANGE",
                  "NOT_CALIBRATED", "BUS_ERROR", "STALE", "NODE_LOST", "NODE_MISSING", "BAD_MATH"]
 REC_SAMPLE, REC_HEALTH, REC_CAN_FRAME, REC_TEXT = 2, 3, 4, 6

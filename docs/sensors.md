@@ -9,8 +9,9 @@ part touches exactly one driver file and one line in its node's `main.c`.
 car/catalog.toml                      nodes, signals, frames, slots: declared once
 car/nodes/<node>/main/<node>_plan.c   generated from the catalog (pure data; do not edit)
 car/nodes/<node>/main/main.c          binds a driver to each slot that has a part
-lbrlib/components/sensors/            driver interface + drivers
-lbrlib/components/node/               runtime: timing, timestamps, seq, CAN, logs, heartbeat
+lbrlib/components/lbr_core/sensors/   driver kit + part-independent drivers (pure)
+lbrlib/components/lbr_hw/             their ESP32 side (ADC, pulse, GPIO, UART)
+lbrlib/components/lbr_node/           runtime: timing, timestamps, seq, CAN, logs, heartbeat
 ```
 
 Until a slot has a driver it runs the **unconfigured** driver: every channel publishes
@@ -42,7 +43,7 @@ ADC options: `avg=` samples per reading (default 4), `lo=`/`hi=` electrical wind
 it the channel reads `SENSOR_FAULT`: open or shorted sensor), `min=`/`max=` physical range
 (outside it reads `OUT_OF_RANGE`). Pulse options: `edge=rise|fall`, `pull=up|down|none`. Digital
 options: `active=low|high`, `pull=`, `debounce_ms=` (default 10). Full grammar:
-`lbrlib/components/sensors/include/lbr/sensor_io.h`.
+`lbrlib/components/lbr_core/include/lbr/sensor_io.h`.
 
 For battery slots, use `CONFIG_LBR_IO_BATTERY` and configure the voltage divider's measured
 endpoints as voltage-to-percent values (`mv0/v0` and `mv1/v1`). This is a two-point linear

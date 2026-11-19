@@ -29,6 +29,12 @@
 #                     signals from the frames that name it, in frame order;
 #                     { name, signals = [...] } lists them (any order, or for
 #                     a node off the bus); add rate_hz when no frame says it.
+#                     input says how the slot is read, and the board binds
+#                     it by itself: "io" (on-chip ADC/pulse/switch inputs,
+#                     set in menuconfig as CONFIG_LBR_IO_<SLOT>), "gps" or
+#                     "cockpit_link" (the Central only). No input: a part
+#                     driver bound in main.c, or NOT_FITTED. hint: what is
+#                     usually wired there (menuconfig help).
 #   listen_all        receive every frame (the Central). Default false.
 #   health_period_ms  heartbeat period. Default 1000.
 #
@@ -62,25 +68,31 @@ slots = ["chassis"]
 id = 2
 board = "ESP32"
 about = "Powertrain Controller: fuel level, engine speed, CVT speed"
-slots = ["speeds", "fuel"]
+slots = [
+  { name = "speeds", input = "io", hint = "pulse inputs (pickup or hall sensor)" },
+  { name = "fuel", input = "io", hint = "an adc input (fuel sender)" },
+]
 
 [node.driver_input]
 id = 3
 board = "ESP32"
 about = "Driver Input Controller: brake pedal, gas pedal, steering angle"
-slots = ["inputs"]
+slots = [{ name = "inputs", input = "io", hint = "adc inputs (potentiometers)" }]
 
 [node.temperature]
 id = 4
 board = "ESP32"
 about = "Temperature Controller: four brake temperatures, CVT temperature"
-slots = ["brakes", "cvt"]
+slots = [
+  { name = "brakes", input = "io", hint = "a thermocouple or IR part driver instead" },
+  { name = "cvt", input = "io", hint = "an adc input (NTC thermistor)" },
+]
 
 [node.stress]
 id = 5
 board = "ESP32"
 about = "Stress Controller: stress sensors 1..8"
-slots = ["stress"]
+slots = [{ name = "stress", input = "io", hint = "a bridge amplifier/ADC part driver instead (the on-chip ADC is too noisy)" }]
 
 [node.central]
 id = 6
@@ -90,9 +102,8 @@ link = "CAN, pit/cockpit WiFi access point, LoRa, USB, BLE"
 role = "central"
 listen_all = true
 slots = [
-  { name = "gps", signals = ["GPS_LATITUDE", "GPS_LONGITUDE", "GPS_ALTITUDE", "GPS_SPEED",
-                             "GPS_COURSE", "GPS_FIX", "GPS_SATELLITES", "GPS_HDOP", "GPS_UTC"] },
-  "cockpit_status",
+  { name = "gps", input = "gps", signals = ["GPS_LATITUDE", "GPS_LONGITUDE", "GPS_ALTITUDE", "GPS_SPEED", "GPS_COURSE", "GPS_FIX", "GPS_SATELLITES", "GPS_HDOP", "GPS_UTC"] },
+  { name = "cockpit_status", input = "cockpit_link" },
 ]
 
 [node.corner_fl]
@@ -101,7 +112,7 @@ board = "Mini ESP32-C5"
 about = "FL wheel hub: suspension IMU, own battery"
 link = "CAN (own battery)"
 app = "corner"
-slots = ["imu", "battery"]
+slots = ["imu", { name = "battery", input = "io", hint = "an adc input behind a divider, calibrated in percent" }]
 
 [node.corner_fr]
 id = 8
@@ -109,7 +120,7 @@ board = "Mini ESP32-C5"
 about = "FR wheel hub: suspension IMU, own battery"
 link = "CAN (own battery)"
 app = "corner"
-slots = ["imu", "battery"]
+slots = ["imu", { name = "battery", input = "io", hint = "an adc input behind a divider, calibrated in percent" }]
 
 [node.corner_bl]
 id = 9
@@ -117,7 +128,7 @@ board = "Mini ESP32-C5"
 about = "BL wheel hub: suspension IMU, own battery"
 link = "CAN (own battery)"
 app = "corner"
-slots = ["imu", "battery"]
+slots = ["imu", { name = "battery", input = "io", hint = "an adc input behind a divider, calibrated in percent" }]
 
 [node.corner_br]
 id = 10
@@ -125,7 +136,7 @@ board = "Mini ESP32-C5"
 about = "BR wheel hub: suspension IMU, own battery"
 link = "CAN (own battery)"
 app = "corner"
-slots = ["imu", "battery"]
+slots = ["imu", { name = "battery", input = "io", hint = "an adc input behind a divider, calibrated in percent" }]
 
 [node.cockpit]
 id = 11
@@ -133,7 +144,7 @@ board = "ESP32-C5"
 about = "Cockpit Controller: the driver's display, over WiFi"
 link = "WiFi to the Central"
 role = "cockpit"
-slots = [{ name = "battery", signals = ["COCKPIT_BATTERY"], rate_hz = 1 }]
+slots = [{ name = "battery", signals = ["COCKPIT_BATTERY"], rate_hz = 1, input = "io", hint = "an adc input behind a divider (ESP32-C5 ADC1: GPIO 1..6), calibrated in percent" }]
 
 # --- Data frames (DAQ-WIRING.md section 7) -------------------------------------------
 # Scales marked TBD are provisional until the parts are chosen.

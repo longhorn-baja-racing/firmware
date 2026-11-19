@@ -1,6 +1,6 @@
 # Car simulator: the real firmware logic (lbr_core, the node plans) on a
 # simulated car. Scenarios in scenarios/ run as CTest tests.
-add_executable(lbr_sim main.c sim.c vbus.c world.c)
+add_executable(lbr_sim main.c sim_core.c sim_platform.c sim_boot.c sim_report.c sim_cmd.c vbus.c world.c)
 target_link_libraries(lbr_sim PRIVATE lbr_plans lbr_car_logic lbr_core m)
 lbr_apply_warnings(lbr_sim)
 
