@@ -1,0 +1,15 @@
+# Battery reporting: the four wheel hubs send their own battery level on CAN
+# (0x30A..0x30D) once a second and the cockpit reports its own over WiFi; the
+# Central logs all five and the bus stays inside its budget.
+at 4.0  expect CORNER_FL_BATTERY valid == 1
+at 4.0  expect CORNER_FR_BATTERY valid == 1
+at 4.0  expect CORNER_BL_BATTERY valid == 1
+at 4.0  expect CORNER_BR_BATTERY value > 80
+at 4.0  expect COCKPIT_BATTERY valid == 1
+at 4.0  expect corners state == RUN
+at 4.0  expect bus load < 50
+at 4.0  disconnect corner_fl
+at 8.0  expect CORNER_FL_BATTERY age_ms > 1000
+at 8.0  expect CORNER_FR_BATTERY age_ms < 2000
+at 8.0  expect log intact == 1
+end 8.0

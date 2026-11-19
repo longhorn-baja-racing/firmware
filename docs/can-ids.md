@@ -44,10 +44,10 @@ only node off the bus; it never transmits on CAN.
 | 0x04 | `temperature` | ESP32 | CAN | Temperature Controller: four brake temperatures, CVT temperature |
 | 0x05 | `stress` | ESP32 | CAN | Stress Controller: stress sensors 1..8 |
 | 0x06 | `central` | ESP32-C5 | CAN, pit/cockpit WiFi access point, LoRa, USB, BLE | Central Controller: logger, time master, LoRa, GPS, cockpit link |
-| 0x07 | `corner_fl` | Mini ESP32-C5 | CAN | FL wheel hub: suspension IMU |
-| 0x08 | `corner_fr` | Mini ESP32-C5 | CAN | FR wheel hub: suspension IMU |
-| 0x09 | `corner_bl` | Mini ESP32-C5 | CAN | BL wheel hub: suspension IMU |
-| 0x0A | `corner_br` | Mini ESP32-C5 | CAN | BR wheel hub: suspension IMU |
+| 0x07 | `corner_fl` | Mini ESP32-C5 | CAN (own battery) | FL wheel hub: suspension IMU, own battery |
+| 0x08 | `corner_fr` | Mini ESP32-C5 | CAN (own battery) | FR wheel hub: suspension IMU, own battery |
+| 0x09 | `corner_bl` | Mini ESP32-C5 | CAN (own battery) | BL wheel hub: suspension IMU, own battery |
+| 0x0A | `corner_br` | Mini ESP32-C5 | CAN (own battery) | BR wheel hub: suspension IMU, own battery |
 | 0x0B | `cockpit` | ESP32-C5 | WiFi to the Central | Cockpit Controller: the driver's display, over WiFi |
 <!-- /lbrgen:nodes -->
 
@@ -71,6 +71,10 @@ The sender of a data frame is also the node that takes its samples.
 | 0x307 | `IMU_BR_GYRO` | corner_br | 100 | 8 | 0: IMU_BR_GYRO_X i16 x 0.001 rad/s, 2: IMU_BR_GYRO_Y i16 x 0.001 rad/s, 4: IMU_BR_GYRO_Z i16 x 0.001 rad/s | 6 |
 | 0x308 | `IMU_CH_ACCEL` | imu | 100 | 8 | 0: IMU_CH_ACCEL_X i16 x 0.01 m/s^2, 2: IMU_CH_ACCEL_Y i16 x 0.01 m/s^2, 4: IMU_CH_ACCEL_Z i16 x 0.01 m/s^2 | 6 |
 | 0x309 | `IMU_CH_GYRO` | imu | 100 | 8 | 0: IMU_CH_GYRO_X i16 x 0.001 rad/s, 2: IMU_CH_GYRO_Y i16 x 0.001 rad/s, 4: IMU_CH_GYRO_Z i16 x 0.001 rad/s | 6 |
+| 0x30A | `CORNER_FL_BATTERY` | corner_fl | 1 | 1 | 0: CORNER_FL_BATTERY u8 % | - |
+| 0x30B | `CORNER_FR_BATTERY` | corner_fr | 1 | 1 | 0: CORNER_FR_BATTERY u8 % | - |
+| 0x30C | `CORNER_BL_BATTERY` | corner_bl | 1 | 1 | 0: CORNER_BL_BATTERY u8 % | - |
+| 0x30D | `CORNER_BR_BATTERY` | corner_br | 1 | 1 | 0: CORNER_BR_BATTERY u8 % | - |
 | 0x400 | `STRESS_1_4` | stress | 100 | 8 | 0: STRESS_1 i16 ue, 2: STRESS_2 i16 ue, 4: STRESS_3 i16 ue, 6: STRESS_4 i16 ue | - |
 | 0x401 | `STRESS_5_8` | stress | 100 | 8 | 0: STRESS_5 i16 ue, 2: STRESS_6 i16 ue, 4: STRESS_7 i16 ue, 6: STRESS_8 i16 ue | - |
 | 0x500 | `BRAKE_TEMPS` | temperature | 10 | 8 | 0: TEMP_BRAKE_FL i16 x 0.1 degC, 2: TEMP_BRAKE_FR i16 x 0.1 degC, 4: TEMP_BRAKE_BL i16 x 0.1 degC, 6: TEMP_BRAKE_BR i16 x 0.1 degC | - |

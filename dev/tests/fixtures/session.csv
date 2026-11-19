@@ -3,7 +3,7 @@ t_s,kind,node,name,value,unit,status,synced,seq
 1.500000,session,central,format_version,1,,,,
 1.500000,session,central,protocol_version,4,,,,
 1.500000,session,central,fw_version,512,,,,
-1.500000,session,central,catalog_hash,2862307193,,,,
+1.500000,session,central,catalog_hash,580578432,,,,
 1.500000,session,central,config_crc,777070580,,,,
 1.500000,session,central,reset_reason,5,,,,
 1.500000,session,central,boot_count,42,,,,

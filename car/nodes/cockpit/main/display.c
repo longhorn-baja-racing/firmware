@@ -66,6 +66,30 @@ void cockpit_display_render(const lbr_value_table_t *values,
     fmt_value(values, LBR_SIG_TEMP_CVT, now_us, link_up, tcvt, sizeof tcvt);
     ESP_LOGI(TAG, "rpm %s | spd %s m/s | fuel %s %% | cvt %s C", rpm, speed, fuel, tcvt);
 
+    static const lbr_signal_id_t battery_signals[] = {
+        LBR_SIG_COCKPIT_BATTERY,   LBR_SIG_CORNER_FL_BATTERY, LBR_SIG_CORNER_FR_BATTERY,
+        LBR_SIG_CORNER_BL_BATTERY, LBR_SIG_CORNER_BR_BATTERY,
+    };
+    static const char *const battery_names[] = {"cockpit", "FL", "FR", "BL", "BR"};
+    for (size_t i = 0; i < sizeof battery_signals / sizeof battery_signals[0]; i++) {
+        char         level[16] = "--";
+        float        pct       = -1.0f;
+        lbr_sample_t sample;
+        if (link_up && values != NULL &&
+            lbr_value_table_get(values, battery_signals[i], now_us, &sample) == LBR_VALUE_OK &&
+            sample.type == LBR_VAL_F32 && isfinite(sample.v.f32)) {
+            pct = sample.v.f32;
+            (void)snprintf(level, sizeof level, "%.1f", (double)pct);
+        }
+        if (pct >= 0.0f && pct <= 10.0f) {
+            ESP_LOGE(TAG, "CRITICAL BATTERY %s: %s%%", battery_names[i], level);
+        } else if (pct >= 0.0f && pct <= 20.0f) {
+            ESP_LOGW(TAG, "LOW BATTERY %s: %s%%", battery_names[i], level);
+        } else {
+            ESP_LOGI(TAG, "battery %s %s%%", battery_names[i], level);
+        }
+    }
+
     static const lbr_signal_id_t brake_signals[] = {
         LBR_SIG_TEMP_BRAKE_FL,
         LBR_SIG_TEMP_BRAKE_FR,
