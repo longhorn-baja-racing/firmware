@@ -8,7 +8,7 @@
 ## Nodes
 
 The node set, power, and topology are [`DAQ-WIRING.md`](../DAQ-WIRING.md). Parts are TBD; the
-signal list of each node is fixed by its plan (`car/nodes/<name>/main/<name>_plan.c`).
+signal list of each node is fixed by its plan (generated from `car/catalog.toml`).
 
 | Node | Board | Power | Links | Sensors (parts TBD) | SD card |
 | --- | --- | --- | --- | --- | --- |

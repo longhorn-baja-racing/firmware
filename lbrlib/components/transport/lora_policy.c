@@ -6,12 +6,11 @@
 #include "lbr/packet.h"
 #include "lbr/transport.h"
 
+/* The car's in-race LoRa subset, in priority order (catalog: [lora]). */
 const lbr_lora_item_t lbr_lora_default_items[] = {
-    {LBR_SIG_ENGINE_RPM, 500},        {LBR_SIG_CVT_RPM, 500},        {LBR_SIG_GPS_SPEED, 1000},
-    {LBR_SIG_TEMP_CVT, 1000},         {LBR_SIG_TEMP_BRAKE_FL, 2000}, {LBR_SIG_TEMP_BRAKE_FR, 2000},
-    {LBR_SIG_TEMP_BRAKE_BL, 2000},    {LBR_SIG_TEMP_BRAKE_BR, 2000}, {LBR_SIG_FUEL_LEVEL, 5000},
-    {LBR_SIG_GPS_LATITUDE, 2000},     {LBR_SIG_GPS_LONGITUDE, 2000}, {LBR_SIG_GPS_FIX, 5000},
-    {LBR_SIG_COCKPIT_BATTERY, 10000},
+#define LBR_LORA_ITEM(sig_, ms_) {LBR_SIG_##sig_, (ms_)},
+#include "lbr/catalog_links.def"
+#undef LBR_LORA_ITEM
 };
 const size_t lbr_lora_default_item_count =
     sizeof lbr_lora_default_items / sizeof lbr_lora_default_items[0];

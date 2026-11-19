@@ -182,6 +182,9 @@ int lbr_node_config_validate(const lbr_node_config_t *cfg, char *err, size_t err
     if (!lbr_node_is_can(cfg->node_id) || cfg->node_id == LBR_NODE_CENTRAL) {
         return fail(err, err_len, "node id 0x%02x not allowed for a sensor node", cfg->node_id);
     }
+    if (cfg->app_error != NULL) {
+        return fail(err, err_len, "%s", cfg->app_error);
+    }
     if (cfg->n_acq > LBR_NODE_MAX_SENSORS || (cfg->n_acq > 0 && cfg->acq == NULL)) {
         return fail(err, err_len, "too many sensors (%u > %u)", (unsigned)cfg->n_acq,
                     LBR_NODE_MAX_SENSORS);
@@ -331,4 +334,26 @@ void lbr_node_build(const lbr_node_plan_t *plan, lbr_sensor_fill_t unbound, lbr_
         .local_log        = plan->local_log,
         .listen_all       = plan->listen_all,
     };
+}
+
+lbr_sensor_t *lbr_slot(lbr_node *n, size_t slot)
+{
+    if (n == NULL || n->cfg == NULL) {
+        return NULL;
+    }
+    if (n->plan == NULL || slot >= n->plan->n_slots || slot >= LBR_NODE_MAX_SENSORS) {
+        if (n->cfg->app_error == NULL) {
+            n->cfg->app_error = "app bound a slot its plan does not have";
+        }
+        return NULL;
+    }
+    uint32_t bit = 1u << slot;
+    if (n->bound & bit) {
+        if (n->cfg->app_error == NULL) {
+            n->cfg->app_error = "app bound a slot twice";
+        }
+        return NULL;
+    }
+    n->bound |= bit;
+    return &n->sensors[slot];
 }

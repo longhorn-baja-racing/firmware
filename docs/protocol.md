@@ -13,10 +13,11 @@ All multi-byte fields are **little-endian**. All text is ASCII.
 
 ## Principles
 
-- **Schema-driven.** Signal identity, value type, and unit come from the catalog
-  (`lbrlib/components/protocol/include/lbr/signals.def`); which CAN frame, byte, encoding, and scale
-  carry a signal come from the frame table (`lbrlib/components/protocol/frames.c`). Both are
-  exported as `dev/tests/fixtures/catalog.json`, so a decoder needs no hand-written layout.
+- **Schema-driven.** Signal identity, value type, and unit, and which CAN frame, byte, encoding,
+  and scale carry a signal, are declared once in the car's catalog
+  ([`car/catalog.toml`](../car/catalog.toml), generated into `car/catalog/` by
+  `lbrlib/tools/lbrgen.py`) and exported as `dev/tests/fixtures/catalog.json`, so a decoder needs
+  no hand-written layout.
 - **Stable identifiers.** Signal ids and node ids are append-only. Never renumber or reuse one.
 - **Explicit unavailability.** A missing measurement is a sample with `valid = false` and a
   reason code in the value slot (on CAN, a reserved raw value per encoding), never a zero.

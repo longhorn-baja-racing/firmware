@@ -9,7 +9,7 @@
 
 /*
  * Shared sensor-node runtime. A node app only declares its configuration
- * (node id + which drivers run at which rates) and calls lbr_node_run();
+ * (node id + which drivers run at which rates) with LBR_NODE_MAIN;
  * acquisition, timestamping, CAN publishing, time sync, heartbeats, optional
  * local SD logging, and fault reporting are identical on every node.
  */
@@ -41,6 +41,11 @@ typedef struct {
     bool              listen_all;
     lbr_node_frame_cb on_frame;
     void             *on_frame_ctx;
+
+    /* Set when the app's setup went wrong (a slot bound twice or out of
+     * range, ...). Validation then fails with this text, so the node runs in
+     * CONFIG_INVALID and says why, instead of silently running without it. */
+    const char *app_error;
 } lbr_node_config_t;
 
 /* ------------------------------------------------------------------------ */
@@ -84,6 +89,30 @@ typedef struct {
  */
 void lbr_node_build(const lbr_node_plan_t *plan, lbr_sensor_fill_t unbound, lbr_sensor_t *sensors,
                     lbr_acq_t *acq, lbr_node_config_t *cfg);
+
+/*
+ * The node an app is setting up (see LBR_NODE_MAIN in lbr/node_app.h): its
+ * plan, the configuration being built, and one sensor per slot.
+ */
+typedef struct {
+    const lbr_node_plan_t *plan;
+    lbr_node_config_t     *cfg;
+    lbr_sensor_t          *sensors; /* plan->n_slots entries, slot order */
+    uint32_t               bound;   /* bit i: the app bound slot i */
+} lbr_node;
+
+/*
+ * The sensor of slot `slot`, for binding a part driver to it:
+ *
+ *     lbr_sensor_bmi270(lbr_slot(n, IMU_SLOT_CHASSIS), ...);
+ *
+ * The driver must produce exactly the slot's signals, in order (validation
+ * checks). Binding a slot twice, or a slot the plan does not have, returns
+ * NULL and marks the configuration invalid with the reason (cfg->app_error):
+ * the node then reports CONFIG_INVALID on the bus rather than run without
+ * it. Drivers given NULL must do nothing.
+ */
+lbr_sensor_t *lbr_slot(lbr_node *n, size_t slot);
 
 /*
  * Check a plan against the frame table. `can` is true for nodes that
@@ -134,14 +163,9 @@ void lbr_reading_to_sample(uint8_t source, lbr_signal_id_t signal, const lbr_rea
 
 /* Validate, start CAN + time sync + acquisition + heartbeat tasks. Does not
  * return. A configuration that fails validation still runs CAN and the
- * heartbeat (state CONFIG_INVALID) so the fault is visible on the bus. */
-void lbr_node_run(const lbr_node_config_t *cfg);
-
-/* Bind the part-independent input driver (lbr/sensor_io.h) to plan slot
- * `slot` when `spec` is non-empty; an empty spec leaves the slot as built.
- * Call between lbr_node_build() and lbr_node_run(). */
-void lbr_node_bind_io(const lbr_node_plan_t *plan, size_t slot, lbr_sensor_t *sensors,
-                      const char *spec);
+ * heartbeat (state CONFIG_INVALID) so the fault is visible on the bus. Apps
+ * use LBR_NODE_MAIN (lbr/node_app.h), which calls this. */
+[[noreturn]] void lbr_node_run(const lbr_node_config_t *cfg);
 
 /* Print the programmer's mark (lbr/mark.h) on the console. Skipped after a
  * panic, watchdog or brownout reset so recovery is not held up by console

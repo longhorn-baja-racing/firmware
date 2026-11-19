@@ -10,6 +10,7 @@
 #include "lbr/log_service.h"
 #include "lbr/mark.h"
 #include "lbr/node.h"
+#include "lbr/node_app.h"
 #include "lbr/node_core.h"
 #include "lbr/sensor_io.h"
 #include "lbr/timebase.h"
@@ -214,14 +215,17 @@ static void on_log_event(uint16_t code, bool fault)
     lbr_node_core_on_log_event(&s_core, code, fault);
 }
 
-void lbr_node_bind_io(const lbr_node_plan_t *plan, size_t slot, lbr_sensor_t *sensors,
-                      const char *spec)
+void lbr_bind_io(lbr_node *n, size_t slot, const char *spec)
 {
-    if (spec == NULL || spec[0] == '\0' || slot >= plan->n_slots) {
-        return;
+    if (spec == NULL || spec[0] == '\0') {
+        return; /* not wired: stays unbound (NOT_FITTED) */
     }
-    const lbr_slot_t *s = &plan->slots[slot];
-    lbr_sensor_io(&sensors[slot], s->name, s->signals, s->n_signals, spec);
+    lbr_sensor_t *sensor = lbr_slot(n, slot);
+    if (sensor == NULL) {
+        return; /* lbr_slot recorded why */
+    }
+    const lbr_slot_t *s = &n->plan->slots[slot];
+    lbr_sensor_io(sensor, s->name, s->signals, s->n_signals, spec);
 }
 
 void lbr_node_print_mark(void)
@@ -236,6 +240,35 @@ void lbr_node_print_mark(void)
             fflush(stdout);
             return;
     }
+}
+
+void lbr_node_main(const lbr_node_app_t *app)
+{
+    static lbr_sensor_t      sensors[LBR_NODE_MAX_SENSORS];
+    static lbr_acq_t         acq[LBR_NODE_MAX_SENSORS];
+    static lbr_node_config_t cfg;
+
+    const lbr_node_plan_t *plan = app->plan;
+    if (plan->n_slots > LBR_NODE_MAX_SENSORS) {
+        /* Never build past the arrays: run with no slots, invalid, and say why. */
+        cfg = (lbr_node_config_t){
+            .node_id          = plan->node_id,
+            .health_period_ms = plan->health_period_ms,
+            .app_error        = "plan has more slots than LBR_NODE_MAX_SENSORS",
+        };
+    } else {
+        lbr_node_build(plan, LBR_NODE_UNBOUND_DRIVER, sensors, acq, &cfg);
+        cfg.on_frame     = app->on_frame;
+        cfg.on_frame_ctx = app->on_frame_ctx;
+        lbr_node node    = {.plan = plan, .cfg = &cfg, .sensors = sensors};
+        if (app->init != NULL) {
+            app->init(&node);
+        }
+    }
+    if (cfg.app_error != NULL) {
+        ESP_LOGE(TAG, "app setup: %s", cfg.app_error);
+    }
+    lbr_node_run(&cfg);
 }
 
 void lbr_node_run(const lbr_node_config_t *cfg)

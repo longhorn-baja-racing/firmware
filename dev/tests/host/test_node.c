@@ -307,6 +307,38 @@ static void test_value_table(void)
     CHECK(!lbr_value_table_watch(&t, LBR_SIG_IMU_CH_ACCEL_Y, 0));
 }
 
+/* lbr_slot: an app binding mistake makes the configuration invalid, with the
+ * reason, instead of being ignored. */
+static void test_app_slot_binding(void)
+{
+    static const lbr_signal_id_t sig[]   = {LBR_SIG_ENGINE_RPM, LBR_SIG_CVT_RPM};
+    static const lbr_slot_t      slots[] = {
+        {.name = "speeds", .signals = sig, .n_signals = 2, .rate_hz = 100}};
+    static const lbr_node_plan_t plan = {
+        .node_id = LBR_NODE_POWERTRAIN, .slots = slots, .n_slots = 1, .health_period_ms = 1000};
+    lbr_sensor_t      sensors[1];
+    lbr_acq_t         acq[1];
+    lbr_node_config_t cfg;
+    char              err[96];
+
+    lbr_node_build(&plan, lbr_sensor_unconfigured, sensors, acq, &cfg);
+    lbr_node node = {.plan = &plan, .cfg = &cfg, .sensors = sensors};
+    CHECK(lbr_slot(&node, 0) == &sensors[0]);
+    CHECK(cfg.app_error == NULL);
+
+    CHECK(lbr_slot(&node, 0) == NULL); /* twice */
+    CHECK(cfg.app_error != NULL);
+    CHECK(lbr_node_config_validate(&cfg, err, sizeof err) != 0);
+    CHECK(strstr(err, "twice") != NULL);
+
+    lbr_node_build(&plan, lbr_sensor_unconfigured, sensors, acq, &cfg);
+    node = (lbr_node){.plan = &plan, .cfg = &cfg, .sensors = sensors};
+    CHECK(lbr_slot(&node, 1) == NULL); /* not in the plan */
+    CHECK(lbr_node_config_validate(&cfg, err, sizeof err) != 0);
+    CHECK(strstr(err, "does not have") != NULL);
+    CHECK(lbr_slot(NULL, 0) == NULL);
+}
+
 int main(void)
 {
     RUN(test_value_table);
@@ -317,5 +349,6 @@ int main(void)
     RUN(test_reading_to_sample);
     RUN(test_acq_grid);
     RUN(test_node_table);
+    RUN(test_app_slot_binding);
     TEST_MAIN_END();
 }

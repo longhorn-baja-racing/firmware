@@ -10,10 +10,11 @@
 
 /* Pure Central-side cockpit link; see lbr/cockpit_link.h. */
 
+/* What the cockpit display shows, in wire order (catalog: [cockpit]). */
 const lbr_signal_id_t lbr_cockpit_signals[] = {
-    LBR_SIG_ENGINE_RPM,    LBR_SIG_CVT_RPM,       LBR_SIG_GPS_SPEED,     LBR_SIG_FUEL_LEVEL,
-    LBR_SIG_TEMP_CVT,      LBR_SIG_TEMP_BRAKE_FL, LBR_SIG_TEMP_BRAKE_FR, LBR_SIG_TEMP_BRAKE_BL,
-    LBR_SIG_TEMP_BRAKE_BR, LBR_SIG_BRAKE_PEDAL,   LBR_SIG_GAS_PEDAL,     LBR_SIG_FAULT,
+#define LBR_COCKPIT_SIGNAL(sig_) LBR_SIG_##sig_,
+#include "lbr/catalog_links.def"
+#undef LBR_COCKPIT_SIGNAL
 };
 const size_t lbr_cockpit_signal_count = sizeof lbr_cockpit_signals / sizeof lbr_cockpit_signals[0];
 

@@ -59,6 +59,7 @@ target_include_directories(lbr_core PUBLIC
     "${LBR_COMPONENTS}/wlink/include"
     "${LBR_COMPONENTS}/gateway/include"
     "${LBR_COMPONENTS}/update/include"
+    "${LBR_ROOT}/car/catalog/include"
     "${CMAKE_CURRENT_LIST_DIR}"
 )
 target_link_libraries(lbr_core PUBLIC m)
@@ -109,3 +110,9 @@ add_custom_target(fixtures
     DEPENDS gen_fixtures
     COMMENT "Regenerating golden fixtures in dev/tests/fixtures")
 add_test(NAME decoder COMMAND Python3::Interpreter -I "${LBR_DECODE}" --selftest)
+
+# The car's catalog: every generated file (signals, nodes, frames, plans, the can-ids.md
+# tables) matches car/catalog.toml, and the generator refuses broken catalogs.
+add_test(NAME catalog COMMAND Python3::Interpreter -I "${LBR_ROOT}/lbrlib/tools/lbrgen.py"
+                              "${LBR_ROOT}/car/catalog.toml" --check)
+add_test(NAME lbrgen COMMAND Python3::Interpreter "${LBR_ROOT}/lbrlib/tools/test_lbrgen.py")

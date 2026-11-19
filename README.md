@@ -87,9 +87,9 @@ The firmware must:
 | `corner_fl/fr/bl/br` | 0x07..0x0A | Mini ESP32-C5 | their `IMU_xx_*` 100 Hz | wheel hub, one firmware for all four |
 | `cockpit` | 0x0B | ESP32-C5 | `COCKPIT_BATTERY` (reported to the Central) | driver's display, WiFi only, own battery |
 
-Rates and frames are DAQ-WIRING.md section 7, implemented as a table
-(`lbrlib/components/protocol/frames.c`); each node's plan (`car/nodes/<name>/main/<name>_plan.c`)
-must match it, which the host tests check together with the bus budget. The `cockpit`
+Nodes, signals, rates, and frames are DAQ-WIRING.md section 7, declared once in
+[`car/catalog.toml`](car/catalog.toml); `lbrlib/tools/lbrgen.py` generates the frame table and
+each node's plan from it, and the host tests check them together with the bus budget. The `cockpit`
 node is the driver's display in the car. "Dashboard" always means the pit/desktop app
 ([`longhorn-baja-racing/dashboard`](https://github.com/longhorn-baja-racing/dashboard)), never a node.
 
@@ -254,7 +254,7 @@ lbrlib/                       # LBRLIB: the library every node is built on (flas
   cmake/                      #   warnings-as-errors policy
   components/                 #   ESP-IDF components; *_esp.c = hardware side, the rest is pure C23
     util/                     #     byte order, CRC-32, COBS, bounded ring buffer
-    protocol/                 #     signal catalog (signals.def), CAN frame table (frames.c), node ids
+    protocol/                 #     catalog codecs: signals, CAN frame table, node ids (data from car/catalog)
     health/                   #     heartbeat record + page codec, reset reason
     can/                      #     CAN id map, field codec, sync-tracking decoder; TWAI adapter
     timebase/                 #     shared time sync servo
@@ -266,7 +266,10 @@ lbrlib/                       # LBRLIB: the library every node is built on (flas
     links/                    #     the Central's USB/LoRa/WiFi/BLE links
     wlink/                    #     cockpit WiFi link (cores + C5 WiFi/UDP glue)
     gateway/                  #     the Central's logic, runtime config, status text
-car/                          # THIS CAR: the 2026 vehicle's node apps, built on lbrlib/
+  tools/lbrgen.py             #   catalog.toml -> signals, nodes, frame table, plans, can-ids.md tables
+car/                          # THIS CAR: the 2026 vehicle, built on lbrlib/
+  catalog.toml                #   every node, signal, and CAN frame, declared once
+  catalog/                    #   generated from catalog.toml (the "catalog" component; do not edit)
   cmake/                      #   ESP-IDF version pin check
   nodes/                      #   one ESP-IDF app per physical node (DAQ-WIRING.md)
     sdkconfig.common          #     settings shared by every node
@@ -302,12 +305,12 @@ simulator run exactly the code that is flashed.
 
 Each node in `car/nodes/` is a self-contained ESP-IDF project (its own top-level `CMakeLists.txt`
 + `main/`) that pulls in the shared `lbrlib/components/` via `EXTRA_COMPONENT_DIRS` and builds only
-what its `main` needs. Node apps stay thin: a plan (pure data: node id, channels, rates) and
-driver binding. Shared logic lives in `lbrlib/components/` behind narrow interfaces so protocol,
-queue, time-sync, and log-recovery behavior is exercised in host tests without hardware.
-Adding a node means copying a `car/nodes/<name>/` directory, giving it a new id in
-`lbrlib/components/protocol/include/lbr/nodes.h`, its frames in `frames.c`, and adding its plan to
-`dev/tests/host/CMakeLists.txt`.
+what its `main` needs. Node apps stay thin: a generated plan (pure data: node id, channels,
+rates) and driver binding, a few lines with `LBR_NODE_MAIN` (`lbr/node_app.h`). Shared logic
+lives in `lbrlib/components/` behind narrow interfaces so protocol, queue, time-sync, and
+log-recovery behavior is exercised in host tests without hardware. Adding a node means adding it
+and its frames to `car/catalog.toml`, running `lbrlib/tools/lbrgen.py`, copying a
+`car/nodes/<name>/` directory, and adding its plan to `dev/tests/host/CMakeLists.txt`.
 
 ## Getting started
 

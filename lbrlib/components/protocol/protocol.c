@@ -241,32 +241,48 @@ size_t lbr_sample_decode(const uint8_t *buf, size_t len, lbr_sample_t *out)
 /* ------------------------------------------------------------------------ */
 /* Node names                                                                */
 
+typedef struct {
+    uint8_t     id;
+    const char *name;
+    const char *about;
+} node_info_t;
+
+static const node_info_t s_nodes[] = {
+#define LBR_NODE(NAME, id_, name_, about_) {.id = (id_), .name = (name_), .about = (about_)},
+#include "lbr/catalog_nodes.def"
+#undef LBR_NODE
+};
+
+#define NODE_COUNT (sizeof s_nodes / sizeof s_nodes[0])
+
+static const node_info_t *node_info(uint8_t node_id)
+{
+    for (size_t i = 0; i < NODE_COUNT; i++) {
+        if (s_nodes[i].id == node_id) {
+            return &s_nodes[i];
+        }
+    }
+    return NULL;
+}
+
 const char *lbr_node_name(uint8_t node_id)
 {
-    switch (node_id) {
-        case LBR_NODE_IMU:
-            return "imu";
-        case LBR_NODE_POWERTRAIN:
-            return "powertrain";
-        case LBR_NODE_DRIVER_INPUT:
-            return "driver_input";
-        case LBR_NODE_TEMPERATURE:
-            return "temperature";
-        case LBR_NODE_STRESS:
-            return "stress";
-        case LBR_NODE_CENTRAL:
-            return "central";
-        case LBR_NODE_CORNER_FL:
-            return "corner_fl";
-        case LBR_NODE_CORNER_FR:
-            return "corner_fr";
-        case LBR_NODE_CORNER_BL:
-            return "corner_bl";
-        case LBR_NODE_CORNER_BR:
-            return "corner_br";
-        case LBR_NODE_COCKPIT:
-            return "cockpit";
-        default:
-            return "?";
-    }
+    const node_info_t *n = node_info(node_id);
+    return n != NULL ? n->name : "?";
+}
+
+const char *lbr_node_about(uint8_t node_id)
+{
+    const node_info_t *n = node_info(node_id);
+    return n != NULL ? n->about : "";
+}
+
+size_t lbr_node_count(void)
+{
+    return NODE_COUNT;
+}
+
+uint8_t lbr_node_id_at(size_t index)
+{
+    return index < NODE_COUNT ? s_nodes[index].id : LBR_NODE_INVALID;
 }

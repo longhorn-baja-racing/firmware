@@ -2,8 +2,9 @@
 
 Part of protocol version 4. Keep synchronized with the dashboard app and every node's firmware.
 The map is the one in [`DAQ-WIRING.md`](../DAQ-WIRING.md) section 7; this file adds the bit-level
-rules. The data frames are a schema, `lbrlib/components/protocol/frames.c`, exported as the
-`frames` table of `dev/tests/fixtures/catalog.json` and folded into the catalog hash; the codec is
+rules. The data frames are a schema declared in [`car/catalog.toml`](../car/catalog.toml) (the tables
+below are generated from it by `lbrlib/tools/lbrgen.py`), exported as the `frames` table of
+`dev/tests/fixtures/catalog.json` and folded into the catalog hash; the codec is
 `lbrlib/components/can/include/lbr/can.h`; `dev/tests/fixtures/can_capture.*` is the byte-level
 reference.
 
@@ -34,39 +35,54 @@ them (`rx_foreign`).
 Ids 1..10 are the CAN nodes and match DAQ-WIRING's "CAN node N". The cockpit (0x0B) is the
 only node off the bus; it never transmits on CAN.
 
-| Id | Node | Board | Link |
-| --- | --- | --- | --- |
-| 0x01 | `imu` | ESP32-C5 | CAN |
-| 0x02 | `powertrain` | ESP32 | CAN |
-| 0x03 | `driver_input` | ESP32 | CAN |
-| 0x04 | `temperature` | ESP32 | CAN |
-| 0x05 | `stress` | ESP32 | CAN |
-| 0x06 | `central` | ESP32-C5 | CAN, pit/cockpit WiFi access point, LoRa, USB, BLE |
-| 0x07 .. 0x0A | `corner_fl`, `corner_fr`, `corner_bl`, `corner_br` | Mini ESP32-C5 | CAN |
-| 0x0B | `cockpit` | ESP32-C5 | WiFi to the Central |
+<!-- lbrgen:nodes -->
+| Id | Node | Board | Link | What it does |
+| --- | --- | --- | --- | --- |
+| 0x01 | `imu` | ESP32-C5 | CAN | IMU Controller: the chassis IMU |
+| 0x02 | `powertrain` | ESP32 | CAN | Powertrain Controller: fuel level, engine speed, CVT speed |
+| 0x03 | `driver_input` | ESP32 | CAN | Driver Input Controller: brake pedal, gas pedal, steering angle |
+| 0x04 | `temperature` | ESP32 | CAN | Temperature Controller: four brake temperatures, CVT temperature |
+| 0x05 | `stress` | ESP32 | CAN | Stress Controller: stress sensors 1..8 |
+| 0x06 | `central` | ESP32-C5 | CAN, pit/cockpit WiFi access point, LoRa, USB, BLE | Central Controller: logger, time master, LoRa, GPS, cockpit link |
+| 0x07 | `corner_fl` | Mini ESP32-C5 | CAN | FL wheel hub: suspension IMU |
+| 0x08 | `corner_fr` | Mini ESP32-C5 | CAN | FR wheel hub: suspension IMU |
+| 0x09 | `corner_bl` | Mini ESP32-C5 | CAN | BL wheel hub: suspension IMU |
+| 0x0A | `corner_br` | Mini ESP32-C5 | CAN | BR wheel hub: suspension IMU |
+| 0x0B | `cockpit` | ESP32-C5 | WiFi to the Central | Cockpit Controller: the driver's display, over WiFi |
+<!-- /lbrgen:nodes -->
 
 ## Data frames
 
 The sender of a data frame is also the node that takes its samples.
 
-| Id | Frame | Sender | Rate | Fields (byte: signal, encoding, scale) | Counter |
-| --- | --- | --- | ---: | --- | --- |
-| 0x100 | `DRIVER_INPUTS` | driver_input | 100 | 0: BRAKE_PEDAL i16 0.01 %, 2: GAS_PEDAL i16 0.01 %, 4: STEERING_ANGLE i16 0.1 deg | 6 |
-| 0x200 | `POWERTRAIN_SPEEDS` | powertrain | 100 | 0: ENGINE_RPM u16 1, 2: CVT_RPM u16 1 | 6 |
-| 0x201 | `FUEL_LEVEL` | powertrain | 1 | 0: FUEL_LEVEL i16 0.1 % | - |
-| 0x300, 0x302, 0x304, 0x306 | `IMU_xx_ACCEL` | corner_xx | 100 | 0/2/4: ACCEL_X/Y/Z i16 0.01 m/s^2 | 6 |
-| 0x301, 0x303, 0x305, 0x307 | `IMU_xx_GYRO` | corner_xx | 100 | 0/2/4: GYRO_X/Y/Z i16 0.001 rad/s | 6 |
-| 0x308 / 0x309 | `IMU_CH_ACCEL` / `IMU_CH_GYRO` | imu | 100 | as the corners | 6 |
-| 0x400 / 0x401 | `STRESS_1_4` / `STRESS_5_8` | stress | 100 | 0/2/4/6: STRESS_n i16 1 ue | - |
-| 0x500 | `BRAKE_TEMPS` | temperature | 10 | 0/2/4/6: TEMP_BRAKE_FL/FR/BL/BR i16 0.1 degC | - |
-| 0x501 | `CVT_TEMP` | temperature | 10 | 0: TEMP_CVT i16 0.1 degC | - |
-| 0x600 | `GPS_POSITION` | central | 10 | 0: GPS_LATITUDE i32, 4: GPS_LONGITUDE i32 (1e-7 deg) | - |
-| 0x601 | `GPS_MOTION` | central | 10 | 0: GPS_SPEED u16 0.01 m/s, 2: GPS_COURSE u16 0.01 deg, 4: GPS_ALTITUDE i16 0.1 m | 6 |
-| 0x602 | `GPS_STATUS` | central | 10 | 0: GPS_UTC u32, 4: GPS_FIX u8, 5: GPS_SATELLITES u8, 6: GPS_HDOP u16 0.01 | - |
-| 0x60A | `COCKPIT_STATUS` | central | 1 | 0: COCKPIT_BATTERY u8 1 %, 1: COCKPIT_LINK u8 | - |
+<!-- lbrgen:frames -->
+| Id | Frame | Sender | Rate | dlc | Fields (byte: signal encoding x scale unit) | Counter |
+| --- | --- | --- | ---: | ---: | --- | --- |
+| 0x100 | `DRIVER_INPUTS` | driver_input | 100 | 8 | 0: BRAKE_PEDAL i16 x 0.01 %, 2: GAS_PEDAL i16 x 0.01 %, 4: STEERING_ANGLE i16 x 0.1 deg | 6 |
+| 0x200 | `POWERTRAIN_SPEEDS` | powertrain | 100 | 8 | 0: ENGINE_RPM u16 rpm, 2: CVT_RPM u16 rpm | 6 |
+| 0x201 | `FUEL_LEVEL` | powertrain | 1 | 2 | 0: FUEL_LEVEL i16 x 0.1 % | - |
+| 0x300 | `IMU_FL_ACCEL` | corner_fl | 100 | 8 | 0: IMU_FL_ACCEL_X i16 x 0.01 m/s^2, 2: IMU_FL_ACCEL_Y i16 x 0.01 m/s^2, 4: IMU_FL_ACCEL_Z i16 x 0.01 m/s^2 | 6 |
+| 0x301 | `IMU_FL_GYRO` | corner_fl | 100 | 8 | 0: IMU_FL_GYRO_X i16 x 0.001 rad/s, 2: IMU_FL_GYRO_Y i16 x 0.001 rad/s, 4: IMU_FL_GYRO_Z i16 x 0.001 rad/s | 6 |
+| 0x302 | `IMU_FR_ACCEL` | corner_fr | 100 | 8 | 0: IMU_FR_ACCEL_X i16 x 0.01 m/s^2, 2: IMU_FR_ACCEL_Y i16 x 0.01 m/s^2, 4: IMU_FR_ACCEL_Z i16 x 0.01 m/s^2 | 6 |
+| 0x303 | `IMU_FR_GYRO` | corner_fr | 100 | 8 | 0: IMU_FR_GYRO_X i16 x 0.001 rad/s, 2: IMU_FR_GYRO_Y i16 x 0.001 rad/s, 4: IMU_FR_GYRO_Z i16 x 0.001 rad/s | 6 |
+| 0x304 | `IMU_BL_ACCEL` | corner_bl | 100 | 8 | 0: IMU_BL_ACCEL_X i16 x 0.01 m/s^2, 2: IMU_BL_ACCEL_Y i16 x 0.01 m/s^2, 4: IMU_BL_ACCEL_Z i16 x 0.01 m/s^2 | 6 |
+| 0x305 | `IMU_BL_GYRO` | corner_bl | 100 | 8 | 0: IMU_BL_GYRO_X i16 x 0.001 rad/s, 2: IMU_BL_GYRO_Y i16 x 0.001 rad/s, 4: IMU_BL_GYRO_Z i16 x 0.001 rad/s | 6 |
+| 0x306 | `IMU_BR_ACCEL` | corner_br | 100 | 8 | 0: IMU_BR_ACCEL_X i16 x 0.01 m/s^2, 2: IMU_BR_ACCEL_Y i16 x 0.01 m/s^2, 4: IMU_BR_ACCEL_Z i16 x 0.01 m/s^2 | 6 |
+| 0x307 | `IMU_BR_GYRO` | corner_br | 100 | 8 | 0: IMU_BR_GYRO_X i16 x 0.001 rad/s, 2: IMU_BR_GYRO_Y i16 x 0.001 rad/s, 4: IMU_BR_GYRO_Z i16 x 0.001 rad/s | 6 |
+| 0x308 | `IMU_CH_ACCEL` | imu | 100 | 8 | 0: IMU_CH_ACCEL_X i16 x 0.01 m/s^2, 2: IMU_CH_ACCEL_Y i16 x 0.01 m/s^2, 4: IMU_CH_ACCEL_Z i16 x 0.01 m/s^2 | 6 |
+| 0x309 | `IMU_CH_GYRO` | imu | 100 | 8 | 0: IMU_CH_GYRO_X i16 x 0.001 rad/s, 2: IMU_CH_GYRO_Y i16 x 0.001 rad/s, 4: IMU_CH_GYRO_Z i16 x 0.001 rad/s | 6 |
+| 0x400 | `STRESS_1_4` | stress | 100 | 8 | 0: STRESS_1 i16 ue, 2: STRESS_2 i16 ue, 4: STRESS_3 i16 ue, 6: STRESS_4 i16 ue | - |
+| 0x401 | `STRESS_5_8` | stress | 100 | 8 | 0: STRESS_5 i16 ue, 2: STRESS_6 i16 ue, 4: STRESS_7 i16 ue, 6: STRESS_8 i16 ue | - |
+| 0x500 | `BRAKE_TEMPS` | temperature | 10 | 8 | 0: TEMP_BRAKE_FL i16 x 0.1 degC, 2: TEMP_BRAKE_FR i16 x 0.1 degC, 4: TEMP_BRAKE_BL i16 x 0.1 degC, 6: TEMP_BRAKE_BR i16 x 0.1 degC | - |
+| 0x501 | `CVT_TEMP` | temperature | 10 | 2 | 0: TEMP_CVT i16 x 0.1 degC | - |
+| 0x600 | `GPS_POSITION` | central | 10 | 8 | 0: GPS_LATITUDE i32 deg*1e-7, 4: GPS_LONGITUDE i32 deg*1e-7 | - |
+| 0x601 | `GPS_MOTION` | central | 10 | 8 | 0: GPS_SPEED u16 x 0.01 m/s, 2: GPS_COURSE u16 x 0.01 deg, 4: GPS_ALTITUDE i16 x 0.1 m | 6 |
+| 0x602 | `GPS_STATUS` | central | 10 | 8 | 0: GPS_UTC u32 unix_s, 4: GPS_FIX u8, 5: GPS_SATELLITES u8 count, 6: GPS_HDOP u16 x 0.01 | - |
+| 0x60A | `COCKPIT_STATUS` | central | 1 | 2 | 0: COCKPIT_BATTERY u8 %, 1: COCKPIT_LINK u8 | - |
+<!-- /lbrgen:frames -->
 
 Scales marked TBD in DAQ-WIRING (pedals, steering, fuel, IMU, stress) are provisional until parts
-are chosen. A scale change is a change to `frames.c`: the catalog hash moves, the fixtures are
+are chosen. A scale change is a change to `car/catalog.toml`: the catalog hash moves, the fixtures are
 regenerated, and the dashboard app updates in step. Every signal travels in exactly one frame, and
 every field of a frame comes from one acquisition slot sampled at the frame's rate, so each
 sample is published exactly once (checked by `test_plans`).

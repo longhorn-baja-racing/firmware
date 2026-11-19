@@ -1,0 +1,441 @@
+# The 2026 car's catalog: every node, signal, and CAN data frame, declared once.
+#
+# lbrlib/tools/lbrgen.py turns this file into the C sources the firmware is
+# built from (signals.def, nodes.h, the frame table, every node's plan), the
+# node and data-frame tables of docs/can-ids.md, and nothing else. Never edit
+# the generated files; edit this one and run
+#
+#     python3 lbrlib/tools/lbrgen.py car/catalog.toml
+#
+# CI runs it with --check. It is part of the shared protocol (version 4):
+# signal ids, names, types, units, frame ids, layouts, rates, and node ids
+# are folded into lbr_catalog_hash(). Changing any of them means
+# regenerating the golden fixtures and updating the dashboard app in step.
+# Never renumber or reuse a node id, signal id, or CAN id once a log exists.
+#
+# Reference
+# ---------
+# [node.<name>]       one per node; <name> is its short lowercase name.
+#   id                node id, 1..254. CAN nodes are 1..can_max.
+#   board             board description (docs only).
+#   about             one line on what it does (docs and generated comments).
+#   link              how it is connected (docs only; default "CAN", cockpit "WiFi").
+#   role              "central" (logger and time master; exactly one) or
+#                     "cockpit" (off the bus, WiFi only; at most one).
+#   app               firmware project under car/nodes/ (default: <name>).
+#                     Nodes sharing an app get one plan array, indexed in id
+#                     order (the corner hubs).
+#   slots             acquisition slots in order. "name" takes the slot's
+#                     signals from the frames that name it, in frame order;
+#                     { name, signals = [...] } lists them (any order, or for
+#                     a node off the bus); add rate_hz when no frame says it.
+#   listen_all        receive every frame (the Central). Default false.
+#   health_period_ms  heartbeat period. Default 1000.
+#
+# [[frame]]           one per CAN data frame, sorted by id.
+#   id, name, sender, rate_hz
+#   slot              the sender's slot whose samples fill this frame.
+#   counter           true: 16-bit sample counter in bytes 6..7, dlc 8.
+#   signals           fields, packed from byte 0 in order:
+#                     { name, id, unit, enc, scale = 1.0, type = "f32", desc }
+#                     enc: i16 u16 u8 i32 u32. type: f32 i32 u32 bool status.
+#                     unit: none m_per_s2 rad_per_s deg_c rpm m_per_s percent
+#                     deg_e7 meter degree count microstrain unix_s bitmask.
+#
+# [[signal]]          signals that travel in no data frame (events).
+# [lora]              items = [[signal, min_interval_ms], ...]: the in-race
+#                     LoRa subset, in priority order.
+# [cockpit]           signals = [...]: what the Central sends the cockpit
+#                     display, in wire order.
+
+can_max = 10
+
+# --- Nodes (DAQ-WIRING.md section 4) -------------------------------------------------
+
+[node.imu]
+id = 1
+board = "ESP32-C5"
+about = "IMU Controller: the chassis IMU"
+slots = ["chassis"]
+
+[node.powertrain]
+id = 2
+board = "ESP32"
+about = "Powertrain Controller: fuel level, engine speed, CVT speed"
+slots = ["speeds", "fuel"]
+
+[node.driver_input]
+id = 3
+board = "ESP32"
+about = "Driver Input Controller: brake pedal, gas pedal, steering angle"
+slots = ["inputs"]
+
+[node.temperature]
+id = 4
+board = "ESP32"
+about = "Temperature Controller: four brake temperatures, CVT temperature"
+slots = ["brakes", "cvt"]
+
+[node.stress]
+id = 5
+board = "ESP32"
+about = "Stress Controller: stress sensors 1..8"
+slots = ["stress"]
+
+[node.central]
+id = 6
+board = "ESP32-C5"
+about = "Central Controller: logger, time master, LoRa, GPS, cockpit link"
+link = "CAN, pit/cockpit WiFi access point, LoRa, USB, BLE"
+role = "central"
+listen_all = true
+slots = [
+  { name = "gps", signals = ["GPS_LATITUDE", "GPS_LONGITUDE", "GPS_ALTITUDE", "GPS_SPEED",
+                             "GPS_COURSE", "GPS_FIX", "GPS_SATELLITES", "GPS_HDOP", "GPS_UTC"] },
+  "cockpit_status",
+]
+
+[node.corner_fl]
+id = 7
+board = "Mini ESP32-C5"
+about = "FL wheel hub: suspension IMU"
+app = "corner"
+slots = ["imu"]
+
+[node.corner_fr]
+id = 8
+board = "Mini ESP32-C5"
+about = "FR wheel hub: suspension IMU"
+app = "corner"
+slots = ["imu"]
+
+[node.corner_bl]
+id = 9
+board = "Mini ESP32-C5"
+about = "BL wheel hub: suspension IMU"
+app = "corner"
+slots = ["imu"]
+
+[node.corner_br]
+id = 10
+board = "Mini ESP32-C5"
+about = "BR wheel hub: suspension IMU"
+app = "corner"
+slots = ["imu"]
+
+[node.cockpit]
+id = 11
+board = "ESP32-C5"
+about = "Cockpit Controller: the driver's display, over WiFi"
+link = "WiFi to the Central"
+role = "cockpit"
+slots = [{ name = "battery", signals = ["COCKPIT_BATTERY"], rate_hz = 1 }]
+
+# --- Data frames (DAQ-WIRING.md section 7) -------------------------------------------
+# Scales marked TBD are provisional until the parts are chosen.
+
+[[frame]]
+id = 0x100
+name = "DRIVER_INPUTS"
+sender = "driver_input"
+slot = "inputs"
+rate_hz = 100
+counter = true
+signals = [ # pedals 0.01 %, steering 0.1 deg (TBD)
+  { name = "BRAKE_PEDAL",    id = 0x0100, unit = "percent", enc = "i16", scale = 0.01, desc = "Brake pedal compression" },
+  { name = "GAS_PEDAL",      id = 0x0101, unit = "percent", enc = "i16", scale = 0.01, desc = "Gas pedal compression" },
+  { name = "STEERING_ANGLE", id = 0x0102, unit = "degree",  enc = "i16", scale = 0.1,  desc = "Steering angle" },
+]
+
+[[frame]]
+id = 0x200
+name = "POWERTRAIN_SPEEDS"
+sender = "powertrain"
+slot = "speeds"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "ENGINE_RPM", id = 0x0200, unit = "rpm", enc = "u16", desc = "Engine speed" },
+  { name = "CVT_RPM",    id = 0x0201, unit = "rpm", enc = "u16", desc = "CVT speed" },
+]
+
+[[frame]]
+id = 0x201
+name = "FUEL_LEVEL"
+sender = "powertrain"
+slot = "fuel"
+rate_hz = 1
+signals = [ # 0.1 % (TBD)
+  { name = "FUEL_LEVEL", id = 0x0202, unit = "percent", enc = "i16", scale = 0.1, desc = "Fuel level, percent of usable tank" },
+]
+
+# IMUs: accel 0.01 m/s^2 (+/-327 m/s^2), gyro 0.001 rad/s (+/-32.7 rad/s). Each wheel hub sends
+# its own suspension IMU; the IMU Controller sends the chassis IMU. Values are sensor-frame.
+
+[[frame]]
+id = 0x300
+name = "IMU_FL_ACCEL"
+sender = "corner_fl"
+slot = "imu"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_FL_ACCEL_X", id = 0x0300, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "FL suspension IMU acceleration, sensor X" },
+  { name = "IMU_FL_ACCEL_Y", id = 0x0301, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "FL suspension IMU acceleration, sensor Y" },
+  { name = "IMU_FL_ACCEL_Z", id = 0x0302, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "FL suspension IMU acceleration, sensor Z" },
+]
+
+[[frame]]
+id = 0x301
+name = "IMU_FL_GYRO"
+sender = "corner_fl"
+slot = "imu"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_FL_GYRO_X", id = 0x0303, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "FL suspension IMU angular rate, sensor X" },
+  { name = "IMU_FL_GYRO_Y", id = 0x0304, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "FL suspension IMU angular rate, sensor Y" },
+  { name = "IMU_FL_GYRO_Z", id = 0x0305, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "FL suspension IMU angular rate, sensor Z" },
+]
+
+[[frame]]
+id = 0x302
+name = "IMU_FR_ACCEL"
+sender = "corner_fr"
+slot = "imu"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_FR_ACCEL_X", id = 0x0306, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "FR suspension IMU acceleration, sensor X" },
+  { name = "IMU_FR_ACCEL_Y", id = 0x0307, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "FR suspension IMU acceleration, sensor Y" },
+  { name = "IMU_FR_ACCEL_Z", id = 0x0308, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "FR suspension IMU acceleration, sensor Z" },
+]
+
+[[frame]]
+id = 0x303
+name = "IMU_FR_GYRO"
+sender = "corner_fr"
+slot = "imu"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_FR_GYRO_X", id = 0x0309, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "FR suspension IMU angular rate, sensor X" },
+  { name = "IMU_FR_GYRO_Y", id = 0x030A, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "FR suspension IMU angular rate, sensor Y" },
+  { name = "IMU_FR_GYRO_Z", id = 0x030B, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "FR suspension IMU angular rate, sensor Z" },
+]
+
+[[frame]]
+id = 0x304
+name = "IMU_BL_ACCEL"
+sender = "corner_bl"
+slot = "imu"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_BL_ACCEL_X", id = 0x030C, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "BL suspension IMU acceleration, sensor X" },
+  { name = "IMU_BL_ACCEL_Y", id = 0x030D, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "BL suspension IMU acceleration, sensor Y" },
+  { name = "IMU_BL_ACCEL_Z", id = 0x030E, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "BL suspension IMU acceleration, sensor Z" },
+]
+
+[[frame]]
+id = 0x305
+name = "IMU_BL_GYRO"
+sender = "corner_bl"
+slot = "imu"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_BL_GYRO_X", id = 0x030F, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "BL suspension IMU angular rate, sensor X" },
+  { name = "IMU_BL_GYRO_Y", id = 0x0310, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "BL suspension IMU angular rate, sensor Y" },
+  { name = "IMU_BL_GYRO_Z", id = 0x0311, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "BL suspension IMU angular rate, sensor Z" },
+]
+
+[[frame]]
+id = 0x306
+name = "IMU_BR_ACCEL"
+sender = "corner_br"
+slot = "imu"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_BR_ACCEL_X", id = 0x0312, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "BR suspension IMU acceleration, sensor X" },
+  { name = "IMU_BR_ACCEL_Y", id = 0x0313, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "BR suspension IMU acceleration, sensor Y" },
+  { name = "IMU_BR_ACCEL_Z", id = 0x0314, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "BR suspension IMU acceleration, sensor Z" },
+]
+
+[[frame]]
+id = 0x307
+name = "IMU_BR_GYRO"
+sender = "corner_br"
+slot = "imu"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_BR_GYRO_X", id = 0x0315, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "BR suspension IMU angular rate, sensor X" },
+  { name = "IMU_BR_GYRO_Y", id = 0x0316, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "BR suspension IMU angular rate, sensor Y" },
+  { name = "IMU_BR_GYRO_Z", id = 0x0317, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "BR suspension IMU angular rate, sensor Z" },
+]
+
+[[frame]]
+id = 0x308
+name = "IMU_CH_ACCEL"
+sender = "imu"
+slot = "chassis"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_CH_ACCEL_X", id = 0x0318, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "Chassis IMU acceleration, sensor X" },
+  { name = "IMU_CH_ACCEL_Y", id = 0x0319, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "Chassis IMU acceleration, sensor Y" },
+  { name = "IMU_CH_ACCEL_Z", id = 0x031A, unit = "m_per_s2", enc = "i16", scale = 0.01, desc = "Chassis IMU acceleration, sensor Z" },
+]
+
+[[frame]]
+id = 0x309
+name = "IMU_CH_GYRO"
+sender = "imu"
+slot = "chassis"
+rate_hz = 100
+counter = true
+signals = [
+  { name = "IMU_CH_GYRO_X", id = 0x031B, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "Chassis IMU angular rate, sensor X" },
+  { name = "IMU_CH_GYRO_Y", id = 0x031C, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "Chassis IMU angular rate, sensor Y" },
+  { name = "IMU_CH_GYRO_Z", id = 0x031D, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "Chassis IMU angular rate, sensor Z" },
+]
+
+# Stress: whole microstrain (TBD). Where each sensor sits is session config.
+
+[[frame]]
+id = 0x400
+name = "STRESS_1_4"
+sender = "stress"
+slot = "stress"
+rate_hz = 100
+signals = [
+  { name = "STRESS_1", id = 0x0400, unit = "microstrain", enc = "i16", desc = "Stress sensor 1" },
+  { name = "STRESS_2", id = 0x0401, unit = "microstrain", enc = "i16", desc = "Stress sensor 2" },
+  { name = "STRESS_3", id = 0x0402, unit = "microstrain", enc = "i16", desc = "Stress sensor 3" },
+  { name = "STRESS_4", id = 0x0403, unit = "microstrain", enc = "i16", desc = "Stress sensor 4" },
+]
+
+[[frame]]
+id = 0x401
+name = "STRESS_5_8"
+sender = "stress"
+slot = "stress"
+rate_hz = 100
+signals = [
+  { name = "STRESS_5", id = 0x0404, unit = "microstrain", enc = "i16", desc = "Stress sensor 5" },
+  { name = "STRESS_6", id = 0x0405, unit = "microstrain", enc = "i16", desc = "Stress sensor 6" },
+  { name = "STRESS_7", id = 0x0406, unit = "microstrain", enc = "i16", desc = "Stress sensor 7" },
+  { name = "STRESS_8", id = 0x0407, unit = "microstrain", enc = "i16", desc = "Stress sensor 8" },
+]
+
+# Temperatures: 0.1 degC.
+
+[[frame]]
+id = 0x500
+name = "BRAKE_TEMPS"
+sender = "temperature"
+slot = "brakes"
+rate_hz = 10
+signals = [
+  { name = "TEMP_BRAKE_FL", id = 0x0500, unit = "deg_c", enc = "i16", scale = 0.1, desc = "FL brake temperature" },
+  { name = "TEMP_BRAKE_FR", id = 0x0501, unit = "deg_c", enc = "i16", scale = 0.1, desc = "FR brake temperature" },
+  { name = "TEMP_BRAKE_BL", id = 0x0502, unit = "deg_c", enc = "i16", scale = 0.1, desc = "BL brake temperature" },
+  { name = "TEMP_BRAKE_BR", id = 0x0503, unit = "deg_c", enc = "i16", scale = 0.1, desc = "BR brake temperature" },
+]
+
+[[frame]]
+id = 0x501
+name = "CVT_TEMP"
+sender = "temperature"
+slot = "cvt"
+rate_hz = 10
+signals = [
+  { name = "TEMP_CVT", id = 0x0504, unit = "deg_c", enc = "i16", scale = 0.1, desc = "CVT temperature" },
+]
+
+# Central: GPS (any NMEA receiver, WGS84) and the cockpit link.
+
+[[frame]]
+id = 0x600
+name = "GPS_POSITION"
+sender = "central"
+slot = "gps"
+rate_hz = 10
+signals = [
+  { name = "GPS_LATITUDE",  id = 0x0600, type = "i32", unit = "deg_e7", enc = "i32", desc = "Latitude, 1e-7 degree" },
+  { name = "GPS_LONGITUDE", id = 0x0601, type = "i32", unit = "deg_e7", enc = "i32", desc = "Longitude, 1e-7 degree" },
+]
+
+[[frame]]
+id = 0x601
+name = "GPS_MOTION"
+sender = "central"
+slot = "gps"
+rate_hz = 10
+counter = true
+signals = [
+  { name = "GPS_SPEED",    id = 0x0603, unit = "m_per_s", enc = "u16", scale = 0.01, desc = "Ground speed" },
+  { name = "GPS_COURSE",   id = 0x0604, unit = "degree",  enc = "u16", scale = 0.01, desc = "Course over ground, true north" },
+  { name = "GPS_ALTITUDE", id = 0x0602, unit = "meter",   enc = "i16", scale = 0.1,  desc = "Altitude above mean sea level" },
+]
+
+[[frame]]
+id = 0x602
+name = "GPS_STATUS"
+sender = "central"
+slot = "gps"
+rate_hz = 10
+signals = [
+  { name = "GPS_UTC",        id = 0x0608, type = "u32",    unit = "unix_s", enc = "u32",  desc = "UTC time of fix, Unix seconds (wall-clock anchor only)" },
+  { name = "GPS_FIX",        id = 0x0605, type = "status", unit = "none",   enc = "u8",   desc = "Fix type: 0 none, 1 dead reckoning, 2 2D, 3 3D" },
+  { name = "GPS_SATELLITES", id = 0x0606, type = "u32",    unit = "count",  enc = "u8",   desc = "Satellites used in fix" },
+  { name = "GPS_HDOP",       id = 0x0607, unit = "none",   enc = "u16",     scale = 0.01, desc = "Horizontal dilution of precision" },
+]
+
+[[frame]]
+id = 0x60A
+name = "COCKPIT_STATUS"
+sender = "central"
+slot = "cockpit_status"
+rate_hz = 1
+signals = [
+  { name = "COCKPIT_BATTERY", id = 0x0610, unit = "percent", enc = "u8", desc = "Cockpit display battery" },
+  { name = "COCKPIT_LINK",    id = 0x0611, type = "bool", unit = "none", enc = "u8", desc = "Cockpit display WiFi link OK" },
+]
+
+# --- Signals outside the data frames -------------------------------------------------
+# Events and faults travel in the EVENT / FAULT system frames of any node.
+# Value: code in bits 0..15, argument in bits 16..31.
+
+[[signal]]
+name = "EVENT"
+id = 0x0700
+type = "status"
+unit = "none"
+desc = "Event code (see lbr_event_code_t)"
+
+[[signal]]
+name = "FAULT"
+id = 0x0701
+type = "status"
+unit = "none"
+desc = "Fault/alarm code (see lbr_event_code_t)"
+
+# --- Live links ----------------------------------------------------------------------
+
+[lora]
+items = [
+  ["ENGINE_RPM", 500], ["CVT_RPM", 500], ["GPS_SPEED", 1000],
+  ["TEMP_CVT", 1000], ["TEMP_BRAKE_FL", 2000], ["TEMP_BRAKE_FR", 2000],
+  ["TEMP_BRAKE_BL", 2000], ["TEMP_BRAKE_BR", 2000], ["FUEL_LEVEL", 5000],
+  ["GPS_LATITUDE", 2000], ["GPS_LONGITUDE", 2000], ["GPS_FIX", 5000],
+  ["COCKPIT_BATTERY", 10000],
+]
+
+[cockpit]
+signals = [
+  "ENGINE_RPM", "CVT_RPM", "GPS_SPEED", "FUEL_LEVEL", "TEMP_CVT", "TEMP_BRAKE_FL",
+  "TEMP_BRAKE_FR", "TEMP_BRAKE_BL", "TEMP_BRAKE_BR", "BRAKE_PEDAL", "GAS_PEDAL", "FAULT",
+]
