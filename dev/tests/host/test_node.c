@@ -1,4 +1,5 @@
 #include "lbr/acq.h"
+#include "lbr/driver.h"
 #include "lbr/node.h"
 #include "lbr/node_table.h"
 #include "lbr/nodes.h"
@@ -377,6 +378,81 @@ static void test_node_table_missing(void)
     CHECK_EQ_U(total, expect + 1); /* stress was not heard this time */
 }
 
+/* The driver kit: a part driver is two functions on app-owned state; channels
+ * it leaves unset read NO_DATA; a channel-count mismatch is a config error. */
+typedef struct {
+    int   starts;
+    float rpm;
+    bool  fail_read;
+} fake_part_t;
+
+static int fake_start(void *self)
+{
+    ((fake_part_t *)self)->starts++;
+    return 0;
+}
+
+static int fake_read(void *self, lbr_channels *ch)
+{
+    fake_part_t *p = self;
+    if (p->fail_read) {
+        return -1;
+    }
+    lbr_ch_f32(ch, 0, p->rpm); /* channel 1 deliberately left unset */
+    lbr_ch_f32(ch, 7, 1.0f);   /* out of range: ignored */
+    return lbr_ch_count(ch) == 2 && lbr_ch_time_us(ch) == 5000u ? 0 : -2;
+}
+
+static const lbr_driver k_fake_driver = {
+    .part = "fake_tach", .channels = 2, .start = fake_start, .read = fake_read};
+static const lbr_driver k_one_channel = {
+    .part = "one", .channels = 1, .start = fake_start, .read = fake_read};
+
+static void test_driver_kit(void)
+{
+    static const lbr_signal_id_t sig[]   = {LBR_SIG_ENGINE_RPM, LBR_SIG_CVT_RPM};
+    static const lbr_slot_t      slots[] = {
+        {.name = "speeds", .signals = sig, .n_signals = 2, .rate_hz = 100}};
+    static const lbr_node_plan_t plan = {
+        .node_id = LBR_NODE_POWERTRAIN, .slots = slots, .n_slots = 1, .health_period_ms = 1000};
+    lbr_sensor_t      sensors[1];
+    lbr_acq_t         acq[1];
+    lbr_node_config_t cfg;
+    char              err[128];
+    fake_part_t       part = {.rpm = 3100.0f};
+
+    lbr_node_build(&plan, lbr_sensor_unconfigured, sensors, acq, &cfg);
+    lbr_node node = {.plan = &plan, .cfg = &cfg, .sensors = sensors};
+    lbr_bind(&node, 0, &k_fake_driver, &part);
+    CHECK(cfg.app_error == NULL);
+    CHECK_EQ_I(lbr_node_config_validate(&cfg, err, sizeof err), 0);
+    CHECK(strcmp(sensors[0].name, "speeds") == 0);
+    CHECK(strcmp(sensors[0].params, "fake_tach") == 0);
+
+    CHECK_EQ_I(sensors[0].init(&sensors[0]), 0);
+    CHECK_EQ_I(part.starts, 1);
+    lbr_reading_t out[2];
+    CHECK_EQ_I(sensors[0].read(&sensors[0], 5000u, out), 0);
+    CHECK(out[0].valid && out[0].v.f32 == 3100.0f);
+    CHECK(!out[1].valid);
+    CHECK_EQ_U(out[1].reason, LBR_UNAVAIL_NO_DATA);
+    part.fail_read = true;
+    CHECK(sensors[0].read(&sensors[0], 5000u, out) < 0);
+
+    /* Wrong channel count, or an incomplete driver: the node says why. */
+    lbr_node_build(&plan, lbr_sensor_unconfigured, sensors, acq, &cfg);
+    node = (lbr_node){.plan = &plan, .cfg = &cfg, .sensors = sensors};
+    lbr_bind(&node, 0, &k_one_channel, &part);
+    CHECK(lbr_node_config_validate(&cfg, err, sizeof err) != 0);
+    CHECK(strstr(err, "channel count") != NULL);
+
+    lbr_node_build(&plan, lbr_sensor_unconfigured, sensors, acq, &cfg);
+    node = (lbr_node){.plan = &plan, .cfg = &cfg, .sensors = sensors};
+    lbr_bind(&node, 0, NULL, &part);
+    CHECK(lbr_node_config_validate(&cfg, err, sizeof err) != 0);
+    CHECK(strstr(err, "incomplete") != NULL);
+}
+
 int main(void)
 {
     RUN(test_value_table);
@@ -389,5 +465,6 @@ int main(void)
     RUN(test_node_table);
     RUN(test_app_slot_binding);
     RUN(test_node_table_missing);
+    RUN(test_driver_kit);
     TEST_MAIN_END();
 }

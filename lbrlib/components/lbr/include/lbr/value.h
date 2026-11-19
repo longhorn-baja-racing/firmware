@@ -15,7 +15,7 @@
  *
  *     lbr_f32 ratio = lbr_div(engine_rpm, cvt_rpm);   // status flows through
  *     if (lbr_ok(ratio)) { ... ratio.v ... }
- *     float shown = lbr_or(ratio, 0.0f);              // a default, said out loud
+ *     float shown = lbr_or_else(ratio, 0.0f);         // a default, said out loud
  *
  * Arithmetic propagates the first operand's problem (or the second's), like
  * NaN, but you can ask why. Results that would be NaN or infinite become
@@ -93,7 +93,7 @@ static inline lbr_f32 lbr_f32_missing(lbr_status st)
 
 /* x's value, or `fallback` when x is unavailable. The fallback is explicit on
  * purpose: choosing what "unknown" means is the caller's decision. */
-#define lbr_or(x, fallback) (lbr_ok(x) ? (x).v : (fallback))
+#define lbr_or_else(x, fallback) (lbr_ok(x) ? (x).v : (fallback))
 
 /* Arithmetic on lbr_f32. */
 [[nodiscard]] lbr_f32 lbr_add(lbr_f32 a, lbr_f32 b);
@@ -110,6 +110,46 @@ static inline lbr_f32 lbr_f32_missing(lbr_status st)
 /* Comparisons give an lbr_bool that is unavailable when an input is. */
 [[nodiscard]] lbr_bool lbr_gt(lbr_f32 a, float limit);
 [[nodiscard]] lbr_bool lbr_lt(lbr_f32 a, float limit);
+
+/*
+ * Alarms with hysteresis, so a value hovering at a limit does not flicker.
+ * `state` is the alarm's memory (a static bool).
+ *
+ *   lbr_above: on once x rises above `on`, off again once it falls below `off`
+ *              (off < on), e.g. lbr_above(&hot, temp, 110.0f, 100.0f).
+ *   lbr_below: on once x falls below `on`, off again once it rises above `off`
+ *              (off > on), e.g. lbr_below(&low, oil_bar, 0.8f, 1.0f).
+ *
+ * While x is unavailable the result is unavailable too, with x's status (an
+ * alarm that cannot be evaluated is unknown, never "off"), and the alarm
+ * keeps its state for when x returns.
+ */
+[[nodiscard]] lbr_bool lbr_above(bool *state, lbr_f32 x, float on, float off);
+[[nodiscard]] lbr_bool lbr_below(bool *state, lbr_f32 x, float on, float off);
+
+/*
+ * Logic on lbr_bool that only claims what it knows: lbr_and is false (and OK)
+ * as soon as either side is known false, lbr_or is true (and OK) as soon as
+ * either side is known true; otherwise an unavailable side makes the result
+ * unavailable, with that side's status.
+ */
+[[nodiscard]] lbr_bool lbr_and(lbr_bool a, lbr_bool b);
+[[nodiscard]] lbr_bool lbr_or(lbr_bool a, lbr_bool b);
+[[nodiscard]] lbr_bool lbr_not(lbr_bool a);
+
+/* A filter's memory: declare one as `static lbr_filter f;` (zero = empty). */
+typedef struct {
+    float v;
+    bool  primed;
+} lbr_filter;
+
+/*
+ * First-order low-pass: v += alpha * (x - v), alpha in (0, 1] (smaller is
+ * smoother); the first value primes it. An unavailable x passes its status
+ * through and empties the filter, so it restarts from the next good value
+ * instead of blending old data with new.
+ */
+[[nodiscard]] lbr_f32 lbr_lowpass(lbr_filter *f, lbr_f32 x, float alpha);
 
 /* An lbr_i32 as an lbr_f32 (same status and age). */
 [[nodiscard]] lbr_f32 lbr_i32_to_f32(lbr_i32 a);

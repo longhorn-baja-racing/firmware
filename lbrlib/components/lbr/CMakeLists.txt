@@ -1,9 +1,9 @@
-# LBRLib's app-facing API: values with status (value.c, pure) and the umbrella
-# header <lbr/lbr.h>.
+# LBRLib's app-facing API (all pure): values with status (value.c), car logic tasks
+# and outputs (logic.c), and the umbrella header lbr.h.
 idf_component_register(
-    SRCS "value.c"
+    SRCS "value.c" "logic.c"
     INCLUDE_DIRS "include"
-    REQUIRES protocol
+    REQUIRES protocol node util
 )
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/warnings.cmake")
 lbr_apply_warnings(${COMPONENT_LIB})

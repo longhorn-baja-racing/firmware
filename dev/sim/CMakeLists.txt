@@ -1,7 +1,7 @@
 # Car simulator: the real firmware logic (lbr_core, the node plans) on a
 # simulated car. Scenarios in scenarios/ run as CTest tests.
 add_executable(lbr_sim main.c sim.c vbus.c world.c)
-target_link_libraries(lbr_sim PRIVATE lbr_plans lbr_core m)
+target_link_libraries(lbr_sim PRIVATE lbr_plans lbr_car_logic lbr_core m)
 lbr_apply_warnings(lbr_sim)
 
 file(GLOB LBR_SIM_SCENARIOS CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/scenarios/*.sim")

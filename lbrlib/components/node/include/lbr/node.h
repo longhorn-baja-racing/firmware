@@ -115,6 +115,18 @@ typedef struct {
 lbr_sensor_t *lbr_slot(lbr_node *n, size_t slot);
 
 /*
+ * Run slot `slot` with part driver `drv` (lbr/driver.h) and its state `self`,
+ * which must outlive the node (make it static):
+ *
+ *     static pressure_t brake_line = {.adc_pin = 34};
+ *     lbr_bind(n, BRAKES_SLOT_LINE, &pressure_driver, &brake_line);
+ *
+ * A driver whose channel count differs from the slot's, a slot bound twice,
+ * or one the plan lacks makes the configuration invalid with the reason.
+ */
+void lbr_bind(lbr_node *n, size_t slot, const struct lbr_driver *drv, void *self);
+
+/*
  * Check a plan against the frame table. `can` is true for nodes that
  * transmit on CAN (their slot signals must travel in frames they send, at
  * the slot rate, all fields from that slot); false for the cockpit, which

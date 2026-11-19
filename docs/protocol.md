@@ -136,6 +136,8 @@ crc32  := CRC-32/IEEE over type, flags, len, payload
 | 0x05 | `LOSS` | `dropped_records u32, dropped_bytes u32, t_us u64` |
 | 0x06 | `TEXT` | ASCII diagnostic text (firmware log lines) |
 | 0x07 | `END` | `t_us u64, records_written u32` (clean close) |
+| 0x20 | `KEY` | car logic output name; see "Car logic outputs" |
+| 0x21 | `VALUE` | one car logic output value; see "Car logic outputs" |
 
 `SESSION` payload: `format_version u16, protocol_version u16, fw_version u32, catalog_hash u32,
 config_crc u32, node_id u8, reset_reason u8, reserved u16, boot_count u32, start_time_us u64`,
@@ -158,6 +160,33 @@ record with the exact count is written ahead of the next record that fits.
 
 Session files are `/sdcard/lbr/NNNNNNNN.LBR`, numbered upward per boot; the firmware never
 formats a card or overwrites a session.
+
+### Car logic outputs
+
+The Central's car logic (`car/logic/`, LBRLib `lbr/logic.h`) writes derived values, such as the
+CVT ratio and overheat alarms, into the same log as the raw frames, and onto the USB/WiFi live
+stream. An output has a numeric id within a session, announced by a `KEY` record before its first
+value and re-sent every second (so a file reopened after an SD error, or a viewer joining late,
+can name it):
+
+| Record | Payload |
+| --- | --- |
+| `KEY` (0x20) | `key_id u16, value_type u8, unit u8, key[len - 4]` (ASCII, no NUL; `Group/Name`, no spaces, commas, or quotes; at most 48 bytes) |
+| `VALUE` (0x21) | `t_us u64` (shared time), `key_id u16, status u8, value u32` (15 bytes) |
+
+`value_type` is `f32` or `bool` (the value type numbers of the catalog), `unit` a catalog unit.
+`status` is 0 for a valid value; otherwise the value is 0 and `status` says why it is missing:
+
+| status | name | meaning |
+| ---: | --- | --- |
+| 0 | `OK` | valid |
+| 1..7 | `UNSPECIFIED`, `NOT_FITTED`, `NO_DATA`, `SENSOR_FAULT`, `OUT_OF_RANGE`, `NOT_CALIBRATED`, `BUS_ERROR` | an input's sensor reported it (same meaning as the unavailable reasons) |
+| 8 | `STALE` | an input stopped updating (no new value for 3 of its frame periods) |
+| 9 | `NODE_LOST` | an input's node dropped off the bus |
+| 10 | `NODE_MISSING` | an input's node was never heard this session |
+| 11 | `BAD_MATH` | division by zero, or a NaN / infinite result |
+
+An unknown `key_id` (its `KEY` record lost) decodes as `key<N>`.
 
 ## CSV export (lbr-csv version 1)
 
@@ -196,6 +225,7 @@ Columns, in this order, with a header row:
 | `can_raw` | any other frame (unknown id, wrong length, extended id): `name` = id, `value` = data (hex) |
 | `loss` | LOSS records: `dropped_records`, `dropped_bytes` |
 | `text`, `end` | TEXT records; the END record's `records_written` |
+| `output` | a car logic output (`VALUE` record): `node` = the logger, `name` = key (`CVT/Ratio`), `value` = number (`bool`: 0/1), `status` = `ok` or why it is missing (`NODE_LOST`, `STALE`, ...), `synced` = 1 |
 | `unknown_record` | a record type this decoder does not know: `name` = type, `value` = payload (hex) |
 | `integrity` | last rows: `records`, `corrupt_regions`, `skipped_bytes`, `truncated_tail`, `time_sync_frames`, `time_follow_up_frames`, `update_data_frames` (counted, not listed), `catalog_checked` |
 

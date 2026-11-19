@@ -54,6 +54,12 @@ const lbr_signal_info_t *lbr_signal_at(size_t index)
     return index < CATALOG_LEN ? &s_catalog[index] : NULL;
 }
 
+size_t lbr_signal_index(lbr_signal_id_t id)
+{
+    const lbr_signal_info_t *s = lbr_signal_info(id);
+    return s != NULL ? (size_t)(s - s_catalog) : SIZE_MAX;
+}
+
 const char *lbr_unit_name(lbr_unit_t unit)
 {
     static const char *const names[LBR_UNIT_COUNT_] = {

@@ -1,0 +1,32 @@
+# Car logic on the Central (car/logic): derived outputs follow the car, say
+# why when their inputs are gone, and alarms neither flicker nor clear when
+# their sensor goes away.
+at 0.0  drive race
+at 4.0  expect out:CVT/Ratio valid == 1
+at 4.0  expect out:CVT/Ratio value > 0.5
+at 4.0  expect out:Engine/Running value == 1
+at 4.0  expect out:Vehicle/SpeedKph valid == 1
+at 4.0  expect out:Alarms/CvtOverheat value == 0
+
+# The CVT overheats: alarm on above 110, still on at 105, off below 100. With
+# its sensor open-circuit the alarm is unknown (with the reason), never "off".
+at 4.0  set TEMP_CVT 120
+at 5.0  expect out:Alarms/CvtOverheat value == 1
+at 5.0  set TEMP_CVT 105
+at 6.0  expect out:Alarms/CvtOverheat value == 1
+at 6.0  set TEMP_CVT 120
+at 7.0  open TEMP_CVT
+at 8.0  expect out:Alarms/CvtOverheat status == SENSOR_FAULT
+at 8.0  close TEMP_CVT
+at 8.0  set TEMP_CVT 90
+at 9.0  expect out:Alarms/CvtOverheat value == 0
+at 9.0  auto TEMP_CVT
+
+# The powertrain node drops off the bus: the ratio says why it is missing.
+at 9.0  disconnect powertrain
+at 13.0 expect out:CVT/Ratio status == NODE_LOST
+at 13.0 expect out:Engine/Running status == NODE_LOST
+at 13.0 connect powertrain
+at 15.0 expect out:CVT/Ratio valid == 1
+at 15.0 expect log intact == 1
+end 15.0

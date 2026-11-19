@@ -45,7 +45,8 @@
 #define SIM_JOB_STREAM  (SIM_MAX_SLOTS + 3) /* Central: USB/WiFi batch */
 #define SIM_JOB_LORA    (SIM_MAX_SLOTS + 4) /* Central: LoRa */
 #define SIM_JOB_COCKPIT (SIM_MAX_SLOTS + 5) /* Central: cockpit datagram */
-#define SIM_JOB_COUNT   (SIM_MAX_SLOTS + 6)
+#define SIM_JOB_LOGIC   (SIM_MAX_SLOTS + 6) /* Central: car logic tick */
+#define SIM_JOB_COUNT   (SIM_MAX_SLOTS + 7)
 
 typedef struct sim sim_t;
 
@@ -328,6 +329,7 @@ typedef enum {
     EV_GW_LORA,
     EV_GW_PUMP,
     EV_GW_COCKPIT,
+    EV_GW_LOGIC,
     EV_BUS,
     EV_BUS_OFF_END,
     EV_WORLD,

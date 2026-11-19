@@ -102,6 +102,7 @@ names (`ENGINE_RPM`, `IMU_FL_ACCEL_Z`, ...).
 | `central` | node metrics, plus `frames_logged`, `log_dropped`, `usb_pkts`, `lora_pkts`, `cockpit_pkts`, `sync_fail` |
 | `log` | `intact` (1 if the Central's current session file reads back with no corruption), `frames` |
 | a signal | `valid`, `value`, `age_ms`, `reason` (NONE, NOT_FITTED, NO_DATA, SENSOR_FAULT, OUT_OF_RANGE, ...), as a log reader decodes it from the bus |
+| `out:<key>`, a car logic output (`out:CVT/Ratio`) | `valid`, `value`, `status` (OK, NEVER, NODE_LOST, STALE, SENSOR_FAULT, ...), as the Central last wrote it |
 
 ## Scenarios
 
