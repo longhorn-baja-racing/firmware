@@ -30,7 +30,8 @@ LBR_TASK(brakes, .rate_hz = 10, .periodic = brakes_periodic);
 
 1. Write it in its own file in `car/logic/` (`#include "car_logic.h"`).
 2. Declare it in `car/logic/include/car_logic.h`: `extern const lbr_task brakes;`
-3. Add it to `car_tasks[]` in `car/logic/tasks.c`. Tasks run in that order each tick.
+3. Add it to the list in `car/logic/tasks.c`; tasks run in that order each tick:
+   `const lbr_task_list car_logic = LBR_TASK_LIST(&vehicle, &cvt, &brakes, &oil);`
 4. Add the file to `SRCS` in `car/logic/CMakeLists.txt` (the host build picks it up by itself).
 
 `ctest` checks the task list (`test_plans`), and the simulator runs it: add a scenario with

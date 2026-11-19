@@ -44,31 +44,46 @@ signals = [
 ]
 ```
 
-and give the powertrain node that slot: `slots = ["speeds", "fuel", "oil"]`. Then regenerate:
+and give the powertrain node that slot. The sender is a plain voltage on an ADC pin, so the slot
+is read by on-chip inputs:
+
+```toml
+slots = [
+  { name = "speeds", input = "io", hint = "pulse inputs (pickup or hall sensor)" },
+  { name = "fuel", input = "io", hint = "an adc input (fuel sender)" },
+  { name = "oil", input = "io", hint = "an adc input (0.5..4.5 V pressure sender)" },
+]
+```
+
+Then regenerate:
 
 ```sh
 python3 lbrlib/tools/lbrgen.py car/catalog.toml
 ```
 
 The generator checks your entry (unique ids, the fields fit the frame, the rate divides one
-second, the slot exists) and rewrites the generated C, the powertrain's plan, and the tables in
-`docs/can-ids.md`. Build and run `ctest` again: `test_plans` checks the whole bus still fits its
+second, the slot exists) and rewrites the generated C, the powertrain's plan, its menuconfig
+settings (`main/Kconfig`, now with `CONFIG_LBR_IO_OIL`), and the tables in `docs/can-ids.md`. Build and run `ctest` again: `test_plans` checks the whole bus still fits its
 bandwidth budget. (A real catalog change also means regenerating the golden fixtures and
 updating the dashboard app; see [the catalog](catalog.md).)
 
-The powertrain now publishes `OIL_PRESSURE`, reporting `NOT_FITTED` until you bind a part.
+The powertrain now publishes `OIL_PRESSURE`, reporting `NOT_FITTED` until its input is set.
 
 ## 4. Read it: no code, or a driver
 
-If the sender is a plain voltage on an ADC pin, you need no code at all: set the slot's input in
-`menuconfig` (`CONFIG_LBR_IO_OIL`, see [drivers](drivers.md#inputs-that-need-no-code)) and bind it in
-`car/nodes/powertrain/main/main.c`:
+For an ADC, pulse, or switch input you write no code at all. Set the pin and calibration in
+`idf.py menuconfig` (menu "LBR powertrain inputs", `CONFIG_LBR_IO_OIL`):
 
-```c
-lbr_bind_io(n, POWERTRAIN_SLOT_OIL, CONFIG_LBR_IO_OIL);
+```text
+adc gpio=35 mv0=500 v0=0 mv1=4500 v1=10 lo=300 hi=4700
 ```
 
-For a part with its own protocol, write a driver: two functions and a table.
+The powertrain binds it by itself at boot; `main.c` stays `LBR_NODE_MAIN(&lbr_plan_powertrain);`.
+An open or shorted sender reads `SENSOR_FAULT` (outside `lo`..`hi`). See
+[drivers](drivers.md#inputs-that-need-no-code).
+
+For a part with its own protocol (I2C, SPI, a UART), leave `input` out of the slot and write a
+driver: two functions and a table.
 
 ```c
 typedef struct { int pin; } oil_sender_t;
@@ -95,6 +110,8 @@ static void init(lbr_node *n)
 {
     lbr_bind(n, POWERTRAIN_SLOT_OIL, &oil_sender, &oil);
 }
+
+LBR_NODE_MAIN(&lbr_plan_powertrain, .init = init);
 ```
 
 The library samples it at 10 Hz on the shared clock, sequences it, packs it into frame 0x202,
@@ -125,7 +142,7 @@ LBR_TASK(oil, .rate_hz = 10, .periodic = oil_periodic);
 If the engine is known to be off, the alarm is a plain "no". If the oil sensor or the
 powertrain board is gone while the engine runs, the alarm is logged as unknown, with the
 reason, never as "fine". Declare the task in `car/logic/include/car_logic.h` (`extern const lbr_task oil;`), add `&oil` to
-`car/logic/tasks.c`, and add `"oil.c"` to `car/logic/CMakeLists.txt`. Done: the Central runs it,
+the `LBR_TASK_LIST` in `car/logic/tasks.c`, and add `"oil.c"` to `car/logic/CMakeLists.txt`. Done: the Central runs it,
 and `Alarms/LowOil` is in every log from now on. See [car logic](logic.md).
 
 ## 6. Test it in the simulator

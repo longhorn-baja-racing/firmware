@@ -25,6 +25,7 @@ static const lbr_slot_t k_slots[CENTRAL_SLOT_COUNT] = {
             .signals   = k_gps,
             .n_signals = sizeof k_gps / sizeof k_gps[0],
             .rate_hz   = 10,
+            .input     = LBR_INPUT_GPS,
         },
     [CENTRAL_SLOT_COCKPIT_STATUS] =
         {
@@ -32,6 +33,7 @@ static const lbr_slot_t k_slots[CENTRAL_SLOT_COUNT] = {
             .signals   = k_cockpit_status,
             .n_signals = sizeof k_cockpit_status / sizeof k_cockpit_status[0],
             .rate_hz   = 1,
+            .input     = LBR_INPUT_COCKPIT_LINK,
         },
 };
 

@@ -8,17 +8,27 @@ Everything app code uses comes in with one include:
 
 Headers are in `lbrlib/components/*/include/lbr/`; each has the full contract in its comments.
 
-## Sensor node apps (`lbr/node_app.h`, `lbr/node.h`)
+## Board apps (the roles)
 
 | | |
 | --- | --- |
-| `LBR_NODE_MAIN(&lbr_plan_<node>, .init = fn)` | the node's whole `app_main`: build, bind (`init`), validate, run. Also `.on_frame`, `.on_frame_ctx` for `listen_all` plans |
-| `void init(lbr_node *n)` | your setup function: bind parts to slots |
+| `LBR_NODE_MAIN(&lbr_plan_<node>, .init = fn)` | a sensor node's whole `app_main` (`lbr/node_app.h`). `io` slots bind by themselves; `init` binds part drivers. Also `.on_frame`, `.on_frame_ctx` for `listen_all` plans |
+| `LBR_CENTRAL_MAIN(&lbr_plan_central, .logic = &list)` | the Central's whole `app_main` (`lbr/central_app.h`) |
+| `LBR_COCKPIT_MAIN(&lbr_plan_cockpit, .display = &drv)` | the cockpit's whole `app_main` (`lbr/cockpit_app.h`) |
+| `lbr_display {panel, start, render, period_ms}` | a cockpit display driver |
+| `void init(lbr_node *n)` | your setup function: bind part drivers to slots |
 | `lbr_bind(n, SLOT, &driver, &state)` | run a slot with a part driver; `state` must outlive the node |
-| `lbr_bind_io(n, SLOT, spec)` | run a slot with the configurable ADC/pulse/switch inputs; empty spec = unbound |
 | `lbr_slot(n, SLOT)` | a slot's raw `lbr_sensor_t` (NULL, and the config invalid, if bound twice or out of range) |
 | `lbr_node_emit_event(code, arg, fault)` | publish an event or fault from app code |
 | `<NODE>_SLOT_<NAME>`, `lbr_plan_<node>` | generated from the catalog (`<node>_plan.h`) |
+
+## Board services (`lbr/board.h`, ESP32 code only)
+
+| | |
+| --- | --- |
+| `lbr_time_now_us()`, `lbr_time_mono_us()`, `lbr_time_is_synced()`, ... | the board's shared clock |
+| `lbr_health_reset_reason()`, `lbr_health_boot_count()` | why and how often it booted |
+| `lbr_bind_io(n, SLOT, spec)` | bind on-chip inputs from a spec (the roles do this for `io` slots) |
 
 ## Drivers (`lbr/driver.h`)
 
@@ -39,6 +49,7 @@ Headers are in `lbrlib/components/*/include/lbr/`; each has the full contract in
 | | |
 | --- | --- |
 | `LBR_TASK(name, .rate_hz = N, .periodic = fn, .init = fn)` | a task; `N` divides 100 |
+| `LBR_TASK_LIST(&a, &b, ...)` | the car's tasks in run order: `const lbr_task_list car_logic = ...;` |
 | `LBR_OUTPUT(var, "Group/Name", F32 or BOOL, UNIT)` | an output |
 | `lbr_get(c, NAME)`, `lbr_get_bool(c, NAME)`, `lbr_get_i32(c, NAME)` | the latest value of catalog signal `NAME`, with status and age |
 | `lbr_signal(c, LBR_SIG_<NAME>)` (and `_bool`, `_i32`) | the same, by id |

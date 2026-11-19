@@ -3,7 +3,7 @@
 idf_component_register(
     SRCS "tasks.c" "cvt.c" "brakes.c" "vehicle.c"
     INCLUDE_DIRS "include"
-    REQUIRES lbr
+    REQUIRES lbr_core
 )
 include("${CMAKE_CURRENT_LIST_DIR}/../../lbrlib/cmake/warnings.cmake")
 lbr_apply_warnings(${COMPONENT_LIB})

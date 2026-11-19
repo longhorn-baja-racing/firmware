@@ -25,6 +25,16 @@ C23 (gcc 14+ or clang 19+), with AddressSanitizer and UndefinedBehaviorSanitizer
 sensors node plans transport gateway wlink cores update value logic`, the golden `fixtures`,
 the `decoder` self test, `catalog`, `lbrgen`, and every simulator scenario.
 
+## `dev/ci/check_layers.py`: keep the layers
+
+```sh
+python3 dev/ci/check_layers.py
+```
+
+Fails, naming the file and include, if a component includes a header from a layer above it (or
+another role), or if the pure layers include anything but the C library. In `ctest` (`layers`)
+and CI.
+
 ## The simulator
 
 ```sh

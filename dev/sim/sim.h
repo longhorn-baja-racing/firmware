@@ -281,7 +281,7 @@ struct sim {
     uint32_t checks_passed, checks_failed;
 };
 
-/* Lifecycle (sim.c) */
+/* Lifecycle (sim_core.c) */
 int  sim_init(sim_t *s, uint64_t seed, const char *out_dir, FILE *out, bool quiet);
 void sim_free(sim_t *s);
 void sim_run_until(sim_t *s, uint64_t t_us);
@@ -309,7 +309,7 @@ void     vbus_bus_off(sim_t *s, int node);
 void     vbus_recover(sim_t *s, int node);
 uint32_t vbus_frame_bits(const lbr_can_frame_t *f); /* exact, with bit stuffing */
 
-/* Virtual WiFi (sim.c): a datagram from node `from` to node `to` over the
+/* Virtual WiFi (sim_platform.c): a datagram from node `from` to node `to` over the
  * cockpit's link. */
 bool wifi_send(sim_t *s, int from, int to, const uint8_t *buf, size_t len);
 
@@ -319,7 +319,7 @@ void world_step(sim_t *s, double dt);
 void world_bind_sensors(sim_t *s, int node);
 bool world_signal_value(sim_t *s, lbr_signal_id_t sig, double *v);
 
-/* Scheduler (sim.c) */
+/* Scheduler (sim_core.c) */
 typedef enum {
     EV_BOOT = 0,
     EV_ACQ,

@@ -19,7 +19,7 @@ static const char *state_name(uint8_t state)
     return state < sizeof names / sizeof names[0] ? names[state] : "?";
 }
 
-void cockpit_display_init(void)
+static void console_start(void)
 {
     ESP_LOGI(TAG, "cockpit display backend ready (panel hardware TBD)");
 }
@@ -52,9 +52,9 @@ static void fmt_value(const lbr_value_table_t *values, lbr_signal_id_t sig, uint
     }
 }
 
-void cockpit_display_render(const lbr_value_table_t *values,
-                            const lbr_cockpit_node_t nodes[LBR_COCKPIT_MAX_NODES], bool link_up,
-                            uint64_t now_us)
+static void console_render(const lbr_value_table_t *values,
+                           const lbr_cockpit_node_t nodes[LBR_COCKPIT_MAX_NODES], bool link_up,
+                           uint64_t now_us)
 {
     if (!link_up) {
         ESP_LOGW(TAG, "NO LINK to the Central");
@@ -133,3 +133,10 @@ void cockpit_display_render(const lbr_value_table_t *values,
         ESP_LOGI(TAG, "nodes %s", line);
     }
 }
+
+const lbr_display cockpit_console = {
+    .panel     = "console (panel hardware TBD)",
+    .start     = console_start,
+    .render    = console_render,
+    .period_ms = 500,
+};

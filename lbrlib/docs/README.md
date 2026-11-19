@@ -31,7 +31,7 @@ Start with the first one; the rest are references you come back to.
 | [Getting started](getting-started.md) | Build, test, and simulate with no hardware, then add a signal, a sensor, and a task, end to end (about 30 minutes) |
 | [Concepts](concepts.md) | How the pieces fit: nodes as smart sensors, the Central as the brain, the shared clock, the catalog, and why nothing fails silently |
 | [The catalog](catalog.md) | `car/catalog.toml`: nodes, signals, CAN frames, slots, and the generator |
-| [Sensor nodes](nodes.md) | A node's `main.c`: `LBR_NODE_MAIN`, `lbr_bind`, `lbr_bind_io` |
+| [Boards](nodes.md) | Each board's one-line `main.c`: `LBR_NODE_MAIN`, `LBR_CENTRAL_MAIN`, `LBR_COCKPIT_MAIN`, binding part drivers |
 | [Drivers](drivers.md) | Writing a driver for a new part, and wiring simple inputs with no code |
 | [Car logic](logic.md) | `LBR_TASK`, `lbr_get`, `LBR_OUTPUT`: derived values and alarms on the Central |
 | [Values and faults](values-and-faults.md) | `lbr_f32` and its statuses, the math helpers, and every way a fault is detected and reported |
@@ -47,15 +47,19 @@ The wire formats are specified in [`docs/protocol.md`](../../docs/protocol.md) a
 
 ```text
 lbrlib/                    the library (generic: no car-specific names)
-  components/lbr/          the app-facing API: lbr.h, values, car logic
-  components/node/         the sensor-node runtime: LBR_NODE_MAIN, slots, acquisition
-  components/sensors/      the driver kit and the built-in drivers (ADC/pulse/switch, NMEA GPS)
-  components/...           protocol, CAN, time base, logging, transports, the Central's core
+  components/              one-way layers; each includes only the ones above it (CI checks)
+    lbr_base/              1  pure C: protocol, CAN codec, health, time servo, log format
+    lbr_core/              2  pure C: sensors and the driver kit, every board's logic, car logic, lbr.h
+    lbr_hw/                3  ESP32 glue every board uses: CAN, clock, inputs, GPS, OTA, SD
+    lbr_links/             3  ESP32 glue for USB, LoRa, WiFi, BLE
+    lbr_node/              4  board roles: LBR_NODE_MAIN
+    lbr_central/           4               LBR_CENTRAL_MAIN
+    lbr_cockpit/           4               LBR_COCKPIT_MAIN
   tools/lbrgen.py          catalog.toml -> generated C, plans, and docs tables
   docs/                    these guides
 car/                       this car, built on LBRLib
   catalog.toml             every node, signal, and CAN frame, declared once
-  nodes/<node>/main/       each board's app (a few lines)
+  nodes/<node>/main/       each board's app (one line, plus generated plan and menuconfig)
   logic/                   the Central's car logic tasks
 dev/                       host tests, the simulator, the decoder (never on the car)
 ```

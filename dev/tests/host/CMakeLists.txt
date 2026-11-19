@@ -12,57 +12,16 @@ include("${LBR_ROOT}/lbrlib/cmake/warnings.cmake")
 
 option(LBR_SANITIZE "Build host tests with ASan + UBSan" ON)
 
-# Pure, hardware-independent logic compiled directly for the host. These
-# sources never include ESP-IDF headers; *_esp.c files hold the platform side
-# and port_host.c stands in for it here.
-add_library(lbr_core
-    "${LBR_COMPONENTS}/util/crc32.c"
-    "${LBR_COMPONENTS}/util/cobs.c"
-    "${LBR_COMPONENTS}/util/ringbuf.c"
-    "${LBR_COMPONENTS}/protocol/protocol.c"
-    "${LBR_COMPONENTS}/protocol/frames.c"
-    "${LBR_COMPONENTS}/health/health.c"
-    "${LBR_COMPONENTS}/can/can.c"
-    "${LBR_COMPONENTS}/timebase/timebase.c"
-    "${LBR_COMPONENTS}/logging/logging.c"
-    "${LBR_COMPONENTS}/logging/log_keeper.c"
-    "${LBR_COMPONENTS}/sensors/sensor_unconfigured.c"
-    "${LBR_COMPONENTS}/sensors/driver.c"
-    "${LBR_COMPONENTS}/sensors/sensor_sim.c"
-    "${LBR_COMPONENTS}/sensors/sensor_io.c"
-    "${LBR_COMPONENTS}/sensors/nmea.c"
-    "${LBR_COMPONENTS}/node/acq.c"
-    "${LBR_COMPONENTS}/node/node_config.c"
-    "${LBR_COMPONENTS}/node/node_core.c"
-    "${LBR_COMPONENTS}/node/node_table.c"
-    "${LBR_COMPONENTS}/transport/packet.c"
-    "${LBR_COMPONENTS}/transport/lora_policy.c"
-    "${LBR_COMPONENTS}/wlink/wlink.c"
-    "${LBR_COMPONENTS}/wlink/cockpit_link.c"
-    "${LBR_COMPONENTS}/wlink/cockpit_core.c"
-    "${LBR_COMPONENTS}/gateway/gw_core.c"
-    "${LBR_COMPONENTS}/gateway/gw_config.c"
-    "${LBR_COMPONENTS}/gateway/status.c"
-    "${LBR_COMPONENTS}/update/update.c"
-    "${LBR_COMPONENTS}/update/upd_relay.c"
-    "${LBR_COMPONENTS}/lbr/value.c"
-    "${LBR_COMPONENTS}/lbr/logic.c"
-    port_host.c
-)
+# LBRLib's two pure layers (lbr_base, lbr_core), compiled directly for the host:
+# every .c in them, exactly as the firmware builds them. They never include
+# ESP-IDF headers (dev/ci/check_layers.py); port_host.c stands in for the
+# platform side.
+file(GLOB_RECURSE LBR_PURE_SOURCES CONFIGURE_DEPENDS
+    "${LBR_COMPONENTS}/lbr_base/*.c" "${LBR_COMPONENTS}/lbr_core/*.c")
+add_library(lbr_core ${LBR_PURE_SOURCES} port_host.c)
 target_include_directories(lbr_core PUBLIC
-    "${LBR_COMPONENTS}/util/include"
-    "${LBR_COMPONENTS}/protocol/include"
-    "${LBR_COMPONENTS}/health/include"
-    "${LBR_COMPONENTS}/can/include"
-    "${LBR_COMPONENTS}/timebase/include"
-    "${LBR_COMPONENTS}/logging/include"
-    "${LBR_COMPONENTS}/sensors/include"
-    "${LBR_COMPONENTS}/node/include"
-    "${LBR_COMPONENTS}/transport/include"
-    "${LBR_COMPONENTS}/wlink/include"
-    "${LBR_COMPONENTS}/gateway/include"
-    "${LBR_COMPONENTS}/update/include"
-    "${LBR_COMPONENTS}/lbr/include"
+    "${LBR_COMPONENTS}/lbr_base/include"
+    "${LBR_COMPONENTS}/lbr_core/include"
     "${LBR_ROOT}/car/catalog/include"
     "${CMAKE_CURRENT_LIST_DIR}"
 )
@@ -75,7 +34,6 @@ if(LBR_SANITIZE AND NOT CMAKE_C_COMPILER_ID STREQUAL "MSVC")
     target_link_options(lbr_core PUBLIC -fsanitize=address,undefined)
 endif()
 
-target_sources(lbr_core PRIVATE "${LBR_COMPONENTS}/node/value_table.c")
 
 # Every node's plan (pure data) is compiled in, so the frame-table rules and
 # the system-wide CAN budget are checked against the real configurations.
@@ -127,3 +85,7 @@ add_test(NAME decoder COMMAND Python3::Interpreter -I "${LBR_DECODE}" --selftest
 add_test(NAME catalog COMMAND Python3::Interpreter -I "${LBR_ROOT}/lbrlib/tools/lbrgen.py"
                               "${LBR_ROOT}/car/catalog.toml" --check)
 add_test(NAME lbrgen COMMAND Python3::Interpreter "${LBR_ROOT}/lbrlib/tools/test_lbrgen.py")
+
+# LBRLib stays layered: no component includes a header from a layer above it, and the
+# pure layers include nothing but the C library (dev/ci/check_layers.py).
+add_test(NAME layers COMMAND Python3::Interpreter -I "${LBR_ROOT}/dev/ci/check_layers.py")

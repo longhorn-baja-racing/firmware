@@ -77,11 +77,13 @@ jobs:
           if git grep -nE '^\s*(o|r|or)?source\s.*(\.\./|car/|dev/)' -- 'lbrlib/**/Kconfig*'; then bad=1; fi
           if git grep -nE '^\s*#\s*include\s*["<][^">]*(\.\./|car/|dev/)' -- 'lbrlib/**/*.c' 'lbrlib/**/*.h'; then bad=1; fi
           if [ $bad -ne 0 ]; then echo "lbrlib/ references car/ or dev/ (see above)"; exit 1; fi
+      - name: LBRLib layers (no component includes a layer above it)
+        run: python3 -I dev/ci/check_layers.py
       - name: Static analysis (clang-tidy on pure sources)
         run: |
           sudo apt-get install -y clang-19
           cmake -S dev -B build-dev -G Ninja -DCMAKE_C_COMPILER=clang-19 -DLBR_SANITIZE=OFF
-          find lbrlib/components -name '*.c' ! -name '*_esp.c' -print0 |
+          find lbrlib/components/lbr_base lbrlib/components/lbr_core -name '*.c' -print0 |
             xargs -0 clang-tidy -p build-dev --quiet
       - name: Reference decoder replays the golden fixtures
         run: python3 -I dev/tools/lbr_decode.py --selftest

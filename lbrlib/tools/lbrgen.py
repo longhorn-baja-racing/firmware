@@ -43,6 +43,9 @@ UNIT_TEXT = {
     "count": "count", "microstrain": "ue", "unix_s": "unix_s", "bitmask": "bitmask",
 }
 ROLES = ("central", "cockpit")
+# How a slot is read (slot "input"); the role binds these itself.
+INPUTS = {"io": "LBR_INPUT_IO", "gps": "LBR_INPUT_GPS", "cockpit_link": "LBR_INPUT_COCKPIT_LINK"}
+CENTRAL_ONLY_INPUTS = ("gps", "cockpit_link")
 DATA_ID_MIN, DATA_ID_MAX = 0x100, 0x6FF  # docs/can-ids.md: system ids sit outside
 COUNTER_OFFSET, COUNTER_DLC = 6, 8
 MAX_FIELDS = 8
@@ -95,6 +98,8 @@ class Slot:
     name: str
     rate_hz: int
     signals: list[Signal]
+    input: str | None = None  # "io", "gps", "cockpit_link", or None (bound in main.c)
+    hint: str = ""            # what is usually wired to an io slot (menuconfig help)
 
 
 @dataclass
@@ -298,7 +303,12 @@ def load(path: Path) -> Catalog:
                 raise CatalogError(f"{swhat}: rate_hz {rate} differs from its frames")
             if rate <= 0:
                 raise CatalogError(f"{swhat}: give rate_hz (no frame sets it)")
-            n.slots.append(Slot(sname, rate, listed))
+            inp = t.get("input")
+            if inp is not None and inp not in INPUTS:
+                raise CatalogError(f"{swhat}: input '{inp}' is not one of {tuple(INPUTS)}")
+            if inp in CENTRAL_ONLY_INPUTS and n.role != "central":
+                raise CatalogError(f"{swhat}: input '{inp}' is only on the central node")
+            n.slots.append(Slot(sname, rate, listed, inp, str(t.get("hint", ""))))
         _unique([s.name for s in n.slots], f"{what} slot name")
 
     # Apps shared by several nodes must agree on slot names
@@ -454,6 +464,15 @@ def _wrap_list(items: list[str], indent: str, width: int = 100) -> list[str]:
 def emit_plan_c(cat: Catalog, app: str, group: list[Node]) -> str:
     up = app.upper()
     out = f"#include \"{app}_plan.h\"\n\n#include \"lbr/nodes.h\"\n\n"
+    io = [s for s in group[0].slots if s.input == "io"]
+    if io:
+        out += ("/* io slots read their input spec from menuconfig (main/Kconfig, generated);\n"
+                " * host builds have no sdkconfig and see an empty spec. */\n"
+                "#if __has_include(\"sdkconfig.h\")\n#include \"sdkconfig.h\"\n#endif\n")
+        for s in io:
+            k = f"CONFIG_LBR_IO_{s.name.upper()}"
+            out += f"#ifndef {k}\n#define {k} \"\"\n#endif\n"
+        out += "\n"
     out += f"/*\n * {GENERATED.format(src='car/' + cat.src)}\n *\n"
     for n in group:
         out += f" * {n.name} (node {n.id}, {n.board}): {n.about}.\n"
@@ -479,7 +498,12 @@ def emit_plan_c(cat: Catalog, app: str, group: list[Node]) -> str:
                     f"            .name      = {c_str(s.name)},\n"
                     f"            .signals   = {arr},\n"
                     f"            .n_signals = sizeof {arr} / sizeof {arr}[0],\n"
-                    f"            .rate_hz   = {s.rate_hz},\n        }},\n")
+                    f"            .rate_hz   = {s.rate_hz},\n")
+            if s.input:
+                out += f"            .input     = {INPUTS[s.input]},\n"
+            if s.input == "io":
+                out += f"            .io_spec   = CONFIG_LBR_IO_{s.name.upper()},\n"
+            out += "        },\n"
         out += "};\n\n"
     def plan_body(n: Node, sfx: str, indent: str) -> str:
         b = (f"{indent}.node_id          = LBR_NODE_{n.name.upper()},\n"
@@ -498,6 +522,53 @@ def emit_plan_c(cat: Catalog, app: str, group: list[Node]) -> str:
             out += f"    {{\n{plan_body(n, '_' + n.name, '        ')}    }},\n"
         out += "};\n"
     return out + "/* clang-format on */\n"
+
+
+KCONFIG_IO_HELP = """\
+            Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
+            ';'-separated entry per channel using the on-chip inputs: '-',
+            'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in
+            lbrlib/docs/drivers.md and docs/sensors.md. The spec is the
+            calibration and is recorded in every session.
+"""
+
+
+def emit_kconfig(cat: Catalog, app: str, group: list[Node]) -> str:
+    """menuconfig settings for an app's io slots (main/Kconfig), or "" if none."""
+    io = [i for i, s in enumerate(group[0].slots) if s.input == "io"]
+    if not io:
+        return ""
+    out = (f"# {GENERATED.format(src='car/' + cat.src)}\n"
+           "# Pins and calibration of the slots read by on-chip inputs (input = \"io\").\n\n"
+           f"menu \"LBR {app} inputs\"\n")
+    for i in io:
+        s = group[0].slots[i]
+        frames = sorted({x.frame.id for x in s.signals if x.frame is not None})
+        where = (" (frame" + ("s " if len(frames) > 1 else " ")
+                 + " and ".join(f"0x{f:03X}" for f in frames) + ")") if frames else ""
+        chans = ", ".join(x.name for x in s.signals)
+        others = ""
+        if len(group) > 1:
+            others = (f" on {group[0].name}; the matching channels on "
+                      + ", ".join(n.name for n in group[1:]))
+        lines = _wrap_words(f"Channels, in order: {chans}{where}{others}."
+                            + (f" Typically {s.hint}." if s.hint else ""), 64)
+        out += (f"\n    config LBR_IO_{s.name.upper()}\n"
+                f"        string \"Slot '{s.name}' input spec\"\n"
+                "        default \"\"\n        help\n"
+                + "".join(f"            {ln}\n" for ln in lines) + KCONFIG_IO_HELP)
+    return out + "\nendmenu\n"
+
+
+def _wrap_words(text: str, width: int) -> list[str]:
+    lines, cur = [], ""
+    for w in text.split():
+        if cur and len(cur) + 1 + len(w) > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}" if cur else w
+    return lines + ([cur] if cur else [])
 
 
 def emit_docs_nodes(cat: Catalog) -> str:
@@ -547,6 +618,9 @@ def outputs(cat: Catalog, car: Path, repo: Path) -> dict[Path, str]:
         main = car / "nodes" / app / "main"
         files[main / f"{app}_plan.h"] = emit_plan_h(cat, app, group)
         files[main / f"{app}_plan.c"] = emit_plan_c(cat, app, group)
+        kconfig = emit_kconfig(cat, app, group)
+        if kconfig:
+            files[main / "Kconfig"] = kconfig
     doc = repo / "docs" / "can-ids.md"
     if doc.exists():
         text = doc.read_text(encoding="ascii")

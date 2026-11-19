@@ -263,21 +263,14 @@ harness before any hardware-initialization code is merged.
 ```text
 lbrlib/                       # LBRLIB: the library every node is built on (flashed with the nodes)
   cmake/                      #   warnings-as-errors policy
-  components/                 #   ESP-IDF components; *_esp.c = hardware side, the rest is pure C23
-    util/                     #     byte order, CRC-32, COBS, bounded ring buffer
-    protocol/                 #     catalog codecs: signals, CAN frame table, node ids (data from car/catalog)
-    health/                   #     heartbeat record + page codec, reset reason
-    can/                      #     CAN id map, field codec, sync-tracking decoder; TWAI adapter
-    timebase/                 #     shared time sync servo
-    logging/                  #     recoverable log format, bounded queue, SD service
-    update/                   #     firmware update over CAN: node receiver, Central relay, OTA glue
-    sensors/                  #     driver interface, configurable inputs, NMEA GPS
-    node/                     #     plans/validation, grid-locked acquisition, sensor-node runtime
-    transport/                #     packet framing, LoRa policy
-    links/                    #     the Central's USB/LoRa/WiFi/BLE links
-    wlink/                    #     cockpit WiFi link (cores + C5 WiFi/UDP glue)
-    gateway/                  #     the Central's logic, runtime config, status text
-    lbr/                      #     the app API: lbr.h, values with status, car logic tasks
+  components/                 #   ESP-IDF components in one-way layers (dev/ci/check_layers.py):
+    lbr_base/                 #     1 pure: byte order, CRC, COBS, protocol, CAN codec, health, time servo, log format
+    lbr_core/                 #     2 pure: sensors + driver kit, node core, Central core, cockpit core, update, car logic
+    lbr_hw/                   #     3 ESP32: CAN (TWAI), clock, reset reason, ADC/pulse/GPIO/UART inputs, OTA, SD log
+    lbr_links/                #     3 ESP32: USB, LoRa, WiFi, BLE links, UDP
+    lbr_node/                 #     4 roles: a sensor node (LBR_NODE_MAIN),
+    lbr_central/              #       the Central (LBR_CENTRAL_MAIN),
+    lbr_cockpit/              #       the cockpit (LBR_COCKPIT_MAIN)
   tools/lbrgen.py             #   catalog.toml -> signals, nodes, frame table, plans, can-ids.md tables
   docs/                       #   the LBRLib guides (start at lbrlib/docs/README.md)
 car/                          # THIS CAR: the 2026 vehicle, built on lbrlib/
@@ -319,11 +312,12 @@ simulator run exactly the code that is flashed.
 
 Each node in `car/nodes/` is a self-contained ESP-IDF project (its own top-level `CMakeLists.txt`
 + `main/`) that pulls in the shared `lbrlib/components/` via `EXTRA_COMPONENT_DIRS` and builds only
-what its `main` needs. Node apps stay thin: a generated plan (pure data: node id, channels,
-rates) and driver binding, a few lines with `LBR_NODE_MAIN` (`lbr/node_app.h`). Shared logic
-lives in `lbrlib/components/` behind narrow interfaces so protocol, queue, time-sync, and
-log-recovery behavior is exercised in host tests without hardware. Adding a node means adding it
-and its frames to `car/catalog.toml`, running `lbrlib/tools/lbrgen.py`, copying a
+what its `main` needs. Every app is one line naming its role (`LBR_NODE_MAIN`,
+`LBR_CENTRAL_MAIN`, `LBR_COCKPIT_MAIN`): the slots, their signals and rates, and how each is read
+(`input = "io"` from menuconfig, the GPS, or a part driver bound in `main.c`) come from the
+catalog. LBRLib is a stack of one-way layers (`lbr_base`, `lbr_core`, `lbr_hw` / `lbr_links`,
+the roles) that CI keeps from turning into a web (`dev/ci/check_layers.py`). Adding a node means
+adding it and its frames to `car/catalog.toml`, running `lbrlib/tools/lbrgen.py`, copying a
 `car/nodes/<name>/` directory, and adding its plan to `dev/tests/host/CMakeLists.txt`.
 
 ## Getting started

@@ -78,12 +78,25 @@ bounded queue; a slow or absent radio link never costs it anything. Records carr
 log cut by a power loss is recovered up to the last complete record. The CSV export, the live
 links, and the cockpit are all views of the same records. See [logging](logging.md).
 
-## Pure logic, thin glue
+## Layers, not a web
 
-Every component is split into pure C (protocol, time sync servo, acquisition, the node runtime,
-the Central's core, car logic) and `*_esp.c` files that connect it to FreeRTOS, TWAI, the SD
-card, and the radios. The pure code takes its hardware as a table of functions, so the host
-tests and the simulator run exactly the code that is flashed, on a laptop, under sanitizers.
+LBRLib is a stack of components, and each may use only the ones below it:
+
+```text
+4  roles        lbr_node  lbr_central  lbr_cockpit      LBR_*_MAIN: wiring a board together
+3  ESP32 glue   lbr_hw (CAN, clock, inputs, GPS, OTA, SD)   lbr_links (USB, LoRa, WiFi, BLE)
+2  core         lbr_core: sensors, node/Central/cockpit logic, car logic   (pure C)
+1  base         lbr_base: protocol, CAN codec, health, time servo, log format   (pure C)
+0  catalog      the car's generated catalog
+```
+
+`dev/ci/check_layers.py` (in `ctest` and CI) fails on any include that points up, or from one
+role into another, and on any ESP-IDF header in the pure layers. So a new feature cannot quietly
+tie the library into a knot.
+
+The pure layers take their hardware as tables of functions, so the host tests and the simulator
+run exactly the code that is flashed, on a laptop, under sanitizers. A role is only the wiring:
+FreeRTOS tasks and ESP32 drivers around the pure core, and an app picks its role in one line.
 
 ## Ordering and replay
 

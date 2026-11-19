@@ -14,6 +14,5 @@ extern const lbr_task cvt;     /* cvt.c: CVT ratio */
 extern const lbr_task brakes;  /* brakes.c: brake and CVT overheat alarms */
 extern const lbr_task vehicle; /* vehicle.c: speed in km/h, engine running */
 
-/* Every task, in run order. */
-extern const lbr_task *const car_tasks[];
-extern const size_t          car_task_count;
+/* Every task, in run order (tasks.c). */
+extern const lbr_task_list car_logic;
