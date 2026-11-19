@@ -339,6 +339,44 @@ static void test_app_slot_binding(void)
     CHECK(lbr_slot(NULL, 0) == NULL);
 }
 
+/* Expected topology: catalog CAN nodes never heard are reported missing once,
+ * after the timeout, and taking a found node clears it. */
+static void test_node_table_missing(void)
+{
+    lbr_node_table_t t;
+    lbr_node_table_init(&t, 3000000u);
+    lbr_can_frame_t f = {.id = LBR_CAN_ID_HEARTBEAT_BASE + LBR_NODE_STRESS, .dlc = 2};
+    CHECK(lbr_node_table_on_frame(&t, &f, 1000000u) == LBR_NT_FOUND);
+
+    uint8_t missing[LBR_NODE_TABLE_SIZE];
+    CHECK_EQ_U(lbr_node_table_missing(&t, 0, 3000000u, missing, sizeof missing), 0); /* too early */
+    size_t n      = lbr_node_table_missing(&t, 0, 3000001u, missing, sizeof missing);
+    size_t expect = 0;
+    for (size_t i = 0; i < lbr_node_count(); i++) {
+        uint8_t id = lbr_node_id_at(i);
+        expect += lbr_node_is_can(id) && id != LBR_NODE_CENTRAL && id != LBR_NODE_STRESS;
+    }
+    CHECK_EQ_U(n, expect);
+    for (size_t i = 0; i < n; i++) {
+        CHECK(missing[i] != LBR_NODE_STRESS && missing[i] != LBR_NODE_CENTRAL);
+        CHECK(lbr_node_is_can(missing[i]));
+    }
+    CHECK_EQ_U(lbr_node_table_missing(&t, 0, 9000000u, missing, sizeof missing), 0); /* once */
+
+    CHECK(lbr_node_table_take_missing(&t, LBR_NODE_IMU));
+    CHECK(!lbr_node_table_take_missing(&t, LBR_NODE_IMU));
+    CHECK(!lbr_node_table_take_missing(&t, LBR_NODE_STRESS));
+
+    /* A small output buffer loses nothing: the rest come on the next call. */
+    lbr_node_table_init(&t, 1000u);
+    uint8_t one[1];
+    size_t  total = 0;
+    while (lbr_node_table_missing(&t, 0, 2000u, one, sizeof one) == 1) {
+        total++;
+    }
+    CHECK_EQ_U(total, expect + 1); /* stress was not heard this time */
+}
+
 int main(void)
 {
     RUN(test_value_table);
@@ -350,5 +388,6 @@ int main(void)
     RUN(test_acq_grid);
     RUN(test_node_table);
     RUN(test_app_slot_binding);
+    RUN(test_node_table_missing);
     TEST_MAIN_END();
 }

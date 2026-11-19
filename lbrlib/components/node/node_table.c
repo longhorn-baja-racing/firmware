@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "lbr/nodes.h"
+
 void lbr_node_table_init(lbr_node_table_t *t, uint64_t timeout_us)
 {
     memset(t, 0, sizeof *t);
@@ -87,4 +89,35 @@ const lbr_node_entry_t *lbr_node_table_find(const lbr_node_table_t *t, uint8_t n
         }
     }
     return NULL;
+}
+
+size_t lbr_node_table_missing(lbr_node_table_t *t, uint64_t since_us, uint64_t now_us,
+                              uint8_t *missing, size_t cap)
+{
+    if (now_us < since_us || now_us - since_us <= t->timeout_us) {
+        return 0;
+    }
+    size_t n = 0;
+    for (size_t i = 0; i < lbr_node_count() && n < cap; i++) {
+        uint8_t id = lbr_node_id_at(i);
+        if (!lbr_node_is_can(id) || id == LBR_NODE_CENTRAL || id >= 32u) {
+            continue;
+        }
+        uint32_t bit = 1u << id;
+        if ((t->missing & bit) != 0 || lbr_node_table_find(t, id) != NULL) {
+            continue;
+        }
+        t->missing |= bit;
+        missing[n++] = id;
+    }
+    return n;
+}
+
+bool lbr_node_table_take_missing(lbr_node_table_t *t, uint8_t node_id)
+{
+    if (node_id >= 32u || (t->missing & (1u << node_id)) == 0) {
+        return false;
+    }
+    t->missing &= ~(1u << node_id);
+    return true;
 }

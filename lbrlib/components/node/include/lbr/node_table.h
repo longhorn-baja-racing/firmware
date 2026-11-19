@@ -35,6 +35,7 @@ typedef struct {
     lbr_node_entry_t nodes[LBR_NODE_TABLE_SIZE];
     uint64_t         timeout_us; /* silent this long => lost */
     uint32_t         table_full; /* frames from nodes that did not fit (counted) */
+    uint32_t         missing;    /* bit id: reported missing, not heard since */
 } lbr_node_table_t;
 
 typedef enum {
@@ -53,3 +54,16 @@ lbr_node_table_event_t lbr_node_table_on_frame(lbr_node_table_t *t, const lbr_ca
 size_t lbr_node_table_expire(lbr_node_table_t *t, uint64_t now_us, uint8_t *lost, size_t cap);
 
 const lbr_node_entry_t *lbr_node_table_find(const lbr_node_table_t *t, uint8_t node_id);
+
+/*
+ * Expected topology. Once `now_us` is more than the timeout past `since_us`
+ * (when listening started), every CAN node of the catalog other than the
+ * Central that has never been heard is missing: writes up to `cap` newly
+ * missing ids to `missing` (each reported once; any beyond `cap` on a later
+ * call) and returns how many.
+ */
+size_t lbr_node_table_missing(lbr_node_table_t *t, uint64_t since_us, uint64_t now_us,
+                              uint8_t *missing, size_t cap);
+
+/* True (once) if `node_id` had been reported missing: it has now been heard. */
+bool lbr_node_table_take_missing(lbr_node_table_t *t, uint8_t node_id);

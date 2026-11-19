@@ -108,6 +108,7 @@ static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_
     if (ev == LBR_NT_FOUND) {
         const lbr_node_entry_t *e = lbr_node_table_find(&c->nodes, lbr_can_sender(f->id));
         back                      = e != NULL && e->first_seen_us != t_us; /* after NODE_LOST */
+        back = lbr_node_table_take_missing(&c->nodes, lbr_can_sender(f->id)) || back;
     }
     for (size_t i = 0; i < n; i++) {
         lbr_lora_policy_offer_sample(&c->lora_policy, &samples[i]);
@@ -230,9 +231,10 @@ void lbr_gw_core_init(lbr_gw_core_t *c, const lbr_gw_hal_t *hal, const lbr_gw_co
 void lbr_gw_core_start(lbr_gw_core_t *c, lbr_logger_t *log, const lbr_gw_links_t *links,
                        bool can_up, bool can_pins_unset)
 {
-    c->log    = log;
-    c->links  = *links;
-    c->can_up = can_up;
+    c->log             = log;
+    c->links           = *links;
+    c->can_up          = can_up;
+    c->listen_since_us = c->hal.now_us(c->hal.ctx);
     /* Drivers are bound by now (some read this core's own state). */
     for (size_t i = 0; i < c->boot.n_acq && i < LBR_NODE_MAX_SENSORS; i++) {
         const lbr_acq_t       *a  = &c->boot.acq[i];
@@ -525,6 +527,7 @@ void lbr_gw_core_heartbeat(lbr_gw_core_t *c, lbr_health_record_t *out)
 {
     lbr_health_record_t h;
     uint8_t             lost[LBR_NODE_TABLE_SIZE];
+    uint8_t             missing[LBR_NODE_TABLE_SIZE];
     uint8_t             err_flags;
     lbr_can_frame_t     f;
 
@@ -543,10 +546,21 @@ void lbr_gw_core_heartbeat(lbr_gw_core_t *c, lbr_health_record_t *out)
     lock(c, LBR_GW_LOCK_STATE);
     c->last_health = h;
     lbr_lora_policy_offer_health(&c->lora_policy, &h);
-    size_t n_lost = lbr_node_table_expire(&c->nodes, c->hal.now_us(c->hal.ctx), lost, sizeof lost);
+    uint64_t now    = c->hal.now_us(c->hal.ctx);
+    size_t   n_lost = lbr_node_table_expire(&c->nodes, now, lost, sizeof lost);
+    /* Expected topology: a catalog node never heard is a fault too, not an
+     * absence nobody notices. */
+    size_t n_missing = c->can_up ? lbr_node_table_missing(&c->nodes, c->listen_since_us, now,
+                                                          missing, sizeof missing)
+                                 : 0;
     unlock(c, LBR_GW_LOCK_STATE);
     for (size_t i = 0; i < n_lost; i++) {
         lbr_gw_core_event(c, LBR_EVT_NODE_LOST, lost[i], true);
+    }
+    for (size_t i = 0; i < n_missing; i++) {
+        say(c, LBR_LOG_LVL_WARN, "node %s (0x%02x) expected but never heard",
+            lbr_node_name(missing[i]), missing[i]);
+        lbr_gw_core_event(c, LBR_EVT_NODE_MISSING, missing[i], true);
     }
     if (out != NULL) {
         *out = h;

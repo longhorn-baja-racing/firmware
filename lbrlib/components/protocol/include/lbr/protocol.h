@@ -77,6 +77,7 @@ typedef enum {
     LBR_EVT_QUEUE_OVERFLOW   = 0x0040, /* arg: queue id */
     LBR_EVT_NODE_LOST        = 0x0050, /* arg: node id (Central: CAN nodes, cockpit) */
     LBR_EVT_NODE_FOUND       = 0x0051, /* arg: node id */
+    LBR_EVT_NODE_MISSING     = 0x0052, /* arg: node id the catalog expects, never heard */
     LBR_EVT_CAN_PINS_UNSET   = 0x0060, /* CAN GPIO still TBD in Kconfig */
 } lbr_event_code_t;
 

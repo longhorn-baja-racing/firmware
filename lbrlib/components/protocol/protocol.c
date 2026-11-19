@@ -133,6 +133,8 @@ const char *lbr_event_name(lbr_event_code_t code)
             return "NODE_LOST";
         case LBR_EVT_NODE_FOUND:
             return "NODE_FOUND";
+        case LBR_EVT_NODE_MISSING:
+            return "NODE_MISSING";
         case LBR_EVT_CAN_PINS_UNSET:
             return "CAN_PINS_UNSET";
         default:

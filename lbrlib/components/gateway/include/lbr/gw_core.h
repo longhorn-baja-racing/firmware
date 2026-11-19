@@ -131,6 +131,7 @@ typedef struct {
 
     /* Heartbeat caller only. */
     uint32_t prev_rx, prev_logged, last_bus_off, prev_loss;
+    uint64_t listen_since_us; /* shared time the bus started being watched (start) */
 
     atomic_uint   frames_rx;
     atomic_uint   frames_logged;
