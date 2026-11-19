@@ -16,7 +16,7 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 
 # WiFi + BLE + CAN + SD + LoRa leave little IRAM with the WiFi speed-ups
-# resident. Move them to flash: the pit and dashboard links need far less
+# resident. Move them to flash: the pit and cockpit links need far less
 # than peak WiFi throughput. The TWAI ISR stays in IRAM (CONFIG_TWAI_ISR_CACHE_SAFE in
 # sdkconfig.common) so CAN reception is unaffected.
 CONFIG_ESP_WIFI_IRAM_OPT=n

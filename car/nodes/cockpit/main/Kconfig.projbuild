@@ -1,0 +1,15 @@
+menu "LBR cockpit (driver display)"
+
+    config LBR_IO_BATTERY
+        string "Slot 'battery' input spec"
+        default ""
+        help
+            Channels, in order: COCKPIT_BATTERY (percent). Typically an
+            'adc ...' entry on an ADC1 pin of the ESP32-C5 (GPIO 1..6) behind
+            a divider. Empty = not fitted (or simulated with LBR_SENSOR_SIM).
+            Syntax: lbrlib/components/sensors/include/lbr/sensor_io.h and
+            docs/sensors.md. Battery capacity and charging are TBD. The
+            cockpit joins the Central's access point
+            (CONFIG_LBR_WIFI_SSID / CONFIG_LBR_WIFI_PASSWORD).
+
+endmenu

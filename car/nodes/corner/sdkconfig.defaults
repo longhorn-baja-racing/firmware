@@ -1,6 +1,4 @@
-# corner node (Mini ESP32-C5 on each suspension corner, own battery). Shared
-# settings: car/nodes/sdkconfig.common. Generated sdkconfig is gitignored.
+# corner node (wheel hub controller, Mini ESP32-C5, CAN nodes 7..10; position
+# from CONFIG_LBR_CORNER_POSITION). Shared settings: car/nodes/sdkconfig.common.
+# Generated sdkconfig is gitignored.
 CONFIG_IDF_TARGET="esp32c5"
-
-# WiFi + lwIP make the app close to 1 MB; use the 1.5 MB single-app table.
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

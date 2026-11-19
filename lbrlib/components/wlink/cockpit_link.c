@@ -1,0 +1,179 @@
+#include "lbr/cockpit_link.h"
+
+#include <string.h>
+
+#include "lbr/lora_policy.h"
+#include "lbr/nodes.h"
+#include "lbr/packet.h"
+#include "lbr/transport.h"
+#include "lbr/wlink.h"
+
+/* Pure Central-side cockpit link; see lbr/cockpit_link.h. */
+
+/* What the cockpit display shows, in wire order (catalog: [cockpit]). */
+const lbr_signal_id_t lbr_cockpit_signals[] = {
+#define LBR_COCKPIT_SIGNAL(sig_) LBR_SIG_##sig_,
+#include "lbr/catalog_links.def"
+#undef LBR_COCKPIT_SIGNAL
+};
+const size_t lbr_cockpit_signal_count = sizeof lbr_cockpit_signals / sizeof lbr_cockpit_signals[0];
+
+void lbr_cockpit_link_init(lbr_cockpit_link_t *d)
+{
+    memset(d, 0, sizeof *d);
+}
+
+static void on_record(uint8_t type, const uint8_t *payload, size_t len, void *ctx)
+{
+    lbr_cockpit_link_t *d = ctx;
+    lbr_sample_t        s;
+    if (type != LBR_REC_SAMPLE) {
+        return; /* unknown record types are skipped */
+    }
+    if (lbr_sample_decode(payload, len, &s) != LBR_SAMPLE_WIRE_SIZE) {
+        d->rejected++;
+        return;
+    }
+    if (s.signal == LBR_SIG_COCKPIT_BATTERY) {
+        d->battery      = s;
+        d->have_battery = true;
+    }
+}
+
+void lbr_cockpit_link_on_packet(lbr_cockpit_link_t *d, const uint8_t *buf, size_t len,
+                                uint64_t rx_us)
+{
+    lbr_pkt_header_t hdr;
+    if (!lbr_pkt_parse(buf, len, &hdr, NULL, NULL) || hdr.source != LBR_NODE_COCKPIT ||
+        hdr.link != LBR_LINK_COCKPIT) {
+        d->rejected++;
+        return;
+    }
+    if (d->seq.have && rx_us > d->last_rx_us &&
+        rx_us - d->last_rx_us > LBR_WLINK_COCKPIT_TIMEOUT_US) {
+        lbr_seq_window_restart(&d->seq, &d->packet_gaps); /* back after an outage */
+    }
+    lbr_seq_result_t sr = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
+    if (sr == LBR_SEQ_OLD) {
+        lbr_seq_window_restart(&d->seq, &d->packet_gaps); /* the cockpit restarted its count */
+        sr = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
+    }
+    if (sr != LBR_SEQ_NEW) {
+        d->rejected += sr == LBR_SEQ_DUPLICATE ? 1u : 0u; /* older than what we have */
+        return;
+    }
+    d->packets++;
+    d->seen       = true;
+    d->last_rx_us = rx_us;
+    lbr_pkt_parse(buf, len, &hdr, on_record, d);
+}
+
+int lbr_cockpit_link_tick(lbr_cockpit_link_t *d, uint64_t now_us)
+{
+    bool up = d->seen &&
+              (now_us <= d->last_rx_us || now_us - d->last_rx_us <= LBR_WLINK_COCKPIT_TIMEOUT_US);
+    int  change = up == d->up ? 0 : (up ? 1 : -1);
+    d->up       = up;
+    return change;
+}
+
+size_t lbr_cockpit_link_build(lbr_cockpit_link_t *d, uint64_t now_us, uint8_t source,
+                              const lbr_value_table_t *values, const lbr_node_table_t *nodes,
+                              uint8_t *buf, size_t cap)
+{
+    lbr_pkt_builder_t b;
+    lbr_pkt_begin(&b, buf, cap, LBR_LINK_COCKPIT, source, d->tx_seq, now_us);
+    for (size_t i = 0; i < lbr_cockpit_signal_count; i++) {
+        lbr_sample_t      s;
+        lbr_value_state_t st = lbr_value_table_get(values, lbr_cockpit_signals[i], now_us, &s);
+        if (st == LBR_VALUE_NONE) {
+            continue;
+        }
+        if (st == LBR_VALUE_STALE) {
+            lbr_sample_set_unavailable(&s, LBR_UNAVAIL_NO_DATA);
+        }
+        uint8_t rec[LBR_SAMPLE_WIRE_SIZE];
+        if (lbr_sample_encode(&s, rec, sizeof rec) > 0) {
+            lbr_pkt_add(&b, LBR_REC_SAMPLE, rec, sizeof rec);
+        }
+    }
+    for (size_t i = 0; i < LBR_NODE_TABLE_SIZE; i++) {
+        const lbr_node_entry_t *e = &nodes->nodes[i];
+        if (e->node_id == 0) {
+            continue;
+        }
+        lbr_health_record_t h = e->health;
+        uint8_t             lite[LBR_HEALTH_LITE_SIZE];
+        h.node_id = e->node_id;
+        h.state   = !e->present ? (uint8_t)LBR_NODE_FAULT
+                                : (e->hb_seen ? e->hb_state : (uint8_t)LBR_NODE_BOOT);
+        lbr_health_lite_encode(&h, lite);
+        lbr_pkt_add(&b, LBR_REC_HEALTH_LITE, lite, sizeof lite);
+    }
+    size_t n = lbr_pkt_finish(&b);
+    if (n > 0) {
+        d->tx_seq++;
+    }
+    return n;
+}
+
+/* ------------------------------------------------------------------------ */
+/* COCKPIT_STATUS driver                                                        */
+
+static int cockpit_init(lbr_sensor_t *self)
+{
+    (void)self;
+    return 0;
+}
+
+static int cockpit_read(lbr_sensor_t *self, uint64_t t_us, lbr_reading_t *out)
+{
+    (void)t_us;
+    lbr_cockpit_link_t *d = self->ctx;
+    if (d->lock != NULL) {
+        d->lock(d->lock_ctx);
+    }
+    bool         up   = d->up;
+    bool         have = d->have_battery;
+    lbr_sample_t batt = d->battery;
+    if (d->unlock != NULL) {
+        d->unlock(d->lock_ctx);
+    }
+    for (size_t ch = 0; ch < self->n_signals; ch++) {
+        lbr_reading_t *r = &out[ch];
+        memset(r, 0, sizeof *r);
+        if (self->signals[ch] == LBR_SIG_COCKPIT_LINK) {
+            r->valid = true;
+            r->v.b   = up;
+        } else if (self->signals[ch] == LBR_SIG_COCKPIT_BATTERY) {
+            if (!up || !have) {
+                r->reason = LBR_UNAVAIL_NO_DATA;
+            } else if (!batt.valid) {
+                r->reason = (lbr_unavail_reason_t)batt.v.u32;
+            } else {
+                r->valid = true;
+                r->v.f32 = batt.v.f32;
+            }
+        } else {
+            r->reason = LBR_UNAVAIL_NOT_FITTED;
+        }
+    }
+    return 0;
+}
+
+void lbr_sensor_cockpit_link(lbr_sensor_t *out, const char *name, const lbr_signal_id_t *signals,
+                             size_t n_signals, lbr_cockpit_link_t *d, void (*lock)(void *),
+                             void (*unlock)(void *), void         *lock_ctx)
+{
+    d->lock     = lock;
+    d->unlock   = unlock;
+    d->lock_ctx = lock_ctx;
+    *out        = (lbr_sensor_t){
+        .name      = name,
+        .signals   = signals,
+        .n_signals = n_signals,
+        .init      = cockpit_init,
+        .read      = cockpit_read,
+        .ctx       = d,
+    };
+}

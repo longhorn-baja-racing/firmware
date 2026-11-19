@@ -3,6 +3,8 @@ build/
 build-*/
 sdkconfig
 sdkconfig.old
+# per-corner configs made by dev/tools/lbr_deploy.py (one per wheel hub)
+sdkconfig.corner_*
 managed_components/
 dependencies.lock
 
@@ -15,7 +17,7 @@ build-host/
 *.elf
 *.bin
 *.map
-# ...except the golden fixtures shared with lbr-dashboard
+# ...except the golden fixtures shared with the dashboard app
 !dev/tests/fixtures/*.bin
 
 # Editor / OS

@@ -24,4 +24,4 @@ Checks: >
   misc-redundant-expression,
   misc-misplaced-const
 WarningsAsErrors: '*'
-HeaderFilterRegex: 'car/components/.*'
+HeaderFilterRegex: 'lbrlib/components/.*'

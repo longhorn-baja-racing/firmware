@@ -1,0 +1,11 @@
+# wlink.c, cockpit_link.c and cockpit_core.c are pure (host-tested); udp_esp.c is
+# the ESP32-C5 WiFi + UDP glue. Only the two ends of the cockpit display
+# link (central, cockpit) depend on it.
+idf_component_register(
+    SRCS "wlink.c" "cockpit_link.c" "cockpit_core.c" "udp_esp.c"
+    INCLUDE_DIRS "include"
+    REQUIRES protocol can node sensors timebase transport util health
+    PRIV_REQUIRES esp_wifi esp_netif esp_event esp_timer lwip freertos log nvs_flash
+)
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/warnings.cmake")
+lbr_apply_warnings(${COMPONENT_LIB})

@@ -10,7 +10,7 @@
 static const lbr_signal_id_t k_signals[] = {
     LBR_SIG_TEMP_CVT,
     LBR_SIG_GPS_LATITUDE,
-    LBR_SIG_DASH_LINK,
+    LBR_SIG_COCKPIT_LINK,
     LBR_SIG_GPS_SATELLITES,
 };
 #define N (sizeof k_signals / sizeof k_signals[0])
@@ -51,7 +51,7 @@ static void test_sim_is_marked_and_plausible(void)
 static const lbr_signal_id_t k_pedals[] = {
     LBR_SIG_GAS_PEDAL,
     LBR_SIG_BRAKE_PEDAL,
-    LBR_SIG_DASH_LINK,
+    LBR_SIG_COCKPIT_LINK,
     LBR_SIG_ENGINE_RPM,
 };
 #define NP (sizeof k_pedals / sizeof k_pedals[0])
@@ -102,7 +102,7 @@ static void test_io_parse_valid(void)
     CHECK(t[1].u.adc.ntc);
 
     /* Button bitmask on a u32 signal. */
-    static const lbr_signal_id_t btn[] = {LBR_SIG_CORNER_LINK};
+    static const lbr_signal_id_t btn[] = {LBR_SIG_GPS_SATELLITES};
     lbr_io_chan_t                b;
     CHECK_EQ_I(lbr_io_parse("din gpio=4,5,18,19", btn, 1, &b, &lbr_io_chip_esp32, err, sizeof err),
                0);
@@ -155,10 +155,10 @@ static void test_io_parse_rejects(void)
 }
 
 /* The same spec means different pins on the ESP32-C5 (IMU, Central, corner,
- * and dashboard nodes): ADC1 is GPIO 1..6 and 15..22 belong to flash. */
+ * and cockpit nodes): ADC1 is GPIO 1..6 and 15..22 belong to flash. */
 static void test_io_parse_chip_rules(void)
 {
-    static const lbr_signal_id_t batt[] = {LBR_SIG_CORNER_FL_BATTERY};
+    static const lbr_signal_id_t batt[] = {LBR_SIG_COCKPIT_BATTERY};
     lbr_io_chan_t                c;
     char                         err[96] = "";
     CHECK_EQ_I(lbr_io_parse("adc gpio=3 mv0=0 v0=0 mv1=3000 v1=100", batt, 1, &c,
@@ -169,7 +169,7 @@ static void test_io_parse_chip_rules(void)
     CHECK(lbr_io_parse("adc gpio=34 mv0=0 v0=0 mv1=3000 v1=100", batt, 1, &c, &lbr_io_chip_esp32c5,
                        err, sizeof err) < 0);
     CHECK(strstr(err, "esp32c5") != NULL);
-    static const lbr_signal_id_t link[] = {LBR_SIG_DASH_LINK};
+    static const lbr_signal_id_t link[] = {LBR_SIG_COCKPIT_LINK};
     CHECK(lbr_io_parse("din gpio=18", link, 1, &c, &lbr_io_chip_esp32c5, err, sizeof err) < 0);
     CHECK_EQ_I(
         lbr_io_parse("din gpio=10 pull=up", link, 1, &c, &lbr_io_chip_esp32c5, err, sizeof err), 0);

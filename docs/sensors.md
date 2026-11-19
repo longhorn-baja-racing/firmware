@@ -6,10 +6,11 @@ new part touches exactly one driver file and one line in its node's `main.c`.
 ## How a node is put together
 
 ```text
-car/nodes/<node>/main/<node>_plan.c   slots: which signals, at what rate, CAN decimation (pure data)
+car/catalog.toml                      nodes, signals, frames, slots: declared once
+car/nodes/<node>/main/<node>_plan.c   generated from the catalog (pure data; do not edit)
 car/nodes/<node>/main/main.c          binds a driver to each slot that has a part
-car/components/sensors/               driver interface + drivers
-car/components/node/                  runtime: timing, timestamps, seq, CAN, logs, heartbeat
+lbrlib/components/sensors/            driver interface + drivers
+lbrlib/components/node/               runtime: timing, timestamps, seq, CAN, logs, heartbeat
 ```
 
 Until a slot has a driver it runs the **unconfigured** driver: every channel publishes
@@ -35,13 +36,13 @@ signal order, separated by `;`. Empty means not fitted.
 
 Pins are checked against the node's chip: on the classic ESP32 (powertrain, driver_input,
 temperature, stress) ADC1 is GPIO 32..39 and 34..39 have no internal pulls; on the ESP32-C5
-(imu, central, dashboard, corners) ADC1 is GPIO 1..6 and GPIO 15..22 belong to flash.
+(imu, central, cockpit, corners) ADC1 is GPIO 1..6 and GPIO 15..22 belong to flash.
 
 ADC options: `avg=` samples per reading (default 4), `lo=`/`hi=` electrical window in mV (outside
 it the channel reads `SENSOR_FAULT`: open or shorted sensor), `min=`/`max=` physical range
 (outside it reads `OUT_OF_RANGE`). Pulse options: `edge=rise|fall`, `pull=up|down|none`. Digital
 options: `active=low|high`, `pull=`, `debounce_ms=` (default 10). Full grammar:
-`car/components/sensors/include/lbr/sensor_io.h`.
+`lbrlib/components/sensors/include/lbr/sensor_io.h`.
 
 The spec is the channel's calibration: it is recorded verbatim in every session config
 (`sensor.<n>.params=`) and changes the config CRC. A spec that does not parse (wrong channel
@@ -61,7 +62,7 @@ active RMC.
 
 ## Writing a driver
 
-1. Create `car/components/sensors/sensor_<part>.c` (hardware code may use ESP-IDF; keep any pure
+1. Create `lbrlib/components/sensors/sensor_<part>.c` (hardware code may use ESP-IDF; keep any pure
    conversion math in a separate function so it can be host-tested).
 2. Provide a constructor that fills an `lbr_sensor_t`:
 
@@ -76,12 +77,20 @@ active RMC.
    - `read(self, t_us, out)`: fill one `lbr_reading_t` per channel, in the slot's signal order.
      Return non-zero if the part stopped responding (the runtime re-inits it).
    - `is_calibrated()` (optional): false while calibration is missing or invalid.
-4. Add the file to `car/components/sensors/CMakeLists.txt`, and bind it in the node's `main.c`:
+4. Add the file to `lbrlib/components/sensors/CMakeLists.txt`, and bind it in the node's `main.c`
+   with `lbr_slot()`, which hands the driver the slot's sensor (the slot's name and signals are
+   already in it):
 
    ```c
-   lbr_sensor_<part>(&s_sensors[IMU_SLOT_CHASSIS], lbr_plan_imu.slots[IMU_SLOT_CHASSIS].signals,
-                     lbr_plan_imu.slots[IMU_SLOT_CHASSIS].n_signals, &cfg);
+   static void init(lbr_node *n)
+   {
+       lbr_sensor_<part>(lbr_slot(n, IMU_SLOT_CHASSIS), &cfg);
+   }
+   LBR_NODE_MAIN(&lbr_plan_imu, .init = init);
    ```
+
+   Binding a slot twice, or one the plan does not have, puts the node in `CONFIG_INVALID` with
+   the reason; `lbr_slot()` then returns NULL, which a driver must ignore.
 
 ## Rules every driver follows
 
@@ -100,9 +109,17 @@ active RMC.
 
 A slot's rate must equal the rate of the CAN frame its signals travel in, and every field of
 that frame must come from the same slot (each sample is published exactly once, nothing is
-decimated). So a rate or channel change is two edits: the node's plan and the frame table
-(`car/components/protocol/frames.c`, with DAQ-WIRING.md section 7). Then run the host tests:
-`test_plans` checks every plan against the table, that every frame has a producer, and the whole
-bus against its 50 % ceiling. A new signal goes in its group in `signals.def` and in one frame,
-followed by `cmake --build build-dev --target fixtures` and a matching update in
-`lbr-dashboard`.
+decimated). Rates, channels, slots, and frames are all declared once, in
+[`car/catalog.toml`](../car/catalog.toml) (with DAQ-WIRING.md section 7); a new signal is one
+line in its frame. Regenerate and test:
+
+```sh
+python3 lbrlib/tools/lbrgen.py car/catalog.toml     # checks the layout, writes plans and tables
+ctest --test-dir build-dev                         # test_plans: every plan, producer, bus budget
+```
+
+`lbrgen.py` refuses a catalog with a clear message (duplicate id, fields that do not fit the
+frame, a slot no frame fills, ...); `test_plans` then checks every plan against the table, that
+every frame has a producer, and the whole bus against its 50 % ceiling. A catalog change is a
+protocol change: `cmake --build build-dev --target fixtures` and a matching update in the
+dashboard app.

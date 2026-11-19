@@ -43,12 +43,13 @@ at 16.0 plug central gps
 at 17.0 expect GPS_LATITUDE valid == 1
 at 17.0 expect GPS_FIX value == 3
 
-# A corner's IMU stops responding: its forwarded frames say SENSOR_FAULT and
-# the IMU Controller raises SENSOR in its heartbeat.
+# A wheel hub IMU stops responding: that node's frames say SENSOR_FAULT and
+# it raises SENSOR in its own heartbeat; the other nodes are unaffected.
 at 17.0 unplug corner_fr imu
 at 17.5 expect IMU_FR_ACCEL_Z reason == SENSOR_FAULT
 at 17.5 expect corner_fr state == DEGRADED
-at 17.5 expect imu state == DEGRADED
+at 17.5 expect corner_fr event:SENSOR_INIT_FAIL >= 1
+at 17.5 expect corner_fl state == RUN
 at 18.0 plug corner_fr imu
 at 21.0 expect IMU_FR_ACCEL_Z valid == 1
 at 21.0 expect corner_fr state == RUN

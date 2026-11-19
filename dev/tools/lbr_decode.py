@@ -7,7 +7,7 @@ written from the spec rather than from the firmware source. It serves as
     talk to the Central Controller over USB serial (needs pyserial);
   - a cross-check: --selftest decodes every golden fixture in dev/tests/fixtures
     and compares the result with the expected JSON the firmware produced.
-    lbr-dashboard should pass the same fixtures with its own decoder.
+    The dashboard app should pass the same fixtures with its own decoder.
 
 The decoder is schema-driven: names, value types, units, events, reasons,
 and every CAN data frame layout (the frame table) come from catalog.json,
@@ -15,12 +15,15 @@ never from tables in this file.
 
 Usage:
   lbr_decode.py log FILE.lbr [--json]
+  lbr_decode.py csv FILE.lbr [--out FILE.csv]
   lbr_decode.py stream FILE [--json]
   lbr_decode.py serial PORT [--baud N] [--cmd "STAT"|"LIST"|"DUMP name"] [--out FILE]
   lbr_decode.py --selftest [FIXTURES_DIR]
 """
 
 import argparse
+import csv
+import io
 import json
 import os
 import struct
@@ -94,8 +97,8 @@ class Catalog:
             crc = crc32(s["name"].encode("ascii") + b"\0", crc)
         for f in self.raw["frames"]:
             cnt = 0xFF if f["counter_offset"] is None else f["counter_offset"]
-            crc = crc32(struct.pack("<HBBHBBB", f["id"], f["sender"], f["origin"], f["rate_hz"],
-                                    f["dlc"], cnt, len(f["fields"])), crc)
+            crc = crc32(struct.pack("<HBHBBB", f["id"], f["sender"], f["rate_hz"], f["dlc"], cnt,
+                                    len(f["fields"])), crc)
             for fd in f["fields"]:
                 crc = crc32(struct.pack("<HBBI", fd["signal"], fd["offset"],
                                         self.raw["encodings"].index(fd["enc"]),
@@ -199,47 +202,33 @@ def grid_index(counter, rx_us, period):
 
 class BusDecoder:
     """Which nodes' clocks are on the shared time base, from the heartbeats
-    and CORNER_STATUS seen so far (docs/can-ids.md)."""
+    and boot / lost / found events seen so far (docs/can-ids.md)."""
 
     NOT_SYNCED = 0x01
 
     def __init__(self, cat):
         self.cat = cat
         self.hb = {}
-        self.corner_synced = None
         self.central = central_id(cat)
-        self.imu = next(i for i, n in cat.nodes.items() if n == "imu")
-        self.corners = [next(i for i, n in cat.nodes.items() if n == "corner_" + c)
-                        for c in ("fl", "fr", "bl", "br")]
 
     def forget_sync(self, source, value):
         """A node that booted, or was lost or found again, is not synced
-        until its next heartbeat or CORNER_STATUS says so."""
+        until its next heartbeat says so."""
         name = self.cat.events.get(value & 0xFFFF)
         if name not in ("BOOT", "NODE_LOST", "NODE_FOUND"):
             return
         node = source if name == "BOOT" else value >> 16
-        if node in self.corners:
-            if self.corner_synced is not None:
-                self.corner_synced &= ~(1 << self.corners.index(node)) & 0xFF
-        elif 1 <= node <= 6:
+        if is_can_node(self.cat, node):
             self.hb[node] = self.NOT_SYNCED
 
-    def node_synced(self, node):
+    def synced(self, node):
         if node == self.central:
             return True
         return node in self.hb and not (self.hb[node] & self.NOT_SYNCED)
 
-    def synced(self, origin):
-        if origin in self.corners:
-            bit = 1 << self.corners.index(origin)
-            return (self.corner_synced is not None and bool(self.corner_synced & bit)
-                    and self.node_synced(self.imu))
-        return self.node_synced(origin)
-
 
 def is_can_node(cat, node):
-    return 1 <= node <= 6
+    return 1 <= node <= cat.ids["can_node_max"]
 
 
 def decode_field(cat, fd, data):
@@ -264,11 +253,11 @@ def decode_data_frame(cat, dec, f, t_us, data):
         k = t_us // period
     else:
         k = grid_index(struct.unpack_from("<H", data, f["counter_offset"])[0], t_us, period)
-    synced = dec.synced(f["origin"])
+    synced = dec.synced(f["sender"])
     out = []
     for fd in f["fields"]:
         type_name, valid, bits = decode_field(cat, fd, data)
-        out.append(cat.sample_dict(fd["signal"], f["origin"], type_name, valid, synced, infer,
+        out.append(cat.sample_dict(fd["signal"], f["sender"], type_name, valid, synced, infer,
                                    k & 0xFFFFFFFF, k * period, bits))
     return out
 
@@ -277,12 +266,13 @@ def can_sender(cat, can_id):
     ids = cat.ids
     if can_id > 0x7FF:
         return 0
-    if can_id in (ids["time_sync"], ids["time_follow_up"], ids["command"]):
+    if can_id in (ids["time_sync"], ids["time_follow_up"], ids["command"], ids["update_ctrl"],
+                  ids["update_data"]):
         return central_id(cat)
-    for base in (ids["event_base"], ids["heartbeat_base"]):
-        if base < can_id <= base + 6:
+    for base in (ids["event_base"], ids["heartbeat_base"], ids["update_status_base"]):
+        if base < can_id <= base + ids["can_node_max"]:
             return can_id - base
-    if can_id >= ids["health_base"]:
+    if can_id >= ids["health_base"] + 16:
         node, page = (can_id - ids["health_base"]) >> 4, can_id & 0xF
         return node if is_can_node(cat, node) and page < HEALTH_PAGES else 0
     f = cat.frames.get(can_id)
@@ -300,10 +290,10 @@ def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
     if ext or can_id > 0x7FF:
         return d  # not LBR traffic
     ids = cat.ids
-    if ids["heartbeat_base"] < can_id <= ids["heartbeat_base"] + 6 and dlc == 2:
+    if is_can_node(cat, can_id - ids["heartbeat_base"]) and dlc == 2:
         dec.hb[can_id - ids["heartbeat_base"]] = data[1]
         d["heartbeat"] = {"state": data[0], "err_flags": data[1]}
-    elif ids["event_base"] < can_id <= ids["event_base"] + 6 and dlc == 8:
+    elif is_can_node(cat, can_id - ids["event_base"]) and dlc == 8:
         fl = data[4]
         sig = cat.by_name["FAULT" if fl & 1 else "EVENT"]
         t_lo = data[5] | data[6] << 8 | data[7] << 16
@@ -314,9 +304,6 @@ def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
         dec.forget_sync(can_id - ids["event_base"], value)
     elif can_id in cat.frames and dlc == cat.frames[can_id]["dlc"]:
         d["samples"] = decode_data_frame(cat, dec, cat.frames[can_id], t_us, data)
-        for smp in d["samples"]:
-            if smp["name"] == "CORNER_SYNCED":
-                dec.corner_synced = int(smp["value_bits"], 16) if smp["valid"] else 0
     elif can_id == ids["time_sync"] and dlc == 8:
         d["time_sync"] = {"seq": data[4], "epoch": data[5] | data[6] << 8,
                           "ms": struct.unpack_from("<I", data)[0]}
@@ -324,7 +311,19 @@ def decode_can_frame(cat, dec, t_us, flags, can_id, dlc, data):
         d["time_follow_up"] = {"seq": data[0], "tx_us": struct.unpack_from("<Q", data)[0] >> 8}
     elif can_id == ids["command"] and dlc == 8:
         d["command"] = {"code": data[0], "args": data[1:8].hex()}
-    elif can_id >= ids["health_base"] and dlc == 8:
+    elif can_id == ids["update_ctrl"] and dlc == 8:
+        d["update_ctrl"] = {"op": data[0], "target": data[1], "args": data[2:8].hex()}
+    elif can_id == ids["update_data"] and dlc == 8:
+        d["update_data"] = {"k_lo": data[0]}
+    elif is_can_node(cat, can_id - ids["update_status_base"]) and dlc == 8:
+        u = {"op": data[0], "result": data[1], "state": data[2]}
+        ops = cat.raw["update"]["ops"]
+        if data[0] < len(ops) and ops[data[0]] == "INFO":
+            u.update({"pending": data[3] != 0, "hash": struct.unpack_from(">I", data, 4)[0]})
+        else:
+            u.update({"next_k": data[3] | data[4] << 8 | data[5] << 16, "version": data[6]})
+        d["update_status"] = u
+    elif can_id >= ids["health_base"] + 16 and dlc == 8:
         node, page = (can_id - ids["health_base"]) >> 4, can_id & 0xF
         if is_can_node(cat, node) and page < HEALTH_PAGES:
             try:
@@ -508,6 +507,182 @@ def decode_stream(cat, data):
 
 
 # --------------------------------------------------------------------------
+# CSV export (docs/protocol.md, "CSV export"). The .LBR log stays the
+# authoritative record; the CSV is a lossless-for-data, tabular view of it.
+
+CSV_VERSION = 1
+CSV_COLUMNS = ["t_s", "kind", "node", "name", "value", "unit", "status", "synced", "seq"]
+SESSION_FIELDS = ["format_version", "protocol_version", "fw_version", "catalog_hash",
+                  "config_crc", "reset_reason", "boot_count", "start_time_us"]
+
+
+class CatalogMismatch(Exception):
+    pass
+
+
+def csv_time(t_us):
+    """Exact decimal seconds of a microsecond count (no float rounding)."""
+    return "%d.%06d" % divmod(t_us, 1000000)
+
+
+def csv_f32(bits):
+    """Shortest decimal that reads back as the same IEEE single."""
+    x = struct.unpack("<f", struct.pack("<I", bits))[0]
+    if x != x or x in (float("inf"), float("-inf")):
+        return repr(x)
+    for prec in range(6, 10):
+        text = "%.*g" % (prec, x)
+        if f32_bits(float(text)) == bits:
+            return text
+    return "%.9g" % x
+
+
+class CsvExporter:
+    """Writes one row per sample, event, heartbeat/health field, loss, and
+    text record, in log order. Nothing in the log is dropped silently: frames
+    left out (time sync) are counted in the closing integrity rows."""
+
+    def __init__(self, cat, out):
+        self.cat = cat
+        self.w = csv.writer(out, lineterminator="\n")
+        self.dec = BusDecoder(cat)
+        self.t_us = 0  # latest shared time seen, for records that carry none
+        self.logger = ""
+        self.catalog_checked = 0
+        self.time_sync_frames = self.time_follow_up_frames = self.update_data_frames = 0
+        self.upd = cat.raw["update"]
+        self.commands = {c["code"]: c["name"] for c in cat.raw["commands"]}
+        self.err_flags = cat.raw["heartbeat_err_flags"]
+        self.w.writerow(CSV_COLUMNS)
+        self.row(0, "format", "", "lbr_csv_version", CSV_VERSION)
+
+    def node(self, n):
+        return self.cat.nodes.get(n, "node%d" % n)
+
+    def upd_name(self, table, code):
+        names = self.upd[table]
+        return names[code] if code < len(names) and names[code] else "%s%d" % (table[:-1], code)
+
+    def row(self, t_us, kind, node, name, value="", unit="", status="", synced="", seq=""):
+        self.w.writerow([csv_time(t_us), kind, node, name, value, unit, status, synced, seq])
+
+    def sample(self, d):
+        info = self.cat.signals.get(d["signal"])
+        kind, unit, status, value = "sample", info["unit"] if info else "", "ok", ""
+        name = d["name"] if info else "signal_0x%04x" % d["signal"]
+        bits = int(d["value_bits"], 16)
+        if not d["valid"]:
+            status = d["reason"]
+        elif "event" in d:
+            kind, name, value, unit = d["name"].lower(), d["event"], d["event_arg"], ""
+        elif d["type"] == "f32":
+            value = csv_f32(bits)
+        elif d["type"] == "i32":
+            value = struct.unpack("<i", struct.pack("<I", bits))[0]
+        else:
+            value = bits  # u32, bool (0/1), status, raw
+        self.row(d["t_us"], kind, self.node(d["source"]), name, value, unit, status,
+                 int(d["synced"]), d["seq"])
+
+    def can_frame(self, f):
+        t = self.t_us = f["t_us"]
+        node = self.node(f["sender"])
+        if "samples" in f:
+            for smp in f["samples"]:
+                self.sample(smp)
+        elif "heartbeat" in f:
+            hb = f["heartbeat"]
+            names = [k for k, bit in self.err_flags.items() if hb["err_flags"] & bit]
+            self.row(t, "heartbeat", node, "state", hb["state"])
+            self.row(t, "heartbeat", node, "err_flags", hb["err_flags"], "bitmask",
+                     "|".join(names) or "ok")
+        elif "health_page" in f:
+            fields = {}
+            decode_health_page(f["health_page"], bytes.fromhex(f["data"]), fields)
+            for k, v in fields.items():
+                self.row(t, "health", node, k, v)
+        elif "time_sync" in f:
+            self.time_sync_frames += 1
+        elif "time_follow_up" in f:
+            self.time_follow_up_frames += 1
+        elif "command" in f:
+            c = f["command"]
+            self.row(t, "command", node, self.commands.get(c["code"], "code%d" % c["code"]), c["args"])
+        elif "update_ctrl" in f:
+            u = f["update_ctrl"]
+            target = "ALL" if u["target"] == 0xFF else self.node(u["target"])
+            self.row(t, "update", node, self.upd_name("ops", u["op"]), target)
+        elif "update_data" in f:
+            self.update_data_frames += 1
+        elif "update_status" in f:
+            u = f["update_status"]
+            self.row(t, "update", node, self.upd_name("ops", u["op"]),
+                     self.upd_name("results", u["result"]), "", self.upd_name("states", u["state"]))
+        else:  # not LBR traffic, an unknown id, or a malformed frame: keep the raw bytes
+            ident = ("0x%08X" if f["flags"] & REC_FLAG_EXT else "0x%03X") % f["id"]
+            self.row(t, "can_raw", node, ident, f["data"])
+
+    def record(self, offset, rtype, p):
+        r = decode_log_record(self.cat, self.dec, offset, rtype, p)
+        kind = r["type"]
+        if kind == "SESSION":
+            self.t_us = r["start_time_us"]
+            self.logger = self.node(r["node_id"])
+            if r["catalog_hash"] != self.cat.raw["catalog_hash"]:
+                raise CatalogMismatch("log catalog hash %u != catalog.json %u: pass --catalog with the"
+                                      " catalog of the firmware that wrote this log"
+                                      % (r["catalog_hash"], self.cat.raw["catalog_hash"]))
+            self.catalog_checked = 1
+            for k in SESSION_FIELDS:
+                self.row(self.t_us, "session", self.logger, k, r[k])
+            for line in r["config_text"].splitlines():
+                k, sep, v = line.partition("=")
+                self.row(self.t_us, "config", self.logger, k if sep else "", v if sep else line)
+        elif kind == "SAMPLE":
+            self.sample(r["sample"])
+            if r["sample"]["synced"]:
+                self.t_us = r["sample"]["t_us"]
+        elif kind == "HEALTH":
+            h = dict(r["health"])
+            node = self.node(h.pop("node_id"))
+            for k, v in h.items():
+                self.row(self.t_us, "health", node, k, v)
+        elif kind == "CAN_FRAME":
+            self.can_frame(r["frame"])
+        elif kind == "LOSS":
+            self.t_us = r["t_us"]
+            self.row(self.t_us, "loss", self.logger, "dropped_records", r["dropped_records"])
+            self.row(self.t_us, "loss", self.logger, "dropped_bytes", r["dropped_bytes"])
+        elif kind == "TEXT":
+            self.row(self.t_us, "text", self.logger, "text", r["text"])
+        elif kind == "END":
+            self.t_us = r["t_us"]
+            self.row(self.t_us, "end", self.logger, "records_written", r["records_written"])
+        else:
+            self.row(self.t_us, "unknown_record", self.logger, "type%d" % rtype, p.hex())
+
+    def finish(self, reader, records):
+        for k, v in (("records", records), ("corrupt_regions", reader.corrupt_regions),
+                     ("skipped_bytes", reader.skipped_bytes),
+                     ("truncated_tail", reader.truncated_tail),
+                     ("time_sync_frames", self.time_sync_frames),
+                     ("time_follow_up_frames", self.time_follow_up_frames),
+                     ("update_data_frames", self.update_data_frames),
+                     ("catalog_checked", self.catalog_checked)):
+            self.row(self.t_us, "integrity", self.logger, k, v)
+
+
+def export_csv(cat, data, out):
+    r = LogReader(data)
+    x = CsvExporter(cat, out)
+    n = 0
+    for offset, rtype, p in r:
+        x.record(offset, rtype, p)
+        n += 1
+    x.finish(r, n)
+
+
+# --------------------------------------------------------------------------
 # Self test against the golden fixtures
 
 
@@ -541,6 +716,10 @@ def selftest(fixtures):
 
     checks.append(("session log", decode_log(cat, read("session.lbr")) == expect("session.json")))
     checks.append(("usb stream", decode_stream(cat, read("stream_usb.bin")) == expect("stream_usb.json")))
+
+    out = io.StringIO()
+    export_csv(cat, read("session.lbr"), out)
+    checks.append(("csv export", out.getvalue() == read("session.csv").decode("utf-8")))
 
     for name, ok in checks:
         print("%s %s" % ("PASS" if ok else "FAIL", name))
@@ -582,6 +761,19 @@ def cmd_stream(cat, path, as_json):
         out = decode_stream(cat, f.read())
     json.dump(out, sys.stdout, indent=1) if as_json else print(
         "%d packets, %d bad frames" % (len(out["packets"]), out["bad_frames"]))
+
+
+def cmd_csv(cat, path, out_path):
+    out_path = out_path or os.path.splitext(path)[0] + ".csv"
+    with open(path, "rb") as f:
+        data = f.read()
+    try:
+        with open(out_path, "w", encoding="utf-8", newline="") as out:
+            export_csv(cat, data, out)
+    except CatalogMismatch as e:
+        os.remove(out_path)
+        sys.exit("%s: %s" % (path, e))
+    print("wrote %s" % out_path)
 
 
 def cmd_serial(cat, port, baud, cmd, out_path):
@@ -636,7 +828,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--selftest", nargs="?", const=DEFAULT_FIXTURES, metavar="FIXTURES_DIR")
     ap.add_argument("--catalog", default=os.path.join(DEFAULT_FIXTURES, "catalog.json"))
-    ap.add_argument("mode", nargs="?", choices=["log", "stream", "serial"])
+    ap.add_argument("mode", nargs="?", choices=["log", "csv", "stream", "serial"])
     ap.add_argument("target", nargs="?")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--baud", type=int, default=921600)
@@ -651,6 +843,8 @@ def main():
     cat = Catalog(args.catalog)
     if args.mode == "log":
         cmd_log(cat, args.target, args.json)
+    elif args.mode == "csv":
+        cmd_csv(cat, args.target, args.out)
     elif args.mode == "stream":
         cmd_stream(cat, args.target, args.json)
     else:

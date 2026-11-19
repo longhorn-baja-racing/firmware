@@ -1,5 +1,5 @@
 /*
- * Golden fixtures shared with lbr-dashboard (dev/tests/fixtures).
+ * Golden fixtures shared with the dashboard app (dev/tests/fixtures).
  *
  *   gen_fixtures write <dir>   regenerate every fixture
  *   gen_fixtures check <dir>   regenerate in memory, byte-compare with <dir>
@@ -26,6 +26,7 @@
 #include "lbr/packet.h"
 #include "lbr/protocol.h"
 #include "lbr/transport.h"
+#include "lbr/update.h"
 #include "lbr/version.h"
 
 /* ------------------------------------------------------------------------ */
@@ -142,7 +143,7 @@ static void json_health(buf_t *b, const lbr_health_record_t *h)
 }
 
 /* Decode a frame as the Central's live views do. `dec` carries the sync
- * state across a capture (heartbeats, CORNER_STATUS), as a reader must. */
+ * state across a capture (heartbeats, boot events), as a reader must. */
 static void json_can_frame(buf_t *b, lbr_bus_decoder_t *dec, uint64_t t_us, uint8_t flags,
                            const lbr_can_frame_t *f)
 {
@@ -160,6 +161,7 @@ static void json_can_frame(buf_t *b, lbr_bus_decoder_t *dec, uint64_t t_us, uint
     uint16_t            epoch;
     uint64_t            tx;
     lbr_sample_t        s[LBR_FRAME_MAX_FIELDS];
+    lbr_upd_status_t    us;
     size_t              n = lbr_bus_decode(dec, f, t_us, s, LBR_FRAME_MAX_FIELDS);
     if (n > 0) {
         jf(b, ", \"samples\": [");
@@ -179,6 +181,21 @@ static void json_can_frame(buf_t *b, lbr_bus_decoder_t *dec, uint64_t t_us, uint
         jf(b, ", \"command\": {\"code\": %u, \"args\": ", code);
         json_hex(b, args, 7);
         jf(b, "}");
+    } else if (lbr_upd_decode_ctrl(f, &code, &state, args)) {
+        jf(b, ", \"update_ctrl\": {\"op\": %u, \"target\": %u, \"args\": ", code, state);
+        json_hex(b, args, 6);
+        jf(b, "}");
+    } else if (f->id == LBR_CAN_ID_UPDATE_DATA && f->dlc == 8) {
+        jf(b, ", \"update_data\": {\"k_lo\": %u}", f->data[0]);
+    } else if (lbr_upd_decode_status(f, &us)) {
+        jf(b, ", \"update_status\": {\"op\": %u, \"result\": %u, \"state\": %u, ", us.op, us.result,
+           us.state);
+        if (us.op == LBR_UPD_OP_INFO) {
+            jf(b, "\"pending\": %s, \"hash\": %lu}", us.pending ? "true" : "false",
+               (unsigned long)us.hash);
+        } else {
+            jf(b, "\"next_k\": %lu, \"version\": %u}", (unsigned long)us.next_k, us.version);
+        }
     } else {
         int page = lbr_can_decode_health_page(f, &h);
         if (page >= 0) {
@@ -217,7 +234,7 @@ static size_t sample_set(lbr_sample_t *out)
     out[n++].v.i32 = 302849870; /* 30.2849870 N */
     out[n]         = mk(LBR_SIG_GPS_SATELLITES, LBR_NODE_CENTRAL, 2, 1000200);
     out[n++].v.u32 = 11;
-    out[n]         = mk(LBR_SIG_DASH_LINK, LBR_NODE_CENTRAL, 0xFFFFFFFFu, 2000000);
+    out[n]         = mk(LBR_SIG_COCKPIT_LINK, LBR_NODE_CENTRAL, 0xFFFFFFFFu, 2000000);
     out[n++].v.b   = true;
     out[n]         = mk(LBR_SIG_GPS_FIX, LBR_NODE_CENTRAL, 3, 2000300);
     out[n++].v.u32 = 3;
@@ -247,8 +264,7 @@ static void gen_catalog(buf_t *j)
     jf(j, "  ],\n  \"frames\": [\n");
     for (size_t i = 0; i < lbr_frame_count(); i++) {
         const lbr_frame_def_t *d = lbr_frame_at(i);
-        jf(j, "    {\"id\": %u, \"name\": \"%s\", \"sender\": %u, \"origin\": %u, ", d->can_id,
-           d->name, d->sender, d->origin);
+        jf(j, "    {\"id\": %u, \"name\": \"%s\", \"sender\": %u, ", d->can_id, d->name, d->sender);
         jf(j, "\"rate_hz\": %u, \"dlc\": %u, \"counter_offset\": ", d->rate_hz, d->dlc);
         if (d->counter_offset == LBR_FRAME_NO_COUNTER) {
             jf(j, "null");
@@ -269,6 +285,9 @@ static void gen_catalog(buf_t *j)
        LBR_CAN_ID_TIME_SYNC, LBR_CAN_ID_TIME_FOLLOW_UP, LBR_CAN_ID_COMMAND);
     jf(j, "\"event_base\": %u, \"heartbeat_base\": %u, \"health_base\": %u, ",
        LBR_CAN_ID_EVENT_BASE, LBR_CAN_ID_HEARTBEAT_BASE, LBR_CAN_ID_HEALTH_BASE);
+    jf(j, "\"update_ctrl\": %u, \"update_data\": %u, \"update_status_base\": %u, ",
+       LBR_CAN_ID_UPDATE_CTRL, LBR_CAN_ID_UPDATE_DATA, LBR_CAN_ID_UPDATE_STATUS);
+    jf(j, "\"can_node_max\": %u, ", LBR_NODE_CAN_MAX);
     jf(j, "\"time_sync_hz\": %u, \"bitrate\": 500000},\n", LBR_TIME_SYNC_HZ);
     jf(j, "  \"encodings\": [");
     for (unsigned e = 0; e < LBR_ENC_COUNT_; e++) {
@@ -281,6 +300,20 @@ static void gen_catalog(buf_t *j)
     jf(j, "  \"commands\": [{\"code\": %u, \"name\": \"SESSION_START\"}, ", LBR_CMD_SESSION_START);
     jf(j, "{\"code\": %u, \"name\": \"SESSION_STOP\"}, {\"code\": %u, \"name\": \"MARK\"}],\n",
        LBR_CMD_SESSION_STOP, LBR_CMD_MARK);
+    /* Firmware update over CAN (lbr/update.h): names by code. */
+    jf(j, "  \"update\": {\"version\": %u, \"ops\": [", LBR_UPD_VERSION);
+    for (unsigned op = 0; op <= LBR_UPD_OP_INFO; op++) {
+        jf(j, "%s\"%s\"", op ? ", " : "", op ? lbr_upd_op_name((uint8_t)op) : "");
+    }
+    jf(j, "], \"results\": [");
+    for (unsigned r = 0; r <= LBR_UPD_ERR_OP; r++) {
+        jf(j, "%s\"%s\"", r ? ", " : "", lbr_upd_result_name((uint8_t)r));
+    }
+    jf(j, "], \"states\": [");
+    for (unsigned st = 0; st <= LBR_UPD_STAGED; st++) {
+        jf(j, "%s\"%s\"", st ? ", " : "", lbr_upd_state_name((uint8_t)st));
+    }
+    jf(j, "]},\n");
     jf(j, "  \"nodes\": [\n");
     for (unsigned id = 1; id < 0xFF; id++) {
         const char *name = lbr_node_name((uint8_t)id);
@@ -399,8 +432,10 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     /* Heartbeats first: they say which clocks are synced. */
     lbr_can_encode_heartbeat(LBR_NODE_DRIVER_INPUT, LBR_NODE_RUN, 0, &f[n]);
     t[n] = base, flags[n++] = 0;
-    lbr_can_encode_heartbeat(LBR_NODE_IMU, LBR_NODE_DEGRADED, LBR_HB_ERR_LINK, &f[n]);
+    lbr_can_encode_heartbeat(LBR_NODE_CORNER_FL, LBR_NODE_RUN, 0, &f[n]);
     t[n] = base + 100, flags[n++] = 0;
+    lbr_can_encode_heartbeat(LBR_NODE_CORNER_BR, LBR_NODE_DEGRADED, LBR_HB_ERR_SENSOR, &f[n]);
+    t[n] = base + 150, flags[n++] = 0;
     lbr_can_encode_heartbeat(LBR_NODE_STRESS, LBR_NODE_DEGRADED,
                              LBR_HB_ERR_NOT_SYNCED | LBR_HB_ERR_SENSOR, &f[n]);
     t[n] = base + 200, flags[n++] = 0;
@@ -421,7 +456,7 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     lbr_can_encode_data(lbr_frame_def(0x201), v, k / 100u, &f[n]);
     t[n] = k * 10000u + 800, flags[n++] = 0;
 
-    /* A forwarded corner sample whose BR gyro Z did not fit its field. */
+    /* Wheel hub IMU samples; the BR gyro Z did not fit its field. */
     v[0] = fv(LBR_SIG_IMU_FL_ACCEL_X, 1.25f);
     v[1] = fv(LBR_SIG_IMU_FL_ACCEL_Y, -0.5f);
     v[2] = fv(LBR_SIG_IMU_FL_ACCEL_Z, 9.81f);
@@ -433,16 +468,12 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     lbr_can_encode_data(lbr_frame_def(0x307), v, k - 3, &f[n]);
     t[n] = k * 10000u + 1000, flags[n++] = 0;
 
-    /* Corner status: FL synced, BL down. */
-    v[0] = fv(LBR_SIG_CORNER_FL_BATTERY, 81.0f);
-    v[1] = fv(LBR_SIG_CORNER_FR_BATTERY, 77.0f);
-    lbr_sample_set_unavailable(&v[2], LBR_UNAVAIL_NO_DATA);
-    v[2].signal = LBR_SIG_CORNER_BL_BATTERY;
-    v[2].type   = LBR_VAL_F32;
-    v[3]        = fv(LBR_SIG_CORNER_BR_BATTERY, 79.0f);
-    v[4]        = uv(LBR_SIG_CORNER_LINK, 0x0B);
-    v[5]        = uv(LBR_SIG_CORNER_SYNCED, 0x01);
-    lbr_can_encode_data(lbr_frame_def(0x30A), v, k / 100u, &f[n]);
+    /* The FL node reboots: its samples are not synced until its next
+     * heartbeat says so. */
+    lbr_sample_t boot = mk(LBR_SIG_EVENT, LBR_NODE_CORNER_FL, 0, 15000);
+    boot.synced       = false;
+    boot.v.u32        = lbr_event_value(LBR_EVT_BOOT, LBR_RESET_BROWNOUT);
+    lbr_can_encode_event(&boot, &f[n]);
     t[n] = k * 10000u + 1200, flags[n++] = 0;
     v[0] = fv(LBR_SIG_IMU_FL_ACCEL_X, 1.5f);
     v[1] = fv(LBR_SIG_IMU_FL_ACCEL_Y, -0.25f);
@@ -466,7 +497,7 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     lbr_can_encode_data(lbr_frame_def(0x500), v, k / 10u, &f[n]);
     t[n] = k * 10000u + 1700, flags[n++] = 0;
 
-    /* Central: GPS (always synced) and the dashboard link. */
+    /* Central: GPS (always synced) and the cockpit link. */
     v[0]       = uv(LBR_SIG_GPS_LATITUDE, 0);
     v[0].v.i32 = 302849870;
     v[1]       = uv(LBR_SIG_GPS_LONGITUDE, 0);
@@ -484,8 +515,8 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     v[3] = fv(LBR_SIG_GPS_HDOP, 0.9f);
     lbr_can_encode_data(lbr_frame_def(0x602), v, k / 10u, &f[n]);
     t[n] = k * 10000u + 2200, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
-    v[0] = fv(LBR_SIG_DASH_BATTERY, 66.0f);
-    v[1] = uv(LBR_SIG_DASH_LINK, 1);
+    v[0] = fv(LBR_SIG_COCKPIT_BATTERY, 66.0f);
+    v[1] = uv(LBR_SIG_COCKPIT_LINK, 1);
     lbr_can_encode_data(lbr_frame_def(0x60A), v, k / 100u, &f[n]);
     t[n] = k * 10000u + 2300, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
 
@@ -504,6 +535,31 @@ static size_t bus_set(lbr_can_frame_t *f, uint64_t *t, uint8_t *flags)
     lbr_health_record_t h = {.uptime_ms = 61000, .state = LBR_NODE_RUN, .flags = LBR_HF_CAN_UP};
     lbr_can_encode_health_page(LBR_NODE_POWERTRAIN, &h, 0, &f[n]);
     t[n] = base + 6000, flags[n++] = 0;
+
+    /* Firmware update traffic (parked only): a BEGIN, one data frame, the
+     * node's answer, and an INFO answer. */
+    uint8_t ua[6] = {0x00, 0x10, 0x0E, 0, 0, 0}; /* 921600 bytes */
+    lbr_upd_encode_ctrl(LBR_UPD_OP_BEGIN, LBR_NODE_STRESS, ua, &f[n]);
+    t[n] = base + 6100, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
+    uint8_t ub[7] = {0xE9, 0x06, 0x02, 0x20, 0x34, 0x12, 0x08};
+    lbr_upd_encode_data(256, ub, 7, &f[n]);
+    t[n] = base + 6200, flags[n++] = LBR_CAN_REC_FLAG_OWN_TX;
+    lbr_upd_status_t us = {.node    = LBR_NODE_STRESS,
+                           .op      = LBR_UPD_OP_QUERY,
+                           .result  = LBR_UPD_OK,
+                           .state   = LBR_UPD_RECEIVING,
+                           .next_k  = 257,
+                           .version = LBR_UPD_VERSION};
+    lbr_upd_encode_status(&us, &f[n]);
+    t[n] = base + 6300, flags[n++] = 0;
+    us = (lbr_upd_status_t){.node    = LBR_NODE_IMU,
+                            .op      = LBR_UPD_OP_INFO,
+                            .result  = LBR_UPD_OK,
+                            .state   = LBR_UPD_IDLE,
+                            .pending = true,
+                            .hash    = 0x9F86D081u};
+    lbr_upd_encode_status(&us, &f[n]);
+    t[n] = base + 6400, flags[n++] = 0;
 
     /* Not LBR traffic: an extended-id frame from some other device. */
     f[n] = (lbr_can_frame_t){.id = 0x18FEF100, .dlc = 3, .data = {1, 2, 3}};
@@ -798,7 +854,7 @@ static int emit(const char *dir, const char *name, const buf_t *b, int write)
         fprintf(stderr,
                 "fixture %s no longer matches the codec. If the format change is intended,\n"
                 "bump the version, regenerate (cmake --build build-dev --target fixtures),\n"
-                "and update lbr-dashboard in the same change.\n",
+                "and update the dashboard app in the same change.\n",
                 path);
         return 1;
     }

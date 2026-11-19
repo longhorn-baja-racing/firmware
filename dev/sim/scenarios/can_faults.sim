@@ -13,14 +13,16 @@ at 12.0 expect stress event:CAN_BUS_OFF >= 1
 at 12.0 expect stress bus_off == 1
 at 13.0 expect stress state == RUN
 
-# The IMU Controller unplugged: the corners keep sampling and stay linked
-# over WiFi, but their data cannot reach CAN until it is back.
-at 13.0 disconnect imu
-at 17.0 expect imu seen == 0
-at 17.0 expect corners link == 1
-at 17.0 connect imu
-at 18.0 expect imu seen == 1
-at 18.0 expect IMU_FL_ACCEL_X age_ms < 100
+# A wheel hub node unplugged (its harness crosses the suspension travel):
+# reported lost, its IMU data goes stale, the others carry on; found again
+# once it is back.
+at 13.0 disconnect corner_bl
+at 17.0 expect corner_bl seen == 0
+at 17.0 expect IMU_BL_ACCEL_X age_ms > 1000
+at 17.0 expect IMU_FL_ACCEL_X age_ms < 100
+at 17.0 connect corner_bl
+at 18.0 expect corner_bl seen == 1
+at 18.0 expect IMU_BL_ACCEL_X age_ms < 100
 
 at 18.0 noise 20
 at 22.0 expect bus errors > 50
