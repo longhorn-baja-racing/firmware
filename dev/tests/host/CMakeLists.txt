@@ -44,6 +44,7 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/gateway/status.c"
     "${LBR_COMPONENTS}/update/update.c"
     "${LBR_COMPONENTS}/update/upd_relay.c"
+    "${LBR_COMPONENTS}/lbr/value.c"
     port_host.c
 )
 target_include_directories(lbr_core PUBLIC
@@ -59,6 +60,7 @@ target_include_directories(lbr_core PUBLIC
     "${LBR_COMPONENTS}/wlink/include"
     "${LBR_COMPONENTS}/gateway/include"
     "${LBR_COMPONENTS}/update/include"
+    "${LBR_COMPONENTS}/lbr/include"
     "${LBR_ROOT}/car/catalog/include"
     "${CMAKE_CURRENT_LIST_DIR}"
 )
@@ -85,7 +87,7 @@ target_link_libraries(lbr_plans PUBLIC lbr_core)
 lbr_apply_warnings(lbr_plans)
 
 set(LBR_TESTS util protocol health can timebase logging sensors node plans transport gateway wlink cores
-    update)
+    update value)
 foreach(name IN LISTS LBR_TESTS)
     add_executable(test_${name} test_${name}.c)
     target_link_libraries(test_${name} PRIVATE lbr_core lbr_plans)
