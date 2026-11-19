@@ -10,6 +10,7 @@
 #include "lbr/gw_config.h"
 #include "lbr/health.h"
 #include "lbr/logging.h"
+#include "lbr/logic.h"
 #include "lbr/lora_policy.h"
 #include "lbr/node_core.h"
 #include "lbr/node_table.h"
@@ -79,6 +80,11 @@ typedef struct {
      * plan; their sensors must outlive the core. May be empty. */
     const lbr_acq_t *acq;
     size_t           n_acq;
+
+    /* The car's logic tasks (lbr/logic.h), run by lbr_gw_core_logic_tick in
+     * list order; must outlive the core. May be empty. */
+    const lbr_task *const *tasks;
+    size_t                 n_tasks;
 } lbr_gw_boot_t;
 
 /* Live links; any may be NULL (disabled or unavailable). */
@@ -91,6 +97,10 @@ typedef struct {
 } lbr_gw_links_t;
 
 #define LBR_GW_HEALTH_PERIOD_MS 1000u
+
+/* CONFIG_INVALID event argument when the car logic task list is rejected
+ * (lbr_logic_check); 0 means the Central's stored configuration. */
+#define LBR_GW_INVALID_LOGIC    1u
 #define LBR_GW_COCKPIT_STALE_US 2000000u
 
 typedef struct {
@@ -113,6 +123,7 @@ typedef struct {
     lbr_value_table_t   cockpit_values;
     lbr_cockpit_link_t  cockpit;
     lbr_health_record_t last_health;
+    lbr_logic_t         logic;
 
     /* LBR_GW_LOCK_STREAM */
     uint8_t           stream_pkt[LBR_PKT_MAX_SIZE];
@@ -182,6 +193,10 @@ void lbr_gw_core_on_cockpit_packet(lbr_gw_core_t *c, const uint8_t *buf, size_t 
 /* The COCKPIT_STATUS driver needs the state lock; these take it. */
 void lbr_gw_core_lock_state(void *core);
 void lbr_gw_core_unlock_state(void *core);
+
+/* The car logic tick (LBR_LOGIC_TICK_HZ, every 10 ms): runs the tasks that are
+ * due on the shared clock. Their outputs go to the log and the live stream. */
+void lbr_gw_core_logic_tick(lbr_gw_core_t *c);
 
 /* Every LBR_GW_HEALTH_PERIOD_MS: own heartbeat, node expiry. */
 void lbr_gw_core_heartbeat(lbr_gw_core_t *c, lbr_health_record_t *out);

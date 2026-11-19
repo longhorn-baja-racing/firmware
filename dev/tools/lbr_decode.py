@@ -51,7 +51,11 @@ ENC_UNAVAIL = {"i16": -32768, "u16": 0xFFF8, "u8": 0xF8, "i32": -2147483648, "u3
 ENC_FMT = {"i16": "<h", "u16": "<H", "u8": "<B", "i32": "<i", "u32": "<I"}
 
 REC_NAMES = {1: "SESSION", 2: "SAMPLE", 3: "HEALTH", 4: "CAN_FRAME", 5: "LOSS", 6: "TEXT",
-             7: "END"}
+             7: "END", 0x20: "KEY", 0x21: "VALUE"}
+REC_KEY, REC_VALUE = 0x20, 0x21
+# Car logic output status (lbr_status, lbrlib/components/lbr/include/lbr/value.h).
+OUTPUT_STATUS = ["OK", "UNSPECIFIED", "NOT_FITTED", "NO_DATA", "SENSOR_FAULT", "OUT_OF_RANGE",
+                 "NOT_CALIBRATED", "BUS_ERROR", "STALE", "NODE_LOST", "NODE_MISSING", "BAD_MATH"]
 REC_SAMPLE, REC_HEALTH, REC_CAN_FRAME, REC_TEXT = 2, 3, 4, 6
 REC_FILE_INFO, REC_FILE_CHUNK, REC_FILE_END = 0x10, 0x11, 0x12
 
@@ -207,6 +211,7 @@ class BusDecoder:
     NOT_SYNCED = 0x01
 
     def __init__(self, cat):
+        self.keys = {}  # car logic output id -> key info (KEY records)
         self.cat = cat
         self.hb = {}
         self.central = central_id(cat)
@@ -422,7 +427,33 @@ def decode_log_record(cat, dec, offset, rtype, p):
     elif rtype == 7:
         t, n = struct.unpack_from("<QI", p)
         d.update({"t_us": t, "records_written": n})
+    elif rtype in (REC_KEY, REC_VALUE):
+        d.update(decode_output_record(cat, dec, rtype, p))
     return d
+
+
+def decode_output_record(cat, dec, rtype, p):
+    """Car logic outputs (docs/protocol.md "Car logic outputs"). KEY records name
+    an output id; VALUE records carry one value. Keys are re-sent every second,
+    so a reader joining late learns them."""
+    if rtype == REC_KEY:
+        kid, vtype, unit = struct.unpack_from("<HBB", p)
+        units, types = cat.raw["units"], cat.raw["value_types"]
+        key = {"key_id": kid, "key": p[4:].decode("ascii", "replace"),
+               "value_type": types[vtype] if vtype < len(types) else "type%d" % vtype,
+               "unit": units[unit] if unit < len(units) else ""}
+        dec.keys[kid] = key
+        return dict(key)
+    t, kid, st, bits = struct.unpack_from("<QHBI", p)
+    key = dec.keys.get(kid, {"key": "key%d" % kid, "value_type": "f32", "unit": ""})
+    ok = st == 0
+    value = None
+    if ok:
+        value = bool(bits) if key["value_type"] == "bool" else struct.unpack("<f", struct.pack("<I", bits))[0]
+    return {"t_us": t, "key_id": kid, "key": key["key"], "unit": key["unit"],
+            "value_type": key["value_type"], "ok": ok,
+            "status": OUTPUT_STATUS[st] if st < len(OUTPUT_STATUS) else "status%d" % st,
+            "value": value}
 
 
 def decode_log(cat, data):
@@ -488,6 +519,8 @@ def decode_packet_records(cat, dec, records):
             d["frame"] = decode_can_record(cat, dec, p)
         elif rtype == REC_TEXT:
             d["text"] = p.decode("latin-1")
+        elif rtype in (REC_KEY, REC_VALUE):
+            d.update(decode_output_record(cat, dec, rtype, p))
         out.append(d)
     return out
 
@@ -658,6 +691,14 @@ class CsvExporter:
         elif kind == "END":
             self.t_us = r["t_us"]
             self.row(self.t_us, "end", self.logger, "records_written", r["records_written"])
+        elif kind == "KEY":
+            pass  # names the output ids; the values carry the name
+        elif kind == "VALUE":
+            self.t_us = r["t_us"]
+            value = "" if not r["ok"] else (int(r["value"]) if r["value_type"] == "bool"
+                                             else "%.9g" % r["value"])
+            self.row(self.t_us, "output", self.logger, r["key"], value, r["unit"],
+                     "ok" if r["ok"] else r["status"], 1)
         else:
             self.row(self.t_us, "unknown_record", self.logger, "type%d" % rtype, p.hex())
 
@@ -750,6 +791,13 @@ def cmd_log(cat, path, as_json):
                 print_sample(cat, smp, "can ")
         elif r["type"] == "TEXT":
             print("text  %s" % r["text"])
+        elif r["type"] == "VALUE":
+            print("%12d us  %-14s %-18s = %s" % (
+                r["t_us"], "output", r["key"],
+                ("%s %s" % (r["value"], r["unit"])).strip() if r["ok"] else
+                "unavailable (%s)" % r["status"]))
+        elif r["type"] == "KEY":
+            pass
         elif r["type"] != "CAN_FRAME":
             print({k: v for k, v in r.items() if k != "offset"})
     print("-- %d records, %d corrupt regions (%d bytes skipped), truncated tail %d bytes" % (

@@ -61,6 +61,10 @@ struct lbr_sensor {
      * verbatim in the session config. NULL = none. Printable ASCII only. */
     const char *params;
 
+    /* Set by lbr_sensor_use_driver (lbr/driver.h): the part driver behind
+     * this sensor, with its state in ctx. NULL for the built-in drivers. */
+    const struct lbr_driver *driver;
+
     void *ctx;
 };
 

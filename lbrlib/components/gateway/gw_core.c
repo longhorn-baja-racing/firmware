@@ -65,7 +65,7 @@ static void stream_flush_locked(lbr_gw_core_t *c)
     c->stream_open = false;
 }
 
-static void stream_add(lbr_gw_core_t *c, const uint8_t *rec, size_t len)
+static void stream_add(lbr_gw_core_t *c, uint8_t type, const uint8_t *rec, size_t len)
 {
     if (c->links.usb == NULL && c->links.wifi == NULL) {
         return;
@@ -77,7 +77,7 @@ static void stream_add(lbr_gw_core_t *c, const uint8_t *rec, size_t len)
                           c->hal.now_us(c->hal.ctx));
             c->stream_open = true;
         }
-        if (lbr_pkt_add(&c->stream, LBR_REC_CAN_FRAME, rec, len)) {
+        if (lbr_pkt_add(&c->stream, type, rec, len)) {
             break;
         }
         stream_flush_locked(c);
@@ -98,7 +98,7 @@ static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_
     if (c->log != NULL && lbr_log_append_raw(c->log, LBR_REC_CAN_FRAME, rec, sizeof rec) == 0) {
         atomic_fetch_add(&c->frames_logged, 1);
     }
-    stream_add(c, rec, sizeof rec);
+    stream_add(c, LBR_REC_CAN_FRAME, rec, sizeof rec);
 
     lbr_sample_t samples[LBR_FRAME_MAX_FIELDS];
     lock(c, LBR_GW_LOCK_STATE);
@@ -113,6 +113,7 @@ static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_
     for (size_t i = 0; i < n; i++) {
         lbr_lora_policy_offer_sample(&c->lora_policy, &samples[i]);
         lbr_value_table_offer(&c->cockpit_values, &samples[i], t_us);
+        lbr_logic_offer(&c->logic, &samples[i], t_us);
     }
     uint8_t source = lbr_can_sender(f->id);
     if (!own_tx && f->id == LBR_CAN_ID_HEALTH_BASE + 16u * source + LBR_HEALTH_PAGE_COUNT - 1u) {
@@ -208,6 +209,16 @@ static void acq_event(void *ctx, lbr_event_code_t code, uint16_t arg, bool fault
 /* ------------------------------------------------------------------------ */
 /* Bring-up                                                                  */
 
+/* Car logic outputs: authoritative log first, then the live stream, like frames. */
+static void logic_record(void *ctx, uint8_t type, const uint8_t *payload, size_t len)
+{
+    lbr_gw_core_t *c = ctx;
+    if (c->log != NULL) {
+        (void)lbr_log_append_raw(c->log, type, payload, len); /* losses counted by the logger */
+    }
+    stream_add(c, type, payload, len);
+}
+
 void lbr_gw_core_init(lbr_gw_core_t *c, const lbr_gw_hal_t *hal, const lbr_gw_config_t *cfg,
                       const lbr_gw_boot_t *boot)
 {
@@ -226,6 +237,8 @@ void lbr_gw_core_init(lbr_gw_core_t *c, const lbr_gw_hal_t *hal, const lbr_gw_co
         lbr_value_table_watch(&c->cockpit_values, lbr_cockpit_signals[i], 0);
     }
     lbr_cockpit_link_init(&c->cockpit);
+    lbr_logic_init(&c->logic, boot->tasks, boot->n_tasks,
+                   (lbr_logic_sink_t){.ctx = c, .record = logic_record});
 }
 
 void lbr_gw_core_start(lbr_gw_core_t *c, lbr_logger_t *log, const lbr_gw_links_t *links,
@@ -258,6 +271,12 @@ void lbr_gw_core_start(lbr_gw_core_t *c, lbr_logger_t *log, const lbr_gw_links_t
     }
     if (!c->boot.config_valid) {
         lbr_gw_core_event(c, LBR_EVT_CONFIG_INVALID, 0, true);
+    }
+    char err[96];
+    if (lbr_logic_check(c->boot.tasks, c->boot.n_tasks, err, sizeof err) != 0) {
+        /* The data path still runs; only the car logic is off, and says why. */
+        say(c, LBR_LOG_LVL_ERROR, "car logic not started: %s", err);
+        lbr_gw_core_event(c, LBR_EVT_CONFIG_INVALID, LBR_GW_INVALID_LOGIC, true);
     }
     if (can_pins_unset) {
         lbr_gw_core_event(c, LBR_EVT_CAN_PINS_UNSET, 0, true);
@@ -546,6 +565,7 @@ void lbr_gw_core_heartbeat(lbr_gw_core_t *c, lbr_health_record_t *out)
     lock(c, LBR_GW_LOCK_STATE);
     c->last_health = h;
     lbr_lora_policy_offer_health(&c->lora_policy, &h);
+    lbr_logic_announce(&c->logic);
     uint64_t now    = c->hal.now_us(c->hal.ctx);
     size_t   n_lost = lbr_node_table_expire(&c->nodes, now, lost, sizeof lost);
     /* Expected topology: a catalog node never heard is a fault too, not an
@@ -565,6 +585,13 @@ void lbr_gw_core_heartbeat(lbr_gw_core_t *c, lbr_health_record_t *out)
     if (out != NULL) {
         *out = h;
     }
+}
+
+void lbr_gw_core_logic_tick(lbr_gw_core_t *c)
+{
+    lock(c, LBR_GW_LOCK_STATE);
+    lbr_logic_step(&c->logic, c->hal.now_us(c->hal.ctx), &c->nodes);
+    unlock(c, LBR_GW_LOCK_STATE);
 }
 
 size_t lbr_gw_core_status(lbr_gw_core_t *c, const char *log_name, char *buf, size_t cap)

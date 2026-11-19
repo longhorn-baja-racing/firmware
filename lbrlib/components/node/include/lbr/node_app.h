@@ -1,7 +1,10 @@
 #pragma once
 
+#include "lbr/driver.h"
 #include "lbr/node.h"
-#include "sdkconfig.h"
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h" /* firmware builds; host builds have no bench simulator option */
+#endif
 
 /*
  * Writing a sensor node (car/nodes/<node>/main/main.c). A whole node is:

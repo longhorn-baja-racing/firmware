@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "car_logic.h"
 #include "central_plan.h"
 #include "corner_plan.h"
 #include "cockpit_plan.h"
@@ -772,6 +773,8 @@ static void boot_gateway(sim_t *s)
         .config_text  = g->config_text,
         .acq          = n->acq,
         .n_acq        = n->cfg.n_acq,
+        .tasks        = car_tasks,
+        .n_tasks      = car_task_count,
     };
     if (g->core == NULL) {
         g->core = calloc(1, sizeof *g->core);
@@ -801,6 +804,7 @@ static void boot_gateway(sim_t *s)
     schedule_local(s, GW, SIM_JOB_PUMP, l + 20000u, EV_GW_PUMP);
     schedule_local(s, GW, SIM_JOB_COCKPIT, l + g->cfg.cockpit_period_ms * 1000u, EV_GW_COCKPIT);
     schedule_local(s, GW, SIM_JOB_HEALTH, l + LBR_GW_HEALTH_PERIOD_MS * 1000u, EV_HEALTH);
+    schedule_local(s, GW, SIM_JOB_LOGIC, l + 1000000u / LBR_LOGIC_TICK_HZ, EV_GW_LOGIC);
     for (size_t k = 0; k < n->cfg.n_acq; k++) {
         lbr_gw_core_slot_start(g->core, k);
         schedule_acq(s, GW, k);
@@ -1085,6 +1089,12 @@ static void handle(sim_t *s, const event_t *e)
             schedule_local(s, GW, SIM_JOB_COCKPIT,
                            n->next_local[SIM_JOB_COCKPIT] + g->cfg.cockpit_period_ms * 1000u,
                            EV_GW_COCKPIT);
+            break;
+        case EV_GW_LOGIC:
+            lbr_gw_core_logic_tick(g->core);
+            schedule_local(s, GW, SIM_JOB_LOGIC,
+                           n->next_local[SIM_JOB_LOGIC] + 1000000u / LBR_LOGIC_TICK_HZ,
+                           EV_GW_LOGIC);
             break;
         case EV_GW_PUMP:
             lbr_log_keeper_step(&n->keeper, sim_local_us(s, ni), h_now(&s_ctx[ni]));
@@ -1773,6 +1783,33 @@ static int cmd_expect(sim_t *s, char **tok, int nt, const char *line)
             return err(s, "unknown node '%s'", target);
         }
         check_result(s, ok, what, got[0] ? got : "all match");
+        return 0;
+    }
+
+    /* A car logic output (out:<key>) as last written: valid, value, status. */
+    if (strncmp(target, "out:", 4) == 0) {
+        const lbr_output *o =
+            s->gw.core != NULL ? lbr_logic_find(&s->gw.core->logic, target + 4) : NULL;
+        if (strcmp(metric, "status") == 0) {
+            const char *st = o == NULL || !o->written ? "NEVER" : lbr_status_name(o->last.st);
+            bool        eq = strcmp(st, want) == 0;
+            check_result(s, strcmp(op, "!=") == 0 ? !eq : eq, what, st);
+            return 0;
+        }
+        double ov = 0;
+        if (strcmp(metric, "valid") == 0) {
+            ov = o != NULL && o->written && lbr_ok(o->last) ? 1 : 0;
+        } else if (strcmp(metric, "value") == 0) {
+            if (o == NULL || !o->written || !lbr_ok(o->last)) {
+                check_result(s, false, what, o == NULL ? "never written" : "unavailable");
+                return 0;
+            }
+            ov = o->last.v;
+        } else {
+            return err(s, "unknown output metric '%s' (valid, value, status)", metric);
+        }
+        snprintf(got, sizeof got, "%g", ov);
+        check_result(s, compare(ov, op, atof(want)), what, got);
         return 0;
     }
 

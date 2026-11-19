@@ -143,6 +143,17 @@ const lbr_signal_info_t *lbr_signal_info(lbr_signal_id_t id);
 size_t                   lbr_signal_count(void);
 const lbr_signal_info_t *lbr_signal_at(size_t index);
 
+/* Index of `id` in the catalog (0 .. lbr_signal_count() - 1), or SIZE_MAX. */
+size_t lbr_signal_index(lbr_signal_id_t id);
+
+/* Each signal's catalog index (LBR_SIGIDX_<NAME>), and their number, as constants. */
+enum {
+#define LBR_SIGNAL(name_, id_, type_, unit_, desc_) LBR_SIGIDX_##name_,
+#include "lbr/signals.def"
+#undef LBR_SIGNAL
+    LBR_SIGNAL_COUNT
+};
+
 const char *lbr_unit_name(lbr_unit_t unit);
 const char *lbr_value_type_name(lbr_value_type_t type);
 
@@ -163,6 +174,9 @@ typedef enum {
     LBR_REC_TEXT        = 0x06, /* ASCII diagnostic text */
     LBR_REC_END         = 0x07, /* log only: clean close marker */
     LBR_REC_HEALTH_LITE = 0x08, /* transport only: compact LoRa / cockpit health */
+
+    LBR_REC_KEY   = 0x20, /* a car-logic output's id, type, unit, and name (lbr/logic.h) */
+    LBR_REC_VALUE = 0x21, /* one value of a car-logic output (lbr/logic.h) */
 
     LBR_REC_FILE_INFO  = 0x10, /* transport only: log listing entry */
     LBR_REC_FILE_CHUNK = 0x11, /* transport only: log dump data */

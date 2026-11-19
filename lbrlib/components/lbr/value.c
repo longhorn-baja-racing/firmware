@@ -137,3 +137,72 @@ lbr_f32 lbr_i32_to_f32(lbr_i32 a)
 {
     return result((float)a.v, a.st, LBR_OK, a.age_ms);
 }
+
+static lbr_bool alarm(bool *state, lbr_f32 x, bool turn_on, bool turn_off)
+{
+    lbr_bool r = compare(*state, x);
+    if (r.st != LBR_OK) {
+        r.v = *state; /* keep the alarm as it was; the status says why */
+        return r;
+    }
+    if (turn_on) {
+        *state = true;
+    } else if (turn_off) {
+        *state = false;
+    }
+    r.v = *state;
+    return r;
+}
+
+lbr_bool lbr_above(bool *state, lbr_f32 x, float on, float off)
+{
+    return alarm(state, x, x.v > on, x.v < off);
+}
+
+lbr_bool lbr_below(bool *state, lbr_f32 x, float on, float off)
+{
+    return alarm(state, x, x.v<on, x.v> off);
+}
+
+static uint32_t older_b(lbr_bool a, lbr_bool b)
+{
+    return older(a.age_ms, b.age_ms);
+}
+
+lbr_bool lbr_and(lbr_bool a, lbr_bool b)
+{
+    if ((lbr_ok(a) && !a.v) || (lbr_ok(b) && !b.v)) {
+        return (lbr_bool){.v = false, .st = LBR_OK, .age_ms = older_b(a, b)};
+    }
+    lbr_status st = a.st != LBR_OK ? a.st : b.st;
+    return (lbr_bool){.v = st == LBR_OK, .st = st, .age_ms = older_b(a, b)};
+}
+
+lbr_bool lbr_or(lbr_bool a, lbr_bool b)
+{
+    if ((lbr_ok(a) && a.v) || (lbr_ok(b) && b.v)) {
+        return (lbr_bool){.v = true, .st = LBR_OK, .age_ms = older_b(a, b)};
+    }
+    lbr_status st = a.st != LBR_OK ? a.st : b.st;
+    return (lbr_bool){.v = false, .st = st, .age_ms = older_b(a, b)};
+}
+
+lbr_bool lbr_not(lbr_bool a)
+{
+    return (lbr_bool){.v = lbr_ok(a) && !a.v, .st = a.st, .age_ms = a.age_ms};
+}
+
+lbr_f32 lbr_lowpass(lbr_filter *f, lbr_f32 x, float alpha)
+{
+    if (!lbr_ok(x) || !isfinite(x.v)) {
+        f->primed = false; /* restart on the next good value */
+        return result(0.0f, x.st == LBR_OK ? LBR_BAD_MATH : x.st, LBR_OK, x.age_ms);
+    }
+    if (!f->primed) {
+        f->v      = x.v;
+        f->primed = true;
+    } else {
+        f->v += alpha * (x.v - f->v);
+    }
+    return result(f->v, LBR_OK, LBR_OK, x.age_ms);
+}

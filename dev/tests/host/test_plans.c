@@ -1,3 +1,4 @@
+#include "car_logic.h"
 #include "central_plan.h"
 #include "corner_plan.h"
 #include "cockpit_plan.h"
@@ -237,6 +238,17 @@ static void test_burst_fits_tx_queue(void)
     }
 }
 
+/* The car's logic task list is valid (rates, names), so the Central runs it. */
+static void test_car_logic_valid(void)
+{
+    char err[96] = "";
+    int  rc      = lbr_logic_check(car_tasks, car_task_count, err, sizeof err);
+    if (rc != 0) {
+        fprintf(stderr, "  car logic: %s\n", err);
+    }
+    CHECK_EQ_I(rc, 0);
+}
+
 int main(void)
 {
     RUN(test_each_plan_valid);
@@ -246,5 +258,6 @@ int main(void)
     RUN(test_system_budget);
     RUN(test_local_logs_are_targeted);
     RUN(test_burst_fits_tx_queue);
+    RUN(test_car_logic_valid);
     TEST_MAIN_END();
 }

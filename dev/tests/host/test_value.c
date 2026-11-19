@@ -50,8 +50,18 @@ static void test_unavailable_propagates(void)
     CHECK(!lbr_ok(hot));
     CHECK(!hot.v);
 
-    CHECK(lbr_or(missing, -1.0f) == -1.0f);
-    CHECK(lbr_or(one, -1.0f) == 1.0f);
+    CHECK(lbr_or_else(missing, -1.0f) == -1.0f);
+    CHECK(lbr_or_else(one, -1.0f) == 1.0f);
+
+    /* Boolean logic claims only what it knows. */
+    lbr_bool yes = lbr_bool_of(true), no = lbr_bool_of(false);
+    lbr_bool unknown = {.st = LBR_NODE_LOST};
+    CHECK(lbr_ok(lbr_and(no, unknown)) && !lbr_and(no, unknown).v); /* false either way */
+    CHECK_EQ_U(lbr_and(yes, unknown).st, LBR_NODE_LOST);
+    CHECK(lbr_ok(lbr_or(unknown, yes)) && lbr_or(unknown, yes).v); /* true either way */
+    CHECK_EQ_U(lbr_or(no, unknown).st, LBR_NODE_LOST);
+    CHECK(lbr_and(yes, yes).v && !lbr_or(no, no).v && lbr_not(no).v);
+    CHECK(!lbr_not(unknown).v && lbr_not(unknown).st == LBR_NODE_LOST);
     CHECK_EQ_U(lbr_f32_missing(LBR_OK).st, LBR_UNSPECIFIED); /* "missing but OK" is not allowed */
 }
 
@@ -79,8 +89,31 @@ static void test_names_and_reasons(void)
     CHECK_EQ_U(lbr_status_from_reason(LBR_UNAVAIL_UNSPECIFIED), LBR_UNSPECIFIED);
 }
 
+static void test_hysteresis_and_lowpass(void)
+{
+    bool hot = false;
+    CHECK(!lbr_above(&hot, lbr_f32_of(95.0f), 100.0f, 90.0f).v);
+    CHECK(lbr_above(&hot, lbr_f32_of(101.0f), 100.0f, 90.0f).v);
+    CHECK(lbr_above(&hot, lbr_f32_of(95.0f), 100.0f, 90.0f).v); /* still on */
+    lbr_bool gone = lbr_above(&hot, lbr_f32_missing(LBR_NODE_LOST), 100.0f, 90.0f);
+    CHECK(!lbr_ok(gone) && gone.st == LBR_NODE_LOST); /* unknown, never "off" */
+    CHECK(!lbr_above(&hot, lbr_f32_of(89.0f), 100.0f, 90.0f).v);
+
+    bool low = false;
+    CHECK(lbr_below(&low, lbr_f32_of(0.7f), 0.8f, 1.0f).v);
+    CHECK(lbr_below(&low, lbr_f32_of(0.9f), 0.8f, 1.0f).v); /* still on */
+    CHECK(!lbr_below(&low, lbr_f32_of(1.1f), 0.8f, 1.0f).v);
+
+    static lbr_filter f;
+    CHECK(lbr_lowpass(&f, lbr_f32_of(10.0f), 0.5f).v == 10.0f); /* primes on the first value */
+    CHECK(lbr_lowpass(&f, lbr_f32_of(20.0f), 0.5f).v == 15.0f);
+    CHECK_EQ_U(lbr_lowpass(&f, lbr_f32_missing(LBR_STALE), 0.5f).st, LBR_STALE);
+    CHECK(lbr_lowpass(&f, lbr_f32_of(40.0f), 0.5f).v == 40.0f); /* restarted, not blended */
+}
+
 int main(void)
 {
+    test_hysteresis_and_lowpass();
     test_ok_arithmetic();
     test_unavailable_propagates();
     test_bad_math();

@@ -12,6 +12,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "car_logic.h"
 #include "central_plan.h"
 #include "esp_timer.h"
 #include "gw_store.h"
@@ -47,6 +48,7 @@ static const char *TAG = "central";
 #define LORA_TASK_PRIO    5
 #define ACQ_TASK_PRIO     10
 #define COCKPIT_TASK_PRIO 5
+#define LOGIC_TASK_PRIO   8
 #define CONFIG_TEXT_MAX   2048
 
 static lbr_gw_core_t     s_core;
@@ -252,6 +254,17 @@ static void cockpit_task(void *arg)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(s_gw.cockpit_period_ms));
         lbr_gw_core_cockpit_tick(&s_core);
+    }
+}
+
+/* The car logic tick (lbr/logic.h): every task due on the shared clock. */
+static void logic_task(void *arg)
+{
+    (void)arg;
+    TickType_t wake = xTaskGetTickCount();
+    for (;;) {
+        vTaskDelayUntil(&wake, pdMS_TO_TICKS(1000u / LBR_LOGIC_TICK_HZ));
+        lbr_gw_core_logic_tick(&s_core);
     }
 }
 
@@ -531,6 +544,8 @@ void central_run(void)
         .config_text  = s_config_text,
         .acq          = s_acq,
         .n_acq        = CENTRAL_SLOT_COUNT,
+        .tasks        = car_tasks,
+        .n_tasks      = car_task_count,
     };
     lbr_gw_core_init(&s_core, &k_hal, &s_gw, &boot);
     /* The cockpit-status slot reads this core's own link state. */
@@ -578,6 +593,7 @@ void central_run(void)
         xTaskCreate(lora_task, "gw_lora", 4096, NULL, LORA_TASK_PRIO, NULL);
     }
     xTaskCreate(stream_task, "gw_stream", 3072, NULL, STREAM_TASK_PRIO, NULL);
+    xTaskCreate(logic_task, "gw_logic", 4096, NULL, LOGIC_TASK_PRIO, NULL);
     xTaskCreate(health_task, "gw_health", 4096, NULL, HEALTH_TASK_PRIO, NULL);
 
     /* Reaching here means the image boots and its services start: confirm it

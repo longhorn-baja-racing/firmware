@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "lbr/crc32.h"
+#include "lbr/driver.h"
 #include "lbr/frames.h"
 #include "lbr/node.h"
 #include "lbr/nodes.h"
@@ -356,4 +357,17 @@ lbr_sensor_t *lbr_slot(lbr_node *n, size_t slot)
     }
     n->bound |= bit;
     return &n->sensors[slot];
+}
+
+void lbr_bind(lbr_node *n, size_t slot, const lbr_driver *drv, void *self)
+{
+    lbr_sensor_t *sensor = lbr_slot(n, slot);
+    if (sensor == NULL) {
+        return; /* lbr_slot recorded why */
+    }
+    if (!lbr_sensor_use_driver(sensor, drv, self) && n->cfg->app_error == NULL) {
+        n->cfg->app_error = drv == NULL || drv->read == NULL || drv->part == NULL
+                                ? "app bound an incomplete driver (part and read are required)"
+                                : "app bound a driver whose channel count differs from its slot";
+    }
 }

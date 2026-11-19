@@ -1,7 +1,7 @@
 # Adding a sensor driver
 
-Sensor parts are chosen per project as the electronics settle. The framework is built so that a
-new part touches exactly one driver file and one line in its node's `main.c`.
+Sensor parts are chosen per project as the electronics settle. LBRLib is built so that a new
+part touches exactly one driver file and one line in its node's `main.c`.
 
 ## How a node is put together
 
@@ -62,35 +62,10 @@ active RMC.
 
 ## Writing a driver
 
-1. Create `lbrlib/components/sensors/sensor_<part>.c` (hardware code may use ESP-IDF; keep any pure
-   conversion math in a separate function so it can be host-tested).
-2. Provide a constructor that fills an `lbr_sensor_t`:
-
-   ```c
-   void lbr_sensor_<part>(lbr_sensor_t *out, const lbr_signal_id_t *signals, size_t n,
-                          const <part>_config_t *cfg);
-   ```
-
-3. Implement:
-   - `init()`: bring the part up; return non-zero on failure. The runtime reports
-     `SENSOR_INIT_FAIL`, marks every channel `SENSOR_FAULT`, and retries every 2 s.
-   - `read(self, t_us, out)`: fill one `lbr_reading_t` per channel, in the slot's signal order.
-     Return non-zero if the part stopped responding (the runtime re-inits it).
-   - `is_calibrated()` (optional): false while calibration is missing or invalid.
-4. Add the file to `lbrlib/components/sensors/CMakeLists.txt`, and bind it in the node's `main.c`
-   with `lbr_slot()`, which hands the driver the slot's sensor (the slot's name and signals are
-   already in it):
-
-   ```c
-   static void init(lbr_node *n)
-   {
-       lbr_sensor_<part>(lbr_slot(n, IMU_SLOT_CHASSIS), &cfg);
-   }
-   LBR_NODE_MAIN(&lbr_plan_imu, .init = init);
-   ```
-
-   Binding a slot twice, or one the plan does not have, puts the node in `CONFIG_INVALID` with
-   the reason; `lbr_slot()` then returns NULL, which a driver must ignore.
+A part with its own protocol (an IMU, a strain amplifier, a thermocouple converter) needs a
+driver: an `lbr_driver` table with `start()` and `read()` on a state struct, bound in the node's
+`main.c` with `lbr_bind(n, SLOT, &driver, &state)`. The full guide, with an example, is
+[`lbrlib/docs/drivers.md`](../lbrlib/docs/drivers.md).
 
 ## Rules every driver follows
 

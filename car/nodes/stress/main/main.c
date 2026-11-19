@@ -1,5 +1,5 @@
 #include "stress_plan.h"
-#include "lbr/node_app.h"
+#include "lbr.h"
 #include "sdkconfig.h"
 
 /*

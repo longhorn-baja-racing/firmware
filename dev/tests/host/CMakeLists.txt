@@ -27,6 +27,7 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/logging/logging.c"
     "${LBR_COMPONENTS}/logging/log_keeper.c"
     "${LBR_COMPONENTS}/sensors/sensor_unconfigured.c"
+    "${LBR_COMPONENTS}/sensors/driver.c"
     "${LBR_COMPONENTS}/sensors/sensor_sim.c"
     "${LBR_COMPONENTS}/sensors/sensor_io.c"
     "${LBR_COMPONENTS}/sensors/nmea.c"
@@ -45,6 +46,7 @@ add_library(lbr_core
     "${LBR_COMPONENTS}/update/update.c"
     "${LBR_COMPONENTS}/update/upd_relay.c"
     "${LBR_COMPONENTS}/lbr/value.c"
+    "${LBR_COMPONENTS}/lbr/logic.c"
     port_host.c
 )
 target_include_directories(lbr_core PUBLIC
@@ -86,11 +88,18 @@ endforeach()
 target_link_libraries(lbr_plans PUBLIC lbr_core)
 lbr_apply_warnings(lbr_plans)
 
+# The car's logic tasks (car/logic), checked by test_plans and run by the simulator.
+file(GLOB LBR_CAR_LOGIC CONFIGURE_DEPENDS "${LBR_ROOT}/car/logic/*.c")
+add_library(lbr_car_logic STATIC ${LBR_CAR_LOGIC})
+target_include_directories(lbr_car_logic PUBLIC "${LBR_ROOT}/car/logic/include")
+target_link_libraries(lbr_car_logic PUBLIC lbr_core)
+lbr_apply_warnings(lbr_car_logic)
+
 set(LBR_TESTS util protocol health can timebase logging sensors node plans transport gateway wlink cores
-    update value)
+    update value logic)
 foreach(name IN LISTS LBR_TESTS)
     add_executable(test_${name} test_${name}.c)
-    target_link_libraries(test_${name} PRIVATE lbr_core lbr_plans)
+    target_link_libraries(test_${name} PRIVATE lbr_core lbr_plans lbr_car_logic)
     lbr_apply_warnings(test_${name})
     add_test(NAME ${name} COMMAND test_${name})
 endforeach()

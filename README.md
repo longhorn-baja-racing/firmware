@@ -20,12 +20,21 @@ The 2026 vehicle carries five sensor controllers (**IMU, powertrain, driver inpu
 stress**), four **corner** (wheel hub) nodes, the **Central** controller, all on CAN, and the
 **cockpit** driver display over WiFi.
 
+## LBRLib
+
+The firmware is built on **LBRLib** (`lbrlib/`), a C23 library in the spirit of WPILib: describe
+the car once in [`car/catalog.toml`](car/catalog.toml), bind parts to slots in a few lines per
+node, and write car logic as periodic tasks whose values carry their status, so a missing sensor
+or a lost board is never mistaken for a number. **Start with the
+[LBRLib guides](lbrlib/docs/README.md)**: getting started, concepts, the catalog, nodes,
+drivers, car logic, values and faults, logging, tools, and the API reference.
+
 ## Project status
 
 The framework is in place and tested; sensor parts and pins are not chosen yet. To build,
 test, simulate, or flash, see [Getting started](#getting-started).
 
-- **Shared libraries** (`lbrlib/components/`): protocol, signal catalog and CAN frame table, CAN
+- **LBRLib** (`lbrlib/components/`): protocol, signal catalog and CAN frame table, CAN
   codec and TWAI adapter, CAN-distributed time sync, recoverable SD logging, heartbeat/health,
   sensor framework, grid-locked acquisition, node runtime, the cockpit WiFi link,
   live transports (USB, LoRa, WiFi, BLE), and the Central's logic. The hardware-independent
@@ -35,6 +44,8 @@ test, simulate, or flash, see [Getting started](#getting-started).
   driver is bound (or simulated data with `CONFIG_LBR_SENSOR_SIM`, bench only). Analog, pulse,
   and switch sensors and any NMEA GPS need no driver code: they are wired and calibrated from
   menuconfig ([`docs/sensors.md`](docs/sensors.md)).
+- **Car logic** (`car/logic/`): the Central's tasks (CVT ratio, brake and CVT overheat alarms,
+  vehicle speed), logged next to the raw data ([`lbrlib/docs/logic.md`](lbrlib/docs/logic.md)).
 - **CI** runs host tests (gcc + clang), formatting, static analysis, the golden-fixture
   replay, and builds every node twice (shipped config and a link-coverage overlay).
 
@@ -266,10 +277,13 @@ lbrlib/                       # LBRLIB: the library every node is built on (flas
     links/                    #     the Central's USB/LoRa/WiFi/BLE links
     wlink/                    #     cockpit WiFi link (cores + C5 WiFi/UDP glue)
     gateway/                  #     the Central's logic, runtime config, status text
+    lbr/                      #     the app API: lbr.h, values with status, car logic tasks
   tools/lbrgen.py             #   catalog.toml -> signals, nodes, frame table, plans, can-ids.md tables
+  docs/                       #   the LBRLib guides (start at lbrlib/docs/README.md)
 car/                          # THIS CAR: the 2026 vehicle, built on lbrlib/
   catalog.toml                #   every node, signal, and CAN frame, declared once
   catalog/                    #   generated from catalog.toml (the "catalog" component; do not edit)
+  logic/                      #   the Central's car logic tasks (LBR_TASK)
   cmake/                      #   ESP-IDF version pin check
   nodes/                      #   one ESP-IDF app per physical node (DAQ-WIRING.md)
     sdkconfig.common          #     settings shared by every node
