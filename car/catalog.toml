@@ -98,30 +98,34 @@ slots = [
 [node.corner_fl]
 id = 7
 board = "Mini ESP32-C5"
-about = "FL wheel hub: suspension IMU"
+about = "FL wheel hub: suspension IMU, own battery"
+link = "CAN (own battery)"
 app = "corner"
-slots = ["imu"]
+slots = ["imu", "battery"]
 
 [node.corner_fr]
 id = 8
 board = "Mini ESP32-C5"
-about = "FR wheel hub: suspension IMU"
+about = "FR wheel hub: suspension IMU, own battery"
+link = "CAN (own battery)"
 app = "corner"
-slots = ["imu"]
+slots = ["imu", "battery"]
 
 [node.corner_bl]
 id = 9
 board = "Mini ESP32-C5"
-about = "BL wheel hub: suspension IMU"
+about = "BL wheel hub: suspension IMU, own battery"
+link = "CAN (own battery)"
 app = "corner"
-slots = ["imu"]
+slots = ["imu", "battery"]
 
 [node.corner_br]
 id = 10
 board = "Mini ESP32-C5"
-about = "BR wheel hub: suspension IMU"
+about = "BR wheel hub: suspension IMU, own battery"
+link = "CAN (own battery)"
 app = "corner"
-slots = ["imu"]
+slots = ["imu", "battery"]
 
 [node.cockpit]
 id = 11
@@ -302,6 +306,48 @@ signals = [
   { name = "IMU_CH_GYRO_Z", id = 0x031D, unit = "rad_per_s", enc = "i16", scale = 0.001, desc = "Chassis IMU angular rate, sensor Z" },
 ]
 
+# Wheel hub batteries: whole percent, once a second.
+
+[[frame]]
+id = 0x30A
+name = "CORNER_FL_BATTERY"
+sender = "corner_fl"
+slot = "battery"
+rate_hz = 1
+signals = [
+  { name = "CORNER_FL_BATTERY", id = 0x0320, unit = "percent", enc = "u8", desc = "FL wheel hub battery level" },
+]
+
+[[frame]]
+id = 0x30B
+name = "CORNER_FR_BATTERY"
+sender = "corner_fr"
+slot = "battery"
+rate_hz = 1
+signals = [
+  { name = "CORNER_FR_BATTERY", id = 0x0321, unit = "percent", enc = "u8", desc = "FR wheel hub battery level" },
+]
+
+[[frame]]
+id = 0x30C
+name = "CORNER_BL_BATTERY"
+sender = "corner_bl"
+slot = "battery"
+rate_hz = 1
+signals = [
+  { name = "CORNER_BL_BATTERY", id = 0x0322, unit = "percent", enc = "u8", desc = "BL wheel hub battery level" },
+]
+
+[[frame]]
+id = 0x30D
+name = "CORNER_BR_BATTERY"
+sender = "corner_br"
+slot = "battery"
+rate_hz = 1
+signals = [
+  { name = "CORNER_BR_BATTERY", id = 0x0323, unit = "percent", enc = "u8", desc = "BR wheel hub battery level" },
+]
+
 # Stress: whole microstrain (TBD). Where each sensor sits is session config.
 
 [[frame]]
@@ -431,11 +477,14 @@ items = [
   ["TEMP_CVT", 1000], ["TEMP_BRAKE_FL", 2000], ["TEMP_BRAKE_FR", 2000],
   ["TEMP_BRAKE_BL", 2000], ["TEMP_BRAKE_BR", 2000], ["FUEL_LEVEL", 5000],
   ["GPS_LATITUDE", 2000], ["GPS_LONGITUDE", 2000], ["GPS_FIX", 5000],
-  ["COCKPIT_BATTERY", 10000],
+  ["COCKPIT_BATTERY", 10000], ["CORNER_FL_BATTERY", 10000], ["CORNER_FR_BATTERY", 10000],
+  ["CORNER_BL_BATTERY", 10000], ["CORNER_BR_BATTERY", 10000],
 ]
 
 [cockpit]
 signals = [
-  "ENGINE_RPM", "CVT_RPM", "GPS_SPEED", "FUEL_LEVEL", "TEMP_CVT", "TEMP_BRAKE_FL",
-  "TEMP_BRAKE_FR", "TEMP_BRAKE_BL", "TEMP_BRAKE_BR", "BRAKE_PEDAL", "GAS_PEDAL", "FAULT",
+  "ENGINE_RPM", "GPS_SPEED", "FUEL_LEVEL", "TEMP_CVT", "TEMP_BRAKE_FL", "TEMP_BRAKE_FR",
+  "TEMP_BRAKE_BL", "TEMP_BRAKE_BR", "STRESS_1", "STRESS_2", "STRESS_3", "STRESS_4",
+  "STRESS_5", "STRESS_6", "STRESS_7", "STRESS_8", "COCKPIT_BATTERY", "CORNER_FL_BATTERY",
+  "CORNER_FR_BATTERY", "CORNER_BL_BATTERY", "CORNER_BR_BATTERY",
 ]

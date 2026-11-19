@@ -17,10 +17,10 @@ LBR_NODE(DRIVER_INPUT, 0x03, "driver_input", "Driver Input Controller: brake ped
 LBR_NODE(TEMPERATURE,  0x04, "temperature", "Temperature Controller: four brake temperatures, CVT temperature")
 LBR_NODE(STRESS,       0x05, "stress", "Stress Controller: stress sensors 1..8")
 LBR_NODE(CENTRAL,      0x06, "central", "Central Controller: logger, time master, LoRa, GPS, cockpit link")
-LBR_NODE(CORNER_FL,    0x07, "corner_fl", "FL wheel hub: suspension IMU")
-LBR_NODE(CORNER_FR,    0x08, "corner_fr", "FR wheel hub: suspension IMU")
-LBR_NODE(CORNER_BL,    0x09, "corner_bl", "BL wheel hub: suspension IMU")
-LBR_NODE(CORNER_BR,    0x0A, "corner_br", "BR wheel hub: suspension IMU")
+LBR_NODE(CORNER_FL,    0x07, "corner_fl", "FL wheel hub: suspension IMU, own battery")
+LBR_NODE(CORNER_FR,    0x08, "corner_fr", "FR wheel hub: suspension IMU, own battery")
+LBR_NODE(CORNER_BL,    0x09, "corner_bl", "BL wheel hub: suspension IMU, own battery")
+LBR_NODE(CORNER_BR,    0x0A, "corner_br", "BR wheel hub: suspension IMU, own battery")
 LBR_NODE(COCKPIT,      0x0B, "cockpit", "Cockpit Controller: the driver's display, over WiFi")
 
 #ifdef LBR_NODE_ROLE

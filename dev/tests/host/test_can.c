@@ -26,6 +26,8 @@ static void test_sender_map(void)
     CHECK_EQ_U(lbr_can_sender(0x401), LBR_NODE_STRESS);
     CHECK_EQ_U(lbr_can_sender(0x501), LBR_NODE_TEMPERATURE);
     CHECK_EQ_U(lbr_can_sender(0x60A), LBR_NODE_CENTRAL);
+    CHECK_EQ_U(lbr_can_sender(0x30A), LBR_NODE_CORNER_FL); /* corner batteries */
+    CHECK_EQ_U(lbr_can_sender(0x30D), LBR_NODE_CORNER_BR);
     CHECK_EQ_U(lbr_can_sender(0x701), LBR_NODE_IMU);
     CHECK_EQ_U(lbr_can_sender(0x706), LBR_NODE_CENTRAL);
     CHECK_EQ_U(lbr_can_sender(0x707), LBR_NODE_CORNER_FL);
@@ -37,7 +39,7 @@ static void test_sender_map(void)
     CHECK_EQ_U(lbr_can_sender(0x000), 0u);
     CHECK_EQ_U(lbr_can_sender(0x020), 0u);
     CHECK_EQ_U(lbr_can_sender(0x02B), 0u);
-    CHECK_EQ_U(lbr_can_sender(0x30A), 0u);
+    CHECK_EQ_U(lbr_can_sender(0x30E), 0u);
     CHECK_EQ_U(lbr_can_sender(0x700), 0u);
     CHECK_EQ_U(lbr_can_sender(0x70B), 0u);
     CHECK_EQ_U(lbr_can_sender(0x70F), 0u);
