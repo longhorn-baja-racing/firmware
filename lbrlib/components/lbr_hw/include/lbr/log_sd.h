@@ -5,19 +5,29 @@
 #include <stdint.h>
 
 #include "lbr/logging.h"
+#include "sdkconfig.h"
 
 /*
  * microSD backend for the logger (ESP-IDF FATFS). Hardware-facing; not built
  * on host. A missing or failed card is a normal, reported state: mount
  * returns an error and the caller keeps running and retries.
  *
- * Session files are /sdcard/lbr/NNNNNNNN.LBR, numbered one past the highest
+ * Session files are /sdcard/lbr/NNNNNNNN.lbrlog, numbered one past the highest
  * existing file, so a new boot never overwrites an older session.
  */
 
 #define LBR_SD_MOUNT_POINT "/sdcard"
 #define LBR_SD_LOG_DIR     LBR_SD_MOUNT_POINT "/lbr"
-#define LBR_SD_NAME_MAX    16
+#define LBR_SD_NAME_MAX    16 /* "NNNNNNNN.lbrlog" + NUL */
+/* New sessions are NNNNNNNN.lbrlog, which needs FAT long file names
+ * (CONFIG_FATFS_LFN_*, on in sdkconfig.common). A build without them (an
+ * sdkconfig made before they were on) writes the 8.3 name NNNNNNNN.LBR
+ * instead, so logging never fails over a file name. */
+#if CONFIG_FATFS_LFN_HEAP || CONFIG_FATFS_LFN_STACK
+#define LBR_SD_LOG_EXT ".lbrlog"
+#else
+#define LBR_SD_LOG_EXT ".LBR"
+#endif
 
 typedef enum {
     LBR_SD_OK              = 0,

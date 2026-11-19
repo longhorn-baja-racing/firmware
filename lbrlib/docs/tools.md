@@ -64,12 +64,22 @@ Output checks: `out:<key>` with `valid`, `value`, or `status`. Every command and
 An independent decoder (it shares no code with the firmware) driven by the exported catalog:
 
 ```sh
-python3 dev/tools/lbr_decode.py log FILE.LBR [--json]
-python3 dev/tools/lbr_decode.py csv FILE.LBR [--out FILE.csv]
+python3 dev/tools/lbr_decode.py log FILE.lbrlog [--json]
+python3 dev/tools/lbr_decode.py csv FILE.lbrlog [--out FILE.csv]
 python3 dev/tools/lbr_decode.py stream usb_stream.bin
 python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 [--cmd STAT|LIST|"DUMP name"] [--out file]
 python3 dev/tools/lbr_decode.py --selftest
 ```
+
+## `lbr_replay`: re-run the car logic on a log
+
+```sh
+build-dev/tools/lbr_replay/lbr_replay RUN.lbrlog [OUT.lbrlog] [--check] [--drop-task NAME]
+```
+
+Feeds a Central log's frames and ticks through this build's car logic, writes `OUT` with the
+replayed outputs as `Replay/<key>`, and compares them with the recorded ones. See
+[logging](logging.md#replay).
 
 ## `dev/tools/lbr_deploy.py`: build and deploy
 

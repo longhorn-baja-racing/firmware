@@ -9,3 +9,4 @@ enable_testing()
 
 add_subdirectory(tests/host)
 add_subdirectory(sim)
+add_subdirectory(tools/lbr_replay)

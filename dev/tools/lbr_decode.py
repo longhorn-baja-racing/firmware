@@ -51,8 +51,9 @@ ENC_UNAVAIL = {"i16": -32768, "u16": 0xFFF8, "u8": 0xF8, "i32": -2147483648, "u3
 ENC_FMT = {"i16": "<h", "u16": "<H", "u8": "<B", "i32": "<i", "u32": "<I"}
 
 REC_NAMES = {1: "SESSION", 2: "SAMPLE", 3: "HEALTH", 4: "CAN_FRAME", 5: "LOSS", 6: "TEXT",
-             7: "END", 0x20: "KEY", 0x21: "VALUE"}
-REC_KEY, REC_VALUE = 0x20, 0x21
+             7: "END", 0x20: "KEY", 0x21: "VALUE", 0x22: "TICK"}
+REC_KEY, REC_VALUE, REC_TICK = 0x20, 0x21, 0x22
+TICK_KINDS = ["start", "logic", "heartbeat"]
 # Car logic output status (lbr_status, lbrlib/components/lbr_core/include/lbr/value.h).
 OUTPUT_STATUS = ["OK", "UNSPECIFIED", "NOT_FITTED", "NO_DATA", "SENSOR_FAULT", "OUT_OF_RANGE",
                  "NOT_CALIBRATED", "BUS_ERROR", "STALE", "NODE_LOST", "NODE_MISSING", "BAD_MATH"]
@@ -429,6 +430,10 @@ def decode_log_record(cat, dec, offset, rtype, p):
         d.update({"t_us": t, "records_written": n})
     elif rtype in (REC_KEY, REC_VALUE):
         d.update(decode_output_record(cat, dec, rtype, p))
+    elif rtype == REC_TICK:
+        t, kind, can_up, timeout = struct.unpack_from("<QBBH", p)
+        d.update({"t_us": t, "tick": TICK_KINDS[kind] if kind < len(TICK_KINDS) else "kind%d" % kind,
+                  "can_up": can_up, "node_timeout_ms": timeout})
     return d
 
 
@@ -582,6 +587,7 @@ class CsvExporter:
         self.t_us = 0  # latest shared time seen, for records that carry none
         self.logger = ""
         self.catalog_checked = 0
+        self.tick_records = 0
         self.time_sync_frames = self.time_follow_up_frames = self.update_data_frames = 0
         self.upd = cat.raw["update"]
         self.commands = {c["code"]: c["name"] for c in cat.raw["commands"]}
@@ -693,6 +699,8 @@ class CsvExporter:
             self.row(self.t_us, "end", self.logger, "records_written", r["records_written"])
         elif kind == "KEY":
             pass  # names the output ids; the values carry the name
+        elif kind == "TICK":
+            self.tick_records += 1  # replay timing (lbr_replay): counted, not listed
         elif kind == "VALUE":
             self.t_us = r["t_us"]
             value = "" if not r["ok"] else (int(r["value"]) if r["value_type"] == "bool"
@@ -711,6 +719,8 @@ class CsvExporter:
                      ("update_data_frames", self.update_data_frames),
                      ("catalog_checked", self.catalog_checked)):
             self.row(self.t_us, "integrity", self.logger, k, v)
+        if self.tick_records:
+            self.row(self.t_us, "integrity", self.logger, "tick_records", self.tick_records)
 
 
 def export_csv(cat, data, out):
@@ -796,7 +806,7 @@ def cmd_log(cat, path, as_json):
                 r["t_us"], "output", r["key"],
                 ("%s %s" % (r["value"], r["unit"])).strip() if r["ok"] else
                 "unavailable (%s)" % r["status"]))
-        elif r["type"] == "KEY":
+        elif r["type"] in ("KEY", "TICK"):
             pass
         elif r["type"] != "CAN_FRAME":
             print({k: v for k, v in r.items() if k != "offset"})

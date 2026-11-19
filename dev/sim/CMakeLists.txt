@@ -9,4 +9,20 @@ foreach(scenario IN LISTS LBR_SIM_SCENARIOS)
     get_filename_component(name "${scenario}" NAME_WE)
     add_test(NAME sim_${name}
              COMMAND lbr_sim --out "${CMAKE_CURRENT_BINARY_DIR}/runs/${name}" "${scenario}")
+    set_tests_properties(sim_${name} PROPERTIES FIXTURES_SETUP simlog_${name})
 endforeach()
+
+# Replay (lbr_replay): the car logic re-run on each scenario's Central log reproduces
+# every recorded output bit for bit. (In sd_card only the first file starts at boot;
+# the ones opened after the card comes back start mid-session.)
+foreach(name IN ITEMS nominal car_logic can_faults node_missing batteries sensor_faults time_sync
+                      wifi sd_card)
+    add_test(NAME replay_${name}
+             COMMAND lbr_replay "${CMAKE_CURRENT_BINARY_DIR}/runs/${name}/00000001.lbrlog" --check)
+    set_tests_properties(replay_${name} PROPERTIES FIXTURES_REQUIRED simlog_${name})
+endforeach()
+# ... and a change to the logic shows: without the brakes task the replay must differ.
+add_test(NAME replay_detects_change
+         COMMAND lbr_replay "${CMAKE_CURRENT_BINARY_DIR}/runs/car_logic/00000001.lbrlog" --check
+                 --drop-task brakes)
+set_tests_properties(replay_detects_change PROPERTIES FIXTURES_REQUIRED simlog_car_logic WILL_FAIL TRUE)

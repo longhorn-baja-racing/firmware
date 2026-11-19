@@ -39,11 +39,11 @@ ok, amber degraded / no data, red fault or lost, grey not fitted or off).
   restart, and **Play scenario**.
 
 Everything the Central writes is a real file in `sim-out/` (or `--out`): session logs
-`NNNNNNNN.LBR` and the USB stream `usb_stream.bin`. Decode them
+`NNNNNNNN.lbrlog` and the USB stream `usb_stream.bin`. Decode them
 like the car's:
 
 ```sh
-python3 dev/tools/lbr_decode.py log sim-out/00000001.LBR
+python3 dev/tools/lbr_decode.py log sim-out/00000001.lbrlog
 python3 dev/tools/lbr_decode.py stream sim-out/usb_stream.bin
 ```
 

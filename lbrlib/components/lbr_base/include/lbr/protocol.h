@@ -177,6 +177,7 @@ typedef enum {
 
     LBR_REC_KEY   = 0x20, /* a car-logic output's id, type, unit, and name (lbr/logic.h) */
     LBR_REC_VALUE = 0x21, /* one value of a car-logic output (lbr/logic.h) */
+    LBR_REC_TICK  = 0x22, /* when the Central's logic and heartbeat ran (lbr/replay.h) */
 
     LBR_REC_FILE_INFO  = 0x10, /* transport only: log listing entry */
     LBR_REC_FILE_CHUNK = 0x11, /* transport only: log dump data */

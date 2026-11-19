@@ -84,6 +84,10 @@ repository. `python dev/tools/lbr_deploy.py list` prints the table above.
    `car/nodes/<node>/sdkconfig` (for the wheel hubs, `car/nodes/corner/sdkconfig.corner_fl` and so
    on). These files are not in git. **Back them up**: if they are lost, a build has no pins and the
    node reports `NOT_FITTED` / `CAN_PINS_UNSET`.
+   An `sdkconfig` made before SD logs were named `NNNNNNNN.lbrlog` keeps writing the old 8.3
+   name `NNNNNNNN.LBR` (same format, decoded the same way). To switch the Central to `.lbrlog`,
+   run `python dev/tools/lbr_deploy.py menuconfig central` and set Component config, FAT
+   Filesystem support, Long filename support to "in heap" (max length 32).
 
 ## 4. First-time setup of a board (USB, once per board)
 

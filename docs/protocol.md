@@ -143,6 +143,7 @@ crc32  := CRC-32/IEEE over type, flags, len, payload
 | 0x07 | `END` | `t_us u64, records_written u32` (clean close) |
 | 0x20 | `KEY` | car logic output name; see "Car logic outputs" |
 | 0x21 | `VALUE` | one car logic output value; see "Car logic outputs" |
+| 0x22 | `TICK` | when the Central's logic and heartbeat ran; see "Replay" |
 
 `SESSION` payload: `format_version u16, protocol_version u16, fw_version u32, catalog_hash u32,
 config_crc u32, node_id u8, reset_reason u8, reserved u16, boot_count u32, start_time_us u64`,
@@ -163,8 +164,8 @@ whatever had not been fsynced (`CONFIG_LBR_LOG_SYNC_INTERVAL_MS`, default 1 s).
 **Gaps.** When the bounded log queue overflows, the dropped records are counted and a `LOSS`
 record with the exact count is written ahead of the next record that fits.
 
-Session files are `/sdcard/lbr/NNNNNNNN.LBR`, numbered upward per boot; the firmware never
-formats a card or overwrites a session.
+Session files are `/sdcard/lbr/NNNNNNNN.lbrlog` (`.LBR` from older firmware, same format),
+numbered upward per boot; the firmware never formats a card or overwrites a session.
 
 ### Car logic outputs
 
@@ -193,11 +194,27 @@ can name it):
 
 An unknown `key_id` (its `KEY` record lost) decodes as `key<N>`.
 
+### Replay
+
+The Central logs everything its car logic sees, in the order it saw it, so the logic can be
+re-run on a log (`lbr_replay`, `lbrlib/docs/logging.md`): it appends each `CAN_FRAME` record and
+feeds the frame to the logic under one lock, and it logs a `TICK` record (12 bytes) each time
+the logic or the node check runs:
+
+| Field | |
+| --- | --- |
+| `t_us u64` | shared time of the tick |
+| `kind u8` | 0 `START` (the Central started listening; first, once per boot), 1 `LOGIC` (a car logic tick, 100 Hz; the outputs it produced follow it), 2 `HEARTBEAT` (the 1 Hz check that marks nodes lost or missing) |
+| `can_up u8` | `START`: CAN came up |
+| `node_timeout_ms u16` | `START`: silence after which a node is lost |
+
+Replayed outputs are written as `Replay/<key>` with `key_id | 0x8000`.
+
 ## CSV export (lbr-csv version 1)
 
-The SD card holds `.LBR` logs only: they are CRC-checked, survive a power cut mid-write, and
+The SD card holds `.lbrlog` logs only: they are CRC-checked, survive a power cut mid-write, and
 carry the session's config and versions. CSV is the export format for debugging and for the
-dashboard app: `python3 dev/tools/lbr_decode.py csv 00000012.LBR` writes `00000012.csv`, with
+dashboard app: `python3 dev/tools/lbr_decode.py csv 00000012.lbrlog` writes `00000012.csv`, with
 every record of the log as rows (a long table, not one column per signal, so signals at
 different rates need no resampling and nothing is filled in). Each signal in it is a channel
 the dashboard app can plot.
@@ -232,7 +249,7 @@ Columns, in this order, with a header row:
 | `text`, `end` | TEXT records; the END record's `records_written` |
 | `output` | a car logic output (`VALUE` record): `node` = the logger, `name` = key (`CVT/Ratio`), `value` = number (`bool`: 0/1), `status` = `ok` or why it is missing (`NODE_LOST`, `STALE`, ...), `synced` = 1 |
 | `unknown_record` | a record type this decoder does not know: `name` = type, `value` = payload (hex) |
-| `integrity` | last rows: `records`, `corrupt_regions`, `skipped_bytes`, `truncated_tail`, `time_sync_frames`, `time_follow_up_frames`, `update_data_frames` (counted, not listed), `catalog_checked` |
+| `integrity` | last rows: `records`, `corrupt_regions`, `skipped_bytes`, `truncated_tail`, `time_sync_frames`, `time_follow_up_frames`, `update_data_frames` (counted, not listed), `catalog_checked`; and `tick_records` (counted, not listed) when the log has `TICK` records |
 
 Rules:
 
@@ -345,5 +362,5 @@ its own CI.
 
 - [ ] where the canonical copy of this spec and the catalog lives (this repo generates it today)
 - [ ] the dashboard's fixture replay test, wired into its CI
-- [ ] the dashboard app importing `session.csv` (CSV export above) and `.LBR` directly
+- [ ] the dashboard app importing `session.csv` (CSV export above) and `.lbrlog` directly
 - [ ] session/topology metadata beyond `key=value` config text (e.g. mounting transforms)

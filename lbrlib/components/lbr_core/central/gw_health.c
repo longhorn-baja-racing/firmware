@@ -145,13 +145,11 @@ void lbr_gw_core_heartbeat(lbr_gw_core_t *c, lbr_health_record_t *out)
     c->last_health = h;
     lbr_lora_policy_offer_health(&c->lora_policy, &h);
     lbr_logic_announce(&c->logic);
-    uint64_t now    = c->hal.now_us(c->hal.ctx);
-    size_t   n_lost = lbr_node_table_expire(&c->nodes, now, lost, sizeof lost);
-    /* Expected topology: a catalog node never heard is a fault too, not an
-     * absence nobody notices. */
-    size_t n_missing = c->can_up ? lbr_node_table_missing(&c->nodes, c->listen_since_us, now,
-                                                          missing, sizeof missing)
-                                 : 0;
+    uint64_t now = c->hal.now_us(c->hal.ctx);
+    gw_log_tick(c, LBR_TICK_HEARTBEAT, now);
+    size_t n_lost, n_missing;
+    lbr_replay_check_nodes(&c->nodes, now, c->can_up, c->listen_since_us, lost, &n_lost, missing,
+                           &n_missing, LBR_NODE_TABLE_SIZE);
     gw_unlock(c, LBR_GW_LOCK_STATE);
     for (size_t i = 0; i < n_lost; i++) {
         lbr_gw_core_event(c, LBR_EVT_NODE_LOST, lost[i], true);

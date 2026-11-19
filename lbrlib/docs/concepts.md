@@ -10,7 +10,7 @@ If you know FRC, the car maps onto it closely:
 | CAN devices (motor controllers, encoders) report their values | **Sensor nodes** sample their sensors and publish them on CAN |
 | `Robot.periodic()` and subsystems | `LBR_TASK`s at their own rates |
 | `Logger.recordOutput` | `LBR_OUTPUT` + `lbr_out` |
-| WPILOG files, AdvantageScope | The SD log (`.LBR`), the dashboard app |
+| WPILOG files, AdvantageScope | The SD log (`.lbrlog`), the dashboard app |
 
 **Sensor nodes** (`imu`, `powertrain`, `driver_input`, `temperature`, `stress`, and the four
 `corner` hubs) are smart sensors. Each owns a few sensors, samples them on the shared clock,
@@ -110,6 +110,5 @@ to the logic to be in the log, in the order the logic saw it. LBRLib gets there 
   reading only through `lbr_get()` and writing only through `lbr_out()`. Background work (CAN
   receive, radios, the SD writer) only feeds queues.
 
-Car logic already follows these rules, so tasks you write today will replay unchanged. The
-remaining steps, which run the whole Central core on one cycle, log its non-CAN inputs, and add
-the `lbr_replay` tool and the `.lbrlog` format, are on the roadmap ([logging](logging.md#replay)).
+With both, `lbr_replay` re-runs the car logic on a log and reproduces every output bit for bit;
+change a task and the replay shows what the change would have done ([logging](logging.md#replay)).
