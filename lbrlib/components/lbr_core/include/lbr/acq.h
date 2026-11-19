@@ -35,7 +35,8 @@ typedef struct {
     uint32_t      period_us;
     uint16_t      index; /* slot index: the event argument */
 
-    atomic_bool healthy;
+    atomic_bool healthy;  /* the driver is up (init succeeded, reads succeed) */
+    atomic_bool complete; /* its latest reading had every channel valid */
     atomic_bool calibrated;
     uint64_t    next_retry_us; /* local clock */
 

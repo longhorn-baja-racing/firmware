@@ -453,6 +453,35 @@ static void test_driver_kit(void)
     CHECK(strstr(err, "incomplete") != NULL);
 }
 
+/* Per-channel health: a slot is healthy only while its driver is up and its
+ * latest reading had every channel. A slot with no part (NOT_FITTED) or one
+ * missing channel is not, so its node reports DEGRADED. */
+static void test_acq_slot_complete(void)
+{
+    static const lbr_signal_id_t two[] = {LBR_SIG_ENGINE_RPM, LBR_SIG_CVT_RPM};
+    lbr_sensor_t                 unfitted;
+    lbr_sensor_unconfigured(&unfitted, "speeds", two, 2);
+    lbr_acq_slot_t a;
+    lbr_reading_t  r[2];
+    lbr_acq_tick_t tick;
+    lbr_acq_slot_init(&a, &unfitted, 100, 0);
+    lbr_acq_slot_start(&a, 0, on_event, NULL);
+    CHECK(atomic_load(&a.healthy));
+    CHECK(atomic_load(&a.complete)); /* nothing read yet: no verdict */
+    CHECK(lbr_acq_slot_tick(&a, 10000, 0, 1, r, &tick, on_event, NULL));
+    CHECK(atomic_load(&a.healthy));   /* the driver is fine ... */
+    CHECK(!atomic_load(&a.complete)); /* ... but the slot has no data */
+
+    lbr_sensor_t sensor = {
+        .name = "flaky", .signals = k_fuel, .n_signals = 1, .init = flaky_init, .read = flaky_read};
+    s_fail_init = 0;
+    s_fail_read = 0;
+    lbr_acq_slot_init(&a, &sensor, 100, 1);
+    lbr_acq_slot_start(&a, 0, on_event, NULL);
+    CHECK(lbr_acq_slot_tick(&a, 10000, 0, 1, r, &tick, on_event, NULL));
+    CHECK(atomic_load(&a.complete));
+}
+
 int main(void)
 {
     RUN(test_value_table);
@@ -466,5 +495,6 @@ int main(void)
     RUN(test_app_slot_binding);
     RUN(test_node_table_missing);
     RUN(test_driver_kit);
+    RUN(test_acq_slot_complete);
     TEST_MAIN_END();
 }

@@ -118,6 +118,11 @@ pages (97 bytes). Reserved fields are zero and a decoder rejects a page where th
 The reset reason of the boot (power-on, software, panic, watchdog, brownout, deep sleep,
 external) is in page 0 and in every session record, so a crash is visible in the next session.
 
+`sensor_status` (page 7) has bit i set while acquisition slot i is healthy: its driver is up and
+its latest reading had every channel valid. A slot with no part (`NOT_FITTED`), a failed driver,
+or one channel without a value clears its bit, and the node then reports `DEGRADED` with
+`SENSOR` in its heartbeat error flags; which channel and why is in the channel's own value on CAN.
+
 ## Log format (version 1)
 
 A log is a sequence of self-delimiting records:

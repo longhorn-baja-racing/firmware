@@ -73,7 +73,8 @@ if the oil sensor is gone.
 
 | Fault | Detected by | Shows as |
 | --- | --- | --- |
-| A slot with no part | the node (unbound driver) | channels `NOT_FITTED` on CAN and in the log (the heartbeat's per-slot `sensor_status` still counts the slot healthy; per-channel health in the heartbeat is planned) |
+| A slot with no part | the node (unbound driver) | channels `NOT_FITTED` on CAN and in the log; the slot's `sensor_status` bit is clear, so the node reports `DEGRADED` with the sensor error flag |
+| One channel without a value (open wire, out of range, a bad read) | the driver or the input spec | that channel's reason on CAN; the slot's `sensor_status` bit clears and the node reports `DEGRADED` until a complete reading |
 | A part that will not start or stops answering | the node runtime | `SENSOR_INIT_FAIL` fault (argument: slot), channels `SENSOR_FAULT`, retried every 2 s, `SENSOR_RECOVERED` when back |
 | A bad reading | the driver | the channel's reason (`BUS_ERROR`, `OUT_OF_RANGE`, ...) on CAN |
 | A value too big for its CAN field | the node | `OUT_OF_RANGE` on CAN, counted in `rejected_count` |

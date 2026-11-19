@@ -1,7 +1,7 @@
 # A sensor that stops responding is reported, retried, and recovers; an open
-# circuit on one channel is reported on that channel only; a value that does
-# not fit its CAN field is OUT_OF_RANGE; nothing is ever published as a fake
-# zero.
+# circuit on one channel is reported on that channel, and its node reports
+# DEGRADED until it is repaired; a value that does not fit its CAN field is
+# OUT_OF_RANGE; nothing is ever published as a fake zero.
 at 3.0  unplug imu chassis
 at 3.5  expect imu state == DEGRADED
 at 3.5  expect imu event:SENSOR_INIT_FAIL >= 1
@@ -19,9 +19,10 @@ at 8.0  expect IMU_CH_ACCEL_X valid == 1
 at 9.0  open BRAKE_PEDAL
 at 9.5  expect BRAKE_PEDAL reason == SENSOR_FAULT
 at 9.5  expect GAS_PEDAL valid == 1
-at 9.5  expect driver_input state == RUN
+at 9.5  expect driver_input state == DEGRADED
 at 10.0 close BRAKE_PEDAL
 at 10.5 expect BRAKE_PEDAL valid == 1
+at 11.0 expect driver_input state == RUN
 
 # Beyond the gas pedal spec's physical range (max=105) but inside its
 # electrical window (hi=2450 mV).
