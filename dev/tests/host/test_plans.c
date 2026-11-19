@@ -12,7 +12,7 @@
 #include "temperature_plan.h"
 
 /* Defaults the firmware ships with (CONFIG_LBR_CAN_BITRATE and
- * CONFIG_LBR_CAN_TX_QUEUE_LEN). Keep in sync with car/components/can/Kconfig. */
+ * CONFIG_LBR_CAN_TX_QUEUE_LEN). Keep in sync with lbrlib/components/can/Kconfig. */
 #define BITRATE      500000u
 #define TX_QUEUE_LEN 64u
 

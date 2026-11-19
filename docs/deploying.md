@@ -277,5 +277,5 @@ with what each node runs, so every node that differs gets the older firmware.
   on its first boot and goes back at once.
 - Update traffic is recorded in the Central's SD log like every other frame.
 
-Wire format: [`can-ids.md`](can-ids.md), "Firmware update". Code: `car/components/update`
+Wire format: [`can-ids.md`](can-ids.md), "Firmware update". Code: `lbrlib/components/update`
 (node side and Central relay) and `dev/tools/lbr_deploy.py` (laptop side).

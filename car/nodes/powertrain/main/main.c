@@ -4,7 +4,7 @@
 
 /*
  * Powertrain Controller (ESP32, CAN node 2) app. Everything except driver binding lives in the
- * shared node runtime (car/components/node).
+ * shared node runtime (lbrlib/components/node).
  */
 
 static lbr_sensor_t      s_sensors[POWERTRAIN_SLOT_COUNT];

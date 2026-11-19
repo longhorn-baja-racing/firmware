@@ -22,7 +22,7 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
 # Firmware updates over CAN (docs/deploying.md): two app slots, and the
 # bootloader rolls a new image back unless it confirms itself
-# (car/components/update). The Central overrides the table file with its
+# (lbrlib/components/update). The Central overrides the table file with its
 # own; the cockpit overrides it with one large slot (USB updates only).
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions_ota.csv"

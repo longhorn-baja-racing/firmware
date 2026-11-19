@@ -6,7 +6,7 @@
  * Wheel hub node app (Mini ESP32-C5, CAN nodes 7..10): one suspension IMU.
  * The same firmware runs on all four; CONFIG_LBR_CORNER_POSITION picks the
  * plan. Everything except driver binding lives in the shared node runtime
- * (car/components/node).
+ * (lbrlib/components/node).
  */
 
 static lbr_sensor_t      s_sensors[CORNER_SLOT_COUNT];

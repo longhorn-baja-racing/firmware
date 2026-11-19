@@ -25,7 +25,7 @@ stress**), four **corner** (wheel hub) nodes, the **Central** controller, all on
 The framework is in place and tested; sensor parts and pins are not chosen yet. To build,
 test, simulate, or flash, see [Getting started](#getting-started).
 
-- **Shared libraries** (`car/components/`): protocol, signal catalog and CAN frame table, CAN
+- **Shared libraries** (`lbrlib/components/`): protocol, signal catalog and CAN frame table, CAN
   codec and TWAI adapter, CAN-distributed time sync, recoverable SD logging, heartbeat/health,
   sensor framework, grid-locked acquisition, node runtime, the cockpit WiFi link,
   live transports (USB, LoRa, WiFi, BLE), and the Central's logic. The hardware-independent
@@ -88,7 +88,7 @@ The firmware must:
 | `cockpit` | 0x0B | ESP32-C5 | `COCKPIT_BATTERY` (reported to the Central) | driver's display, WiFi only, own battery |
 
 Rates and frames are DAQ-WIRING.md section 7, implemented as a table
-(`car/components/protocol/frames.c`); each node's plan (`car/nodes/<name>/main/<name>_plan.c`)
+(`lbrlib/components/protocol/frames.c`); each node's plan (`car/nodes/<name>/main/<name>_plan.c`)
 must match it, which the host tests check together with the bus budget. The `cockpit`
 node is the driver's display in the car. "Dashboard" always means the pit/desktop app
 ([`longhorn-baja-racing/dashboard`](https://github.com/longhorn-baja-racing/dashboard)), never a node.
@@ -250,9 +250,9 @@ harness before any hardware-initialization code is merged.
 ## Repository layout
 
 ```text
-car/                          # ON THE CAR: everything that is flashed to an ESP32
-  cmake/                      #   warnings-as-errors policy, ESP-IDF version pin check
-  components/                 #   shared libraries (ESP-IDF components); *_esp.c = hardware side
+lbrlib/                       # LBRLIB: the library every node is built on (flashed with the nodes)
+  cmake/                      #   warnings-as-errors policy
+  components/                 #   ESP-IDF components; *_esp.c = hardware side, the rest is pure C23
     util/                     #     byte order, CRC-32, COBS, bounded ring buffer
     protocol/                 #     signal catalog (signals.def), CAN frame table (frames.c), node ids
     health/                   #     heartbeat record + page codec, reset reason
@@ -266,6 +266,8 @@ car/                          # ON THE CAR: everything that is flashed to an ESP
     links/                    #     the Central's USB/LoRa/WiFi/BLE links
     wlink/                    #     cockpit WiFi link (cores + C5 WiFi/UDP glue)
     gateway/                  #     the Central's logic, runtime config, status text
+car/                          # THIS CAR: the 2026 vehicle's node apps, built on lbrlib/
+  cmake/                      #   ESP-IDF version pin check
   nodes/                      #   one ESP-IDF app per physical node (DAQ-WIRING.md)
     sdkconfig.common          #     settings shared by every node
     partitions_ota.csv        #     two app slots (CAN updates) for every sensor node
@@ -287,8 +289,9 @@ docs/                         # protocol, CAN ids, hardware, sensors, deploying
 .github/workflows/ci.yml
 ```
 
-**`car/` is what goes on the car; `dev/` never does.** Node builds only see `car/`, CI fails if
-anything in `car/` includes or builds from `dev/`, and the bench sensor simulator
+**`lbrlib/` and `car/` go on the car; `dev/` never does.** Node builds only see `lbrlib/` and
+`car/`, CI fails if anything in either includes or builds from `dev/` (or if `lbrlib/` depends on
+`car/`: the library stays generic), and the bench sensor simulator
 (`CONFIG_LBR_SENSOR_SIM`) is compiled into a node only when that bench option is on.
 
 The node runtime, the Central, the cockpit link, and the SD session keeper are pure logic
@@ -298,12 +301,12 @@ them to FreeRTOS, TWAI, SD, and the radios. That is what lets the host tests and
 simulator run exactly the code that is flashed.
 
 Each node in `car/nodes/` is a self-contained ESP-IDF project (its own top-level `CMakeLists.txt`
-+ `main/`) that pulls in the shared `car/components/` via `EXTRA_COMPONENT_DIRS` and builds only
++ `main/`) that pulls in the shared `lbrlib/components/` via `EXTRA_COMPONENT_DIRS` and builds only
 what its `main` needs. Node apps stay thin: a plan (pure data: node id, channels, rates) and
-driver binding. Shared logic lives in `car/components/` behind narrow interfaces so protocol,
+driver binding. Shared logic lives in `lbrlib/components/` behind narrow interfaces so protocol,
 queue, time-sync, and log-recovery behavior is exercised in host tests without hardware.
 Adding a node means copying a `car/nodes/<name>/` directory, giving it a new id in
-`car/components/protocol/include/lbr/nodes.h`, its frames in `frames.c`, and adding its plan to
+`lbrlib/components/protocol/include/lbr/nodes.h`, its frames in `frames.c`, and adding its plan to
 `dev/tests/host/CMakeLists.txt`.
 
 ## Getting started

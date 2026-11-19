@@ -3,7 +3,7 @@
 
 /*
  * IMU Controller (ESP32-C5, CAN node 1) app: the chassis IMU. Everything
- * except driver binding lives in the shared node runtime (car/components/node).
+ * except driver binding lives in the shared node runtime (lbrlib/components/node).
  */
 
 static lbr_sensor_t      s_sensors[IMU_SLOT_COUNT];

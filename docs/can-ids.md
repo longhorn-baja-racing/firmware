@@ -2,9 +2,9 @@
 
 Part of protocol version 4. Keep synchronized with the dashboard app and every node's firmware.
 The map is the one in [`DAQ-WIRING.md`](../DAQ-WIRING.md) section 7; this file adds the bit-level
-rules. The data frames are a schema, `car/components/protocol/frames.c`, exported as the
+rules. The data frames are a schema, `lbrlib/components/protocol/frames.c`, exported as the
 `frames` table of `dev/tests/fixtures/catalog.json` and folded into the catalog hash; the codec is
-`car/components/can/include/lbr/can.h`; `dev/tests/fixtures/can_capture.*` is the byte-level
+`lbrlib/components/can/include/lbr/can.h`; `dev/tests/fixtures/can_capture.*` is the byte-level
 reference.
 
 ## Frames
@@ -146,7 +146,7 @@ sync, commands, and firmware updates. The Central receives everything.
 ## Firmware update
 
 Sensor nodes are updated over the bus, through the Central, with the car parked
-([`deploying.md`](deploying.md) is the operator guide; the code is `car/components/update`). The
+([`deploying.md`](deploying.md) is the operator guide; the code is `lbrlib/components/update`). The
 laptop drives every step over the Central's USB link (`UPD` lines); the Central relays each one and
 waits for the node's answer. Update traffic is logged like any other frame.
 

@@ -7,7 +7,7 @@
  * steering angle (DAQ-WIRING.md section 4).
  *
  * Pure data, compiled into the host tests: each slot's signals must travel in
- * frames of the CAN frame table (car/components/protocol/frames.c) that this
+ * frames of the CAN frame table (lbrlib/components/protocol/frames.c) that this
  * node sends at the slot's rate, and the whole bus must stay inside its
  * budget. Change a rate in both places and the tests say whether it fits.
  */

@@ -4,5 +4,5 @@ idf_component_register(
     REQUIRES can gateway health links logging node protocol sensors timebase transport update util wlink
              nvs_flash app_update esp_timer esp_system freertos log
 )
-include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/warnings.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../../../../lbrlib/cmake/warnings.cmake")
 lbr_apply_warnings(${COMPONENT_LIB})

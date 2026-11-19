@@ -106,7 +106,7 @@ FL/FR/BL/BR Brake Temp, CVT Temp --> [ESP32 Temperature Controller]
 
 There are no pre-assigned or standard IDs for this system. This scheme groups by priority (safety/driver inputs first, slow data last).
 
-The firmware implements this map as a schema (`car/components/protocol/frames.c`, exported to `dev/tests/fixtures/catalog.json`), so the dashboard decodes frames from the table, not from hand-written layouts. Rows marked **(added)** are not in the original proposal: the firmware needs them for precise time sync, events/faults, the GPS on the Central, the cockpit link, and full health reporting. Bit-level details are in `docs/can-ids.md`. Every id has exactly one sender, the node that samples its data.
+The firmware implements this map as a schema (`lbrlib/components/protocol/frames.c`, exported to `dev/tests/fixtures/catalog.json`), so the dashboard decodes frames from the table, not from hand-written layouts. Rows marked **(added)** are not in the original proposal: the firmware needs them for precise time sync, events/faults, the GPS on the Central, the cockpit link, and full health reporting. Bit-level details are in `docs/can-ids.md`. Every id has exactly one sender, the node that samples its data.
 
 | ID | Sender | Content | Rate | Payload (bytes) |
 |---|---|---|---|---|
@@ -162,7 +162,7 @@ The Cockpit Controller is the only wireless node.
 - **Band fallback:** ESP32-C5 is dual-band, so keep the band configurable (5 GHz default, 2.4 GHz fallback) and test both on the car.
 - **Battery reporting:** the cockpit reports its battery level so it can be logged and shown.
 
-What the firmware does today (`car/components/wlink`, exercised by the simulator in `dev/sim`):
+What the firmware does today (`lbrlib/components/wlink`, exercised by the simulator in `dev/sim`):
 
 - UDP (ports 47801 cockpit, 47802 cockpit status), one CRC-checked packet per datagram with a per-sender sequence number, so lost datagrams are counted.
 - The Central sends display data 10 times a second; the cockpit reports its battery once a second.

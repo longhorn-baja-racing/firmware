@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # Shared lbr components plus the settings every node starts from.
-set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../components")
+set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../../lbrlib/components")
 set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/../sdkconfig.common;sdkconfig.defaults")
 # Optional overlay, e.g. -DLBR_SDKCONFIG_EXTRA=dev/ci/sdkconfig.linkcheck
 if(DEFINED LBR_SDKCONFIG_EXTRA)

@@ -8,8 +8,8 @@ new part touches exactly one driver file and one line in its node's `main.c`.
 ```text
 car/nodes/<node>/main/<node>_plan.c   slots: which signals, at what rate, CAN decimation (pure data)
 car/nodes/<node>/main/main.c          binds a driver to each slot that has a part
-car/components/sensors/               driver interface + drivers
-car/components/node/                  runtime: timing, timestamps, seq, CAN, logs, heartbeat
+lbrlib/components/sensors/               driver interface + drivers
+lbrlib/components/node/                  runtime: timing, timestamps, seq, CAN, logs, heartbeat
 ```
 
 Until a slot has a driver it runs the **unconfigured** driver: every channel publishes
@@ -41,7 +41,7 @@ ADC options: `avg=` samples per reading (default 4), `lo=`/`hi=` electrical wind
 it the channel reads `SENSOR_FAULT`: open or shorted sensor), `min=`/`max=` physical range
 (outside it reads `OUT_OF_RANGE`). Pulse options: `edge=rise|fall`, `pull=up|down|none`. Digital
 options: `active=low|high`, `pull=`, `debounce_ms=` (default 10). Full grammar:
-`car/components/sensors/include/lbr/sensor_io.h`.
+`lbrlib/components/sensors/include/lbr/sensor_io.h`.
 
 The spec is the channel's calibration: it is recorded verbatim in every session config
 (`sensor.<n>.params=`) and changes the config CRC. A spec that does not parse (wrong channel
@@ -61,7 +61,7 @@ active RMC.
 
 ## Writing a driver
 
-1. Create `car/components/sensors/sensor_<part>.c` (hardware code may use ESP-IDF; keep any pure
+1. Create `lbrlib/components/sensors/sensor_<part>.c` (hardware code may use ESP-IDF; keep any pure
    conversion math in a separate function so it can be host-tested).
 2. Provide a constructor that fills an `lbr_sensor_t`:
 
@@ -76,7 +76,7 @@ active RMC.
    - `read(self, t_us, out)`: fill one `lbr_reading_t` per channel, in the slot's signal order.
      Return non-zero if the part stopped responding (the runtime re-inits it).
    - `is_calibrated()` (optional): false while calibration is missing or invalid.
-4. Add the file to `car/components/sensors/CMakeLists.txt`, and bind it in the node's `main.c`:
+4. Add the file to `lbrlib/components/sensors/CMakeLists.txt`, and bind it in the node's `main.c`:
 
    ```c
    lbr_sensor_<part>(&s_sensors[IMU_SLOT_CHASSIS], lbr_plan_imu.slots[IMU_SLOT_CHASSIS].signals,
@@ -101,7 +101,7 @@ active RMC.
 A slot's rate must equal the rate of the CAN frame its signals travel in, and every field of
 that frame must come from the same slot (each sample is published exactly once, nothing is
 decimated). So a rate or channel change is two edits: the node's plan and the frame table
-(`car/components/protocol/frames.c`, with DAQ-WIRING.md section 7). Then run the host tests:
+(`lbrlib/components/protocol/frames.c`, with DAQ-WIRING.md section 7). Then run the host tests:
 `test_plans` checks every plan against the table, that every frame has a producer, and the whole
 bus against its 50 % ceiling. A new signal goes in its group in `signals.def` and in one frame,
 followed by `cmake --build build-dev --target fixtures` and a matching update in

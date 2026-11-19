@@ -1,14 +1,14 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.21)
 project(lbr_host_tests C)
 
-set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enable_testing()
 
 get_filename_component(LBR_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
-set(LBR_COMPONENTS "${LBR_ROOT}/car/components")
-include("${LBR_ROOT}/car/cmake/warnings.cmake")
+set(LBR_COMPONENTS "${LBR_ROOT}/lbrlib/components")
+include("${LBR_ROOT}/lbrlib/cmake/warnings.cmake")
 
 option(LBR_SANITIZE "Build host tests with ASan + UBSan" ON)
 

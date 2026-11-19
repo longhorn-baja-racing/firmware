@@ -4,7 +4,7 @@
 
 /*
  * Stress Controller (ESP32, CAN node 5) app. Everything except driver binding lives in the shared
- * node runtime (car/components/node).
+ * node runtime (lbrlib/components/node).
  */
 
 static lbr_sensor_t      s_sensors[STRESS_SLOT_COUNT];
