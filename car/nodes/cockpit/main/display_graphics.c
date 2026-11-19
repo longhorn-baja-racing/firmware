@@ -3,14 +3,14 @@
 #include <math.h>
 #include <stdio.h>
 
-#define DASHBOARD_BG       0x101820
-#define TILE_BG            0x1B2833
-#define TEXT_COLOR         0xF1F5F8
-#define MUTED_COLOR        0x9AAAB7
-#define FUEL_WARNING_COLOR 0xFF453A
-#define TACH_NORMAL_COLOR  0x34C759
-#define TACH_WARN_COLOR    0xFFC247
-#define TACH_REDLINE       0xE9545C
+#define DASHBOARD_BG        0x101820
+#define TILE_BG             0x1B2833
+#define TEXT_COLOR          0xF1F5F8
+#define MUTED_COLOR         0x9AAAB7
+#define FUEL_WARNING_COLOR  0xFF453A
+#define TACH_NORMAL_COLOR   0x34C759
+#define TACH_WARN_COLOR     0xFFC247
+#define TACH_REDLINE        0xE9545C
 #define STRESS_DANGER_RATIO 0.80f
 #define TEMP_DANGER_C       100.0f
 
@@ -26,7 +26,7 @@ typedef struct {
     lv_obj_t *fuel_value;
     lv_obj_t *fuel_bar;
     lv_obj_t *fuel_warning;
-    int32_t rpm;
+    int32_t   rpm;
 } dashboard_t;
 
 static dashboard_t s_dashboard;
@@ -71,13 +71,14 @@ static void resize_viewport(lv_obj_t *parent, lv_obj_t *viewport)
 {
     lv_coord_t parent_w = lv_obj_get_content_width(parent);
     lv_coord_t parent_h = lv_obj_get_content_height(parent);
-    if (parent_w <= 0 || parent_h <= 0) return;
+    if (parent_w <= 0 || parent_h <= 0)
+        return;
 
-    lv_coord_t width = parent_w;
+    lv_coord_t width  = parent_w;
     lv_coord_t height = (lv_coord_t)((int32_t)width * 3 / 4);
     if (height > parent_h) {
         height = parent_h;
-        width = (lv_coord_t)((int32_t)height * 4 / 3);
+        width  = (lv_coord_t)((int32_t)height * 4 / 3);
     }
     lv_obj_set_size(viewport, width, height);
     lv_obj_center(viewport);
@@ -91,27 +92,31 @@ static void parent_size_changed(lv_event_t *event)
 static lv_color_t stress_border_color(float value, float full_scale)
 {
     float ratio = value / (full_scale * STRESS_DANGER_RATIO);
-    if (ratio < 0.0f) ratio = 0.0f;
-    if (ratio > 1.0f) ratio = 1.0f;
-    return lv_color_make((uint8_t)(255.0f * ratio),
-                         (uint8_t)(210.0f - 35.0f * ratio), 35);
+    if (ratio < 0.0f)
+        ratio = 0.0f;
+    if (ratio > 1.0f)
+        ratio = 1.0f;
+    return lv_color_make((uint8_t)(255.0f * ratio), (uint8_t)(210.0f - 35.0f * ratio), 35);
 }
 
 static lv_color_t temperature_border_color(float celsius)
 {
     float ratio = (celsius - 65.0f) / (TEMP_DANGER_C - 65.0f);
-    if (ratio < 0.0f) ratio = 0.0f;
-    if (ratio > 1.0f) ratio = 1.0f;
+    if (ratio < 0.0f)
+        ratio = 0.0f;
+    if (ratio > 1.0f)
+        ratio = 1.0f;
     return lv_color_make((uint8_t)(255.0f * ratio), (uint8_t)(100.0f + 80.0f * ratio),
                          (uint8_t)(255.0f * (1.0f - ratio)));
 }
 
 lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
 {
-    if (parent == NULL) return NULL;
+    if (parent == NULL)
+        return NULL;
     s_dashboard = (dashboard_t){0};
 
-    lv_obj_t *viewport = lv_obj_create(parent);
+    lv_obj_t *viewport   = lv_obj_create(parent);
     s_dashboard.viewport = viewport;
     lv_obj_remove_style_all(viewport);
     lv_obj_set_style_bg_color(viewport, lv_color_hex(DASHBOARD_BG), 0);
@@ -126,8 +131,7 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
     lv_obj_set_size(left, LV_PCT(47), LV_PCT(100));
     lv_obj_set_style_pad_all(left, 0, 0);
     lv_obj_set_flex_flow(left, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(left, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(left, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     make_label(left, "TACHOMETER (x1000 RPM)", MUTED_COLOR, &lv_font_montserrat_20);
 
     lv_obj_t *holder = lv_obj_create(left);
@@ -135,8 +139,7 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
     lv_obj_set_width(holder, LV_PCT(100));
     lv_obj_set_flex_grow(holder, 1);
     lv_obj_set_flex_flow(holder, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(holder, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(holder, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t *gauge_row = lv_obj_create(holder);
     lv_obj_remove_style_all(gauge_row);
@@ -165,8 +168,8 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
         lv_obj_set_flex_flow(tick_row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(tick_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER);
-        lv_obj_t *tick_label = make_label(tick_row, rpm_ticks[i], TEXT_COLOR,
-                                          &lv_font_montserrat_20);
+        lv_obj_t *tick_label =
+            make_label(tick_row, rpm_ticks[i], TEXT_COLOR, &lv_font_montserrat_20);
         lv_obj_set_width(tick_label, 24);
         lv_obj_set_style_text_align(tick_label, LV_TEXT_ALIGN_RIGHT, 0);
         /* Short axis tick visually joins the matching line inside the bar. */
@@ -186,7 +189,8 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
     lv_obj_set_style_bg_color(s_dashboard.rpm_bar, lv_color_hex(0x344653), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_dashboard.rpm_bar, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(s_dashboard.rpm_bar, 14, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_dashboard.rpm_bar, lv_color_hex(TACH_NORMAL_COLOR), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_dashboard.rpm_bar, lv_color_hex(TACH_NORMAL_COLOR),
+                              LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(s_dashboard.rpm_bar, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_radius(s_dashboard.rpm_bar, 14, LV_PART_INDICATOR);
     /* Yard lines across the bar, aligned to each 1000 RPM label. */
@@ -211,16 +215,15 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
         lv_obj_set_style_bg_opa(line, (i <= 1) ? LV_OPA_COVER : LV_OPA_70, 0);
     }
     lv_obj_align(rpm_lines, LV_ALIGN_CENTER, 0, 0);
-    s_dashboard.rpm_value = make_label(s_dashboard.rpm_bar, "-- rpm", TEXT_COLOR,
-                                       &lv_font_montserrat_24);
+    s_dashboard.rpm_value =
+        make_label(s_dashboard.rpm_bar, "-- rpm", TEXT_COLOR, &lv_font_montserrat_24);
     lv_obj_set_style_bg_color(s_dashboard.rpm_value, lv_color_hex(DASHBOARD_BG), 0);
     lv_obj_set_style_bg_opa(s_dashboard.rpm_value, LV_OPA_80, 0);
     lv_obj_set_style_radius(s_dashboard.rpm_value, 6, 0);
     lv_obj_set_style_pad_hor(s_dashboard.rpm_value, 6, 0);
     lv_obj_set_style_pad_ver(s_dashboard.rpm_value, 3, 0);
     lv_obj_center(s_dashboard.rpm_value);
-    s_dashboard.speed_value = make_label(holder, "-- km/h", TEXT_COLOR,
-                                         &lv_font_montserrat_40);
+    s_dashboard.speed_value = make_label(holder, "-- km/h", TEXT_COLOR, &lv_font_montserrat_40);
 
     /* Right half: the 4 by 2 stress array, then temperatures and fuel. */
     lv_obj_t *right = lv_obj_create(viewport);
@@ -229,8 +232,7 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
     lv_obj_set_style_pad_all(right, 0, 0);
     lv_obj_set_style_pad_row(right, 4, 0);
     lv_obj_set_flex_flow(right, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(right, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(right, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t *stress_area = lv_obj_create(right);
     lv_obj_remove_style_all(stress_area);
@@ -252,15 +254,14 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
         lv_obj_set_flex_align(line, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER);
         for (size_t col = 0; col < 4; col++) {
-            size_t i = row * 4 + col;
+            size_t i                    = row * 4 + col;
             s_dashboard.stress_tiles[i] = make_tile(line);
             lv_obj_set_flex_grow(s_dashboard.stress_tiles[i], 1);
             lv_obj_set_height(s_dashboard.stress_tiles[i], LV_PCT(100));
             char name[4];
             (void)snprintf(name, sizeof name, "S%u", (unsigned)(i + 1));
             (void)label_tile(s_dashboard.stress_tiles[i], name, -20);
-            s_dashboard.stress_value_labels[i] =
-                label_tile(s_dashboard.stress_tiles[i], "--", 20);
+            s_dashboard.stress_value_labels[i] = label_tile(s_dashboard.stress_tiles[i], "--", 20);
         }
     }
 
@@ -270,8 +271,7 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
     lv_obj_set_flex_grow(lower, 1);
     lv_obj_set_style_pad_column(lower, 8, 0);
     lv_obj_set_flex_flow(lower, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(lower, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(lower, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t *temps = lv_obj_create(lower);
     lv_obj_remove_style_all(temps);
@@ -279,8 +279,7 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
     lv_obj_set_style_pad_row(temps, 6, 0);
     lv_obj_set_style_pad_column(temps, 6, 0);
     lv_obj_set_flex_flow(temps, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(temps, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(temps, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     make_label(temps, "TEMPS", MUTED_COLOR, &lv_font_montserrat_20);
     for (size_t row = 0; row < 2; row++) {
         lv_obj_t *line = lv_obj_create(temps);
@@ -292,7 +291,7 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
         lv_obj_set_flex_align(line, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER);
         for (size_t col = 0; col < (row == 0 ? 3u : 2u); col++) {
-            size_t i = row == 0 ? col : col + 3;
+            size_t i                         = row == 0 ? col : col + 3;
             s_dashboard.temperature_tiles[i] = make_tile(line);
             lv_obj_set_flex_grow(s_dashboard.temperature_tiles[i], 1);
             lv_obj_set_height(s_dashboard.temperature_tiles[i], LV_PCT(100));
@@ -313,11 +312,10 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
     lv_obj_set_style_border_color(fuel, lv_color_hex(0x344653), 0);
     lv_obj_set_style_pad_all(fuel, 6, 0);
     lv_obj_set_flex_flow(fuel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(fuel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(fuel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     make_label(fuel, "FUEL", MUTED_COLOR, &lv_font_montserrat_20);
     s_dashboard.fuel_value = make_label(fuel, "--%", TEXT_COLOR, &lv_font_montserrat_32);
-    s_dashboard.fuel_bar = lv_bar_create(fuel);
+    s_dashboard.fuel_bar   = lv_bar_create(fuel);
     lv_bar_set_orientation(s_dashboard.fuel_bar, LV_BAR_ORIENTATION_VERTICAL);
     lv_bar_set_range(s_dashboard.fuel_bar, 0, 100);
     lv_bar_set_value(s_dashboard.fuel_bar, 0, LV_ANIM_OFF);
@@ -325,11 +323,11 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
     lv_obj_set_style_bg_color(s_dashboard.fuel_bar, lv_color_hex(0x344653), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_dashboard.fuel_bar, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(s_dashboard.fuel_bar, 8, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_dashboard.fuel_bar, lv_color_hex(TACH_NORMAL_COLOR), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_dashboard.fuel_bar, lv_color_hex(TACH_NORMAL_COLOR),
+                              LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(s_dashboard.fuel_bar, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_radius(s_dashboard.fuel_bar, 8, LV_PART_INDICATOR);
-    s_dashboard.fuel_warning = make_label(fuel, "LOW", FUEL_WARNING_COLOR,
-                                          &lv_font_montserrat_20);
+    s_dashboard.fuel_warning = make_label(fuel, "LOW", FUEL_WARNING_COLOR, &lv_font_montserrat_20);
     lv_obj_add_flag(s_dashboard.fuel_warning, LV_OBJ_FLAG_HIDDEN);
 
     resize_viewport(parent, viewport);
@@ -340,18 +338,18 @@ lv_obj_t *cockpit_graphics_create(lv_obj_t *parent)
 
 void cockpit_graphics_update(const cockpit_graphics_data_t *data)
 {
-    if (data == NULL || s_dashboard.viewport == NULL) return;
-    char text[32];
-    float rpm_max = (isfinite(data->rpm_max) && data->rpm_max > 0.0f)
-                        ? data->rpm_max : 8000.0f;
+    if (data == NULL || s_dashboard.viewport == NULL)
+        return;
+    char  text[32];
+    float rpm_max = (isfinite(data->rpm_max) && data->rpm_max > 0.0f) ? data->rpm_max : 8000.0f;
     if ((data->valid_mask & COCKPIT_GRAPHICS_VALID_RPM) && isfinite(data->engine_rpm)) {
         s_dashboard.rpm = (int32_t)fmaxf(0.0f, fminf(data->engine_rpm, rpm_max));
         lv_bar_set_range(s_dashboard.rpm_bar, 0, (int32_t)rpm_max);
         lv_bar_set_value(s_dashboard.rpm_bar, s_dashboard.rpm, LV_ANIM_OFF);
         (void)snprintf(text, sizeof text, "%d rpm", (int)s_dashboard.rpm);
         lv_label_set_text(s_dashboard.rpm_value, text);
-        float ratio = (float)s_dashboard.rpm / rpm_max;
-        uint32_t color = ratio >= 0.85f ? TACH_REDLINE
+        float    ratio = (float)s_dashboard.rpm / rpm_max;
+        uint32_t color = ratio >= 0.85f   ? TACH_REDLINE
                          : ratio >= 0.60f ? TACH_WARN_COLOR
                                           : TACH_NORMAL_COLOR;
         lv_obj_set_style_bg_color(s_dashboard.rpm_bar, lv_color_hex(color), LV_PART_INDICATOR);
@@ -367,45 +365,46 @@ void cockpit_graphics_update(const cockpit_graphics_data_t *data)
     lv_label_set_text(s_dashboard.speed_value, text);
 
     float stress_scale = (isfinite(data->stress_full_scale) && data->stress_full_scale > 0.0f)
-                             ? data->stress_full_scale : 1000.0f;
+                             ? data->stress_full_scale
+                             : 1000.0f;
     for (size_t i = 0; i < COCKPIT_GRAPHICS_STRESS_COUNT; i++) {
-        uint16_t bit = (uint16_t)(COCKPIT_GRAPHICS_VALID_STRESS_1 << i);
-        bool valid = (data->valid_mask & bit) && isfinite(data->stress[i]);
-        bool danger = valid && data->stress[i] >= stress_scale * STRESS_DANGER_RATIO;
-        lv_color_t border = valid
-                                ? (danger ? lv_color_hex(FUEL_WARNING_COLOR)
-                                          : stress_border_color(data->stress[i], stress_scale))
-                                : lv_color_hex(0x344653);
-        lv_color_t background = danger ? lv_color_hex(FUEL_WARNING_COLOR)
-                                       : lv_color_hex(TILE_BG);
+        uint16_t   bit    = (uint16_t)(COCKPIT_GRAPHICS_VALID_STRESS_1 << i);
+        bool       valid  = (data->valid_mask & bit) && isfinite(data->stress[i]);
+        bool       danger = valid && data->stress[i] >= stress_scale * STRESS_DANGER_RATIO;
+        lv_color_t border = valid ? (danger ? lv_color_hex(FUEL_WARNING_COLOR)
+                                            : stress_border_color(data->stress[i], stress_scale))
+                                  : lv_color_hex(0x344653);
+        lv_color_t background = danger ? lv_color_hex(FUEL_WARNING_COLOR) : lv_color_hex(TILE_BG);
         lv_obj_set_style_bg_color(s_dashboard.stress_tiles[i], background, 0);
         lv_obj_set_style_bg_opa(s_dashboard.stress_tiles[i], LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(s_dashboard.stress_tiles[i], border, 0);
-        if (valid) (void)snprintf(text, sizeof text, "%.0f", (double)data->stress[i]);
-        else (void)snprintf(text, sizeof text, "--");
+        if (valid)
+            (void)snprintf(text, sizeof text, "%.0f", (double)data->stress[i]);
+        else
+            (void)snprintf(text, sizeof text, "--");
         lv_label_set_text(s_dashboard.stress_value_labels[i], text);
     }
 
     static const uint16_t temp_bits[5] = {
-        COCKPIT_GRAPHICS_VALID_CVT_TEMP,
-        COCKPIT_GRAPHICS_VALID_BRAKE_FL, COCKPIT_GRAPHICS_VALID_BRAKE_FR,
-        COCKPIT_GRAPHICS_VALID_BRAKE_BL, COCKPIT_GRAPHICS_VALID_BRAKE_BR};
+        COCKPIT_GRAPHICS_VALID_CVT_TEMP, COCKPIT_GRAPHICS_VALID_BRAKE_FL,
+        COCKPIT_GRAPHICS_VALID_BRAKE_FR, COCKPIT_GRAPHICS_VALID_BRAKE_BL,
+        COCKPIT_GRAPHICS_VALID_BRAKE_BR};
     float temps[5] = {data->cvt_temp_c, data->brake_temp_c[0], data->brake_temp_c[1],
                       data->brake_temp_c[2], data->brake_temp_c[3]};
     for (size_t i = 0; i < 5; i++) {
-        bool valid = (data->valid_mask & temp_bits[i]) && isfinite(temps[i]);
-        bool danger = valid && temps[i] >= TEMP_DANGER_C;
-        lv_color_t border = valid
-                                ? (danger ? lv_color_hex(FUEL_WARNING_COLOR)
-                                          : temperature_border_color(temps[i]))
-                                : lv_color_hex(0x344653);
-        lv_color_t background = danger ? lv_color_hex(FUEL_WARNING_COLOR)
-                                       : lv_color_hex(TILE_BG);
+        bool       valid  = (data->valid_mask & temp_bits[i]) && isfinite(temps[i]);
+        bool       danger = valid && temps[i] >= TEMP_DANGER_C;
+        lv_color_t border =
+            valid ? (danger ? lv_color_hex(FUEL_WARNING_COLOR) : temperature_border_color(temps[i]))
+                  : lv_color_hex(0x344653);
+        lv_color_t background = danger ? lv_color_hex(FUEL_WARNING_COLOR) : lv_color_hex(TILE_BG);
         lv_obj_set_style_bg_color(s_dashboard.temperature_tiles[i], background, 0);
         lv_obj_set_style_bg_opa(s_dashboard.temperature_tiles[i], LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(s_dashboard.temperature_tiles[i], border, 0);
-        if (valid) (void)snprintf(text, sizeof text, "%.0f C", (double)temps[i]);
-        else (void)snprintf(text, sizeof text, "-- C");
+        if (valid)
+            (void)snprintf(text, sizeof text, "%.0f C", (double)temps[i]);
+        else
+            (void)snprintf(text, sizeof text, "-- C");
         lv_label_set_text(s_dashboard.temperature_value_labels[i], text);
     }
 
@@ -414,12 +413,16 @@ void cockpit_graphics_update(const cockpit_graphics_data_t *data)
         (void)snprintf(text, sizeof text, "%.0f%%", (double)fuel);
         lv_bar_set_value(s_dashboard.fuel_bar, (int32_t)fuel, LV_ANIM_OFF);
         lv_obj_set_style_text_color(s_dashboard.fuel_value,
-                                    lv_color_hex(fuel <= 20.0f ? FUEL_WARNING_COLOR : TEXT_COLOR), 0);
-        lv_obj_set_style_bg_color(s_dashboard.fuel_bar,
-                                  lv_color_hex(fuel <= 20.0f ? FUEL_WARNING_COLOR : TACH_NORMAL_COLOR),
-                                  LV_PART_INDICATOR);
-        if (fuel <= 20.0f) lv_obj_clear_flag(s_dashboard.fuel_warning, LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(s_dashboard.fuel_warning, LV_OBJ_FLAG_HIDDEN);
+                                    lv_color_hex(fuel <= 20.0f ? FUEL_WARNING_COLOR : TEXT_COLOR),
+                                    0);
+        lv_obj_set_style_bg_color(
+            s_dashboard.fuel_bar,
+            lv_color_hex(fuel <= 20.0f ? FUEL_WARNING_COLOR : TACH_NORMAL_COLOR),
+            LV_PART_INDICATOR);
+        if (fuel <= 20.0f)
+            lv_obj_clear_flag(s_dashboard.fuel_warning, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_add_flag(s_dashboard.fuel_warning, LV_OBJ_FLAG_HIDDEN);
     } else {
         (void)snprintf(text, sizeof text, "--%%");
         lv_bar_set_value(s_dashboard.fuel_bar, 0, LV_ANIM_OFF);
