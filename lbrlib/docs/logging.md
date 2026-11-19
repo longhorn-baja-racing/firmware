@@ -2,7 +2,7 @@
 
 ## The SD log
 
-The Central writes one log per boot: `/sdcard/lbr/NNNNNNNN.LBR`. It holds:
+The Central writes one log per boot: `/sdcard/lbr/NNNNNNNN.lbrlog`. It holds:
 
 - every CAN frame on the bus, byte for byte, with its receive time on the shared clock,
   including the Central's own (time sync, events, GPS, cockpit status);
@@ -22,7 +22,7 @@ acquisition, and anything the queue cannot take is counted and marked in the log
 
 ```sh
 python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd LIST                         # list sessions
-python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd "DUMP 00000012.LBR" --out run.lbr
+python3 dev/tools/lbr_decode.py serial /dev/ttyUSB0 --cmd "DUMP 00000012.lbrlog" --out run.lbrlog
 ```
 
 or pull the card.
@@ -30,9 +30,9 @@ or pull the card.
 ## Reading them
 
 ```sh
-python3 dev/tools/lbr_decode.py log run.lbr          # human-readable, every record
-python3 dev/tools/lbr_decode.py log run.lbr --json   # the same, as JSON
-python3 dev/tools/lbr_decode.py csv run.lbr          # -> run.csv for the dashboard app
+python3 dev/tools/lbr_decode.py log run.lbrlog          # human-readable, every record
+python3 dev/tools/lbr_decode.py log run.lbrlog --json   # the same, as JSON
+python3 dev/tools/lbr_decode.py csv run.lbrlog          # -> run.csv for the dashboard app
 ```
 
 The CSV is a long table, one row per value: `t_s,kind,node,name,value,unit,status,synced,seq`.
@@ -58,17 +58,52 @@ Every packet carries a sequence number, so a receiver detects loss, duplicates, 
 
 ## Replay
 
-AdvantageKit's replay re-runs robot code on a recorded log to try a fix or add an output after
-the fact. LBRLib is built toward the same, with a `.lbrlog` file:
+Like AdvantageKit's, LBRLib's replay re-runs the car logic on a recorded run: try a fix to a task,
+or add an output, and see what it would have said on that run.
 
-| Step | Status |
-| --- | --- |
-| Every CAN frame logged byte-exact, in bus order, on the shared clock | done |
-| Car logic reads only through `lbr_get` and writes only through `lbr_out`, on one tick | done: tasks you write today are replayable as they are |
-| Outputs logged with their status (`KEY` / `VALUE`) | done |
-| The Central's whole core on one deterministic cycle, logging its non-CAN inputs (cockpit packets, GPS bytes, clock reads) | planned |
-| `.lbrlog` (log format 2): the cycle records, self-describing keys | planned |
-| `lbr_replay in.lbrlog out.lbrlog`: re-run the logic, write `/Replay/...` outputs next to the originals | planned |
-| Replay in the simulator and the dashboard app, side by side with the original | planned |
+```sh
+cmake --build build-dev --target lbr_replay
+build-dev/tools/lbr_replay/lbr_replay run.lbrlog replayed.lbrlog
+python3 dev/tools/lbr_decode.py csv replayed.lbrlog     # original and Replay/... side by side
+```
 
-The ordering design is in [concepts](concepts.md#ordering-and-replay).
+`replayed.lbrlog` is the run with the replayed outputs added as `Replay/<key>` (for example
+`Replay/CVT/Ratio` next to `CVT/Ratio`), so the dashboard plots both. The tool also compares them
+value by value and prints the first difference:
+
+```text
+run.lbrlog: 26317 records, 23203 frames, 1500 logic ticks, 15 heartbeats
+outputs: 1500 recorded, 1500 replayed
+replay matches the recording, bit for bit
+```
+
+With the logic unchanged, the replay is identical to the recording, bit for bit: `ctest` checks
+it on every simulator scenario (`replay_<name>`). `--check` makes any difference an error, and
+`--drop-task NAME` replays without one task, to see what it contributes.
+
+### Why it is exact
+
+Car logic only reads through `lbr_get` and only writes through `lbr_out`, on one tick, so
+everything it depends on is in the log, in the order it saw it:
+
+- **every CAN frame**, byte for byte with its receive time. The Central logs a frame and feeds
+  it to the logic under one lock, so the log's order is exactly the logic's order;
+- **when each logic tick ran**, and **when the heartbeat marked nodes lost or missing** (`TICK`
+  records, about 1.2 KB/s);
+- across boards, **CAN arbitration** already puts every frame in one order; sensor nodes are I/O
+  devices, so their frames are the inputs and their firmware needs no replaying.
+
+The replay feeds those records through the same decoder, node table, and logic runner the
+Central uses (`lbr/replay.h`; the Central calls the same functions), with the car logic of the
+build you run it from.
+
+### Limits
+
+- **A log opened mid-session** (after the SD card came back) starts without the logic's history,
+  so the replay starts cold and can differ until the logic warms up; the tool says so. The
+  session's first file always replays from the start.
+- **Anything the log lost** (a `LOSS` record: the queue overflowed, or the card was out) is lost
+  to the replay too.
+- **The catalog must match**: replay with the catalog of the firmware that wrote the log.
+- Replay covers the **car logic**. The rest of the Central (the links, the cockpit, time sync)
+  is not replayed; its effects are already in the log as frames.

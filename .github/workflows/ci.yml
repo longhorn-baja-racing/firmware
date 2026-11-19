@@ -30,9 +30,9 @@ jobs:
         run: ctest --test-dir build-dev --output-on-failure
       - name: Simulator output decodes with the reference decoder
         run: |
-          for f in build-dev/sim/runs/*/*.LBR; do
+          for f in build-dev/sim/runs/*/*.lbrlog; do
             python3 -I dev/tools/lbr_decode.py log "$f" > /dev/null
-            python3 -I dev/tools/lbr_decode.py csv "$f" --out "${f%.LBR}.csv" > /dev/null
+            python3 -I dev/tools/lbr_decode.py csv "$f" --out "${f%.lbrlog}.csv" > /dev/null
           done
           python3 -I dev/tools/lbr_decode.py stream build-dev/sim/runs/nominal/usb_stream.bin > /dev/null
 

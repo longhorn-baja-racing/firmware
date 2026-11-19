@@ -326,7 +326,9 @@ static void build_health(lbr_node_core_t *c, lbr_health_record_t *h, uint8_t *er
     uint32_t calibrated = 0;
     size_t   n_acq      = cfg->n_acq < LBR_NODE_MAX_SENSORS ? cfg->n_acq : LBR_NODE_MAX_SENSORS;
     for (size_t i = 0; i < n_acq; i++) {
-        sensor_ok |= atomic_load(&c->slot[i].acq.healthy) ? (1u << i) : 0u;
+        /* Healthy: the driver is up and its latest reading had every channel. */
+        bool ok = atomic_load(&c->slot[i].acq.healthy) && atomic_load(&c->slot[i].acq.complete);
+        sensor_ok |= ok ? (1u << i) : 0u;
         calibrated |= atomic_load(&c->slot[i].acq.calibrated) ? (1u << i) : 0u;
     }
     uint32_t all_sensors = (1u << n_acq) - 1u;

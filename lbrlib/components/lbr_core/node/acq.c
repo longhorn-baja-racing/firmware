@@ -11,6 +11,7 @@ void lbr_acq_slot_init(lbr_acq_slot_t *a, lbr_sensor_t *sensor, uint16_t rate_hz
     a->period_us = 1000000u / (rate_hz ? rate_hz : 1u);
     a->index     = index;
     atomic_store(&a->calibrated, true);
+    atomic_store(&a->complete, true); /* until a reading says otherwise */
 }
 
 static void emit(lbr_acq_event_fn ev, void *ctx, lbr_event_code_t code, uint16_t arg, bool fault)
@@ -81,6 +82,11 @@ bool lbr_acq_slot_tick(lbr_acq_slot_t *a, uint64_t now_shared_us, uint64_t mono_
         }
     }
     atomic_store(&a->calibrated, sensor->is_calibrated == NULL || sensor->is_calibrated(sensor));
+    bool complete = atomic_load(&a->healthy);
+    for (size_t i = 0; complete && i < sensor->n_signals; i++) {
+        complete = out[i].valid; /* NOT_FITTED, NO_DATA, a bad read: the slot is not whole */
+    }
+    atomic_store(&a->complete, complete);
 
     tick->k      = k;
     tick->missed = missed;

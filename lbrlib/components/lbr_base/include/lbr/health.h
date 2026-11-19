@@ -77,7 +77,7 @@ typedef struct {
     uint32_t can_bus_errors;
 
     /* sensors / storage */
-    uint32_t sensor_status;     /* bit i set = sensor i healthy */
+    uint32_t sensor_status;     /* bit i set = slot i healthy: driver up, latest reading complete */
     uint32_t calibration_state; /* bit i set = sensor i calibrated */
     uint32_t last_sample_age_ms;
     uint32_t last_sd_write_age_ms;

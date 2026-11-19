@@ -213,9 +213,10 @@ static bool k_open_file(void *ctx, lbr_log_storage_t *st, char name[LBR_LOG_KEEP
     char        path[512];
     n->session_no++;
     if (n->is_gateway) {
-        snprintf(n->log_name, sizeof n->log_name, "%08u.LBR", (unsigned)n->session_no);
+        snprintf(n->log_name, sizeof n->log_name, "%08u.lbrlog", (unsigned)n->session_no);
     } else {
-        snprintf(n->log_name, sizeof n->log_name, "%s-%04u.LBR", n->name, (unsigned)n->session_no);
+        snprintf(n->log_name, sizeof n->log_name, "%s-%04u.lbrlog", n->name,
+                 (unsigned)n->session_no);
     }
     path_in_out(s, n->log_name, path, sizeof path);
     n->log_file = fopen(path, "wb");

@@ -167,7 +167,7 @@ The simulated Central writes a real SD log. Export it like a log pulled off the 
 
 ```sh
 build-dev/sim/lbr_sim --out /tmp/run dev/sim/scenarios/car_logic.sim
-python3 dev/tools/lbr_decode.py csv /tmp/run/00000001.LBR
+python3 dev/tools/lbr_decode.py csv /tmp/run/00000001.lbrlog
 ```
 
 Every sample, event, health field, and car logic output is a row; the dashboard app plots them.

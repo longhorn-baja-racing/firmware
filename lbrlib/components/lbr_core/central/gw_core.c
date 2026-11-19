@@ -90,25 +90,19 @@ static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_
     uint8_t rec[LBR_CAN_FRAME_REC_SIZE];
     lbr_can_frame_rec_encode(t_us, flags, f, rec, sizeof rec);
 
+    /* Log the frame and update the state under one lock: the log's order is
+     * then exactly the order the car logic saw, so a replay reproduces it. */
+    lbr_sample_t samples[LBR_FRAME_MAX_FIELDS];
+    gw_lock(c, LBR_GW_LOCK_STATE);
     if (c->log != NULL && lbr_log_append_raw(c->log, LBR_REC_CAN_FRAME, rec, sizeof rec) == 0) {
         atomic_fetch_add(&c->frames_logged, 1);
     }
-    stream_add(c, LBR_REC_CAN_FRAME, rec, sizeof rec);
-
-    lbr_sample_t samples[LBR_FRAME_MAX_FIELDS];
-    gw_lock(c, LBR_GW_LOCK_STATE);
-    size_t                 n  = lbr_bus_decode(&c->decoder, f, t_us, samples, LBR_FRAME_MAX_FIELDS);
-    lbr_node_table_event_t ev = own_tx ? LBR_NT_NONE : lbr_node_table_on_frame(&c->nodes, f, t_us);
-    bool                   back = false;
-    if (ev == LBR_NT_FOUND) {
-        const lbr_node_entry_t *e = lbr_node_table_find(&c->nodes, lbr_can_sender(f->id));
-        back                      = e != NULL && e->first_seen_us != t_us; /* after NODE_LOST */
-        back = lbr_node_table_take_missing(&c->nodes, lbr_can_sender(f->id)) || back;
-    }
+    bool   found, back;
+    size_t n = lbr_replay_observe_frame(&c->decoder, &c->nodes, &c->logic, f, t_us, own_tx, samples,
+                                        LBR_FRAME_MAX_FIELDS, &found, &back);
     for (size_t i = 0; i < n; i++) {
         lbr_lora_policy_offer_sample(&c->lora_policy, &samples[i]);
         lbr_value_table_offer(&c->cockpit_values, &samples[i], t_us);
-        lbr_logic_offer(&c->logic, &samples[i], t_us);
     }
     uint8_t source = lbr_can_sender(f->id);
     if (!own_tx && f->id == LBR_CAN_ID_HEALTH_BASE + 16u * source + LBR_HEALTH_PAGE_COUNT - 1u) {
@@ -120,8 +114,9 @@ static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_
         }
     }
     gw_unlock(c, LBR_GW_LOCK_STATE);
+    stream_add(c, LBR_REC_CAN_FRAME, rec, sizeof rec);
 
-    if (ev == LBR_NT_FOUND) {
+    if (found) {
         gw_say(c, LBR_LOG_LVL_INFO, "node %s (0x%02x) on the bus", lbr_node_name(source), source);
         if (back) {
             lbr_gw_core_event(c, LBR_EVT_NODE_FOUND, source, false);
@@ -243,6 +238,9 @@ void lbr_gw_core_start(lbr_gw_core_t *c, lbr_logger_t *log, const lbr_gw_links_t
     c->links           = *links;
     c->can_up          = can_up;
     c->listen_since_us = c->hal.now_us(c->hal.ctx);
+    gw_lock(c, LBR_GW_LOCK_STATE);
+    gw_log_tick(c, LBR_TICK_START, c->listen_since_us);
+    gw_unlock(c, LBR_GW_LOCK_STATE);
     /* Drivers are bound by now (some read this core's own state). */
     for (size_t i = 0; i < c->boot.n_acq && i < LBR_NODE_MAX_SENSORS; i++) {
         const lbr_acq_t       *a  = &c->boot.acq[i];
@@ -381,10 +379,27 @@ void lbr_gw_core_unlock_state(void *core)
     gw_unlock(core, LBR_GW_LOCK_STATE);
 }
 
+void gw_log_tick(lbr_gw_core_t *c, lbr_tick_kind_t kind, uint64_t t_us)
+{
+    if (c->log == NULL) {
+        return;
+    }
+    lbr_tick_t t = {.t_us = t_us, .kind = kind};
+    if (kind == LBR_TICK_START) {
+        t.can_up          = c->can_up;
+        t.node_timeout_ms = c->cfg.node_timeout_ms;
+    }
+    uint8_t rec[LBR_TICK_REC_SIZE];
+    lbr_tick_encode(&t, rec, sizeof rec);
+    (void)lbr_log_append_raw(c->log, LBR_REC_TICK, rec, sizeof rec); /* losses counted by the log */
+}
+
 void lbr_gw_core_logic_tick(lbr_gw_core_t *c)
 {
     gw_lock(c, LBR_GW_LOCK_STATE);
-    lbr_logic_step(&c->logic, c->hal.now_us(c->hal.ctx), &c->nodes);
+    uint64_t now = c->hal.now_us(c->hal.ctx);
+    gw_log_tick(c, LBR_TICK_LOGIC, now); /* before the outputs it causes */
+    lbr_logic_step(&c->logic, now, &c->nodes);
     gw_unlock(c, LBR_GW_LOCK_STATE);
 }
 

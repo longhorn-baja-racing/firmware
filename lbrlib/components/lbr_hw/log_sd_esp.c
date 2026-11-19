@@ -62,8 +62,9 @@ static sd_file_t s_file = {.fd = -1};
 
 bool lbr_sd_valid_name(const char *name)
 {
-    /* NNNNNNNN.LBR */
-    if (name == NULL || strlen(name) != 12 || strcmp(name + 8, ".LBR") != 0) {
+    /* NNNNNNNN.lbrlog, or NNNNNNNN.LBR from firmware before .lbrlog */
+    if (name == NULL || strlen(name) < 12 ||
+        (strcmp(name + 8, LBR_SD_LOG_EXT) != 0 && strcmp(name + 8, ".LBR") != 0)) {
         return false;
     }
     for (int i = 0; i < 8; i++) {
@@ -217,7 +218,7 @@ static lbr_sd_err_t lbr_sd_open_session_locked(lbr_log_storage_t *out, char name
     }
     uint32_t next = highest_session_number() + 1;
     char     path[64];
-    snprintf(name, LBR_SD_NAME_MAX, "%08lu.LBR", (unsigned long)(next % 100000000u));
+    snprintf(name, LBR_SD_NAME_MAX, "%08lu" LBR_SD_LOG_EXT, (unsigned long)(next % 100000000u));
     snprintf(path, sizeof path, LBR_SD_LOG_DIR "/%s", name);
 
     s_file.fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0664);
