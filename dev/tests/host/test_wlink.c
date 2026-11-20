@@ -184,6 +184,31 @@ static void test_cockpit_round_trip(void)
     lbr_cockpit_core_snapshot(&d, &shown, shown_nodes);
     CHECK_EQ_I(lbr_value_table_get(&shown, LBR_SIG_ENGINE_RPM, df.mono + 200, &s), LBR_VALUE_OK);
     CHECK(s.v.f32 == 4000.0f);
+
+    /* Ten datagrams lost in a row, a silence longer than the link timeout:
+     * the count carries on, so all ten are counted (not forgotten with the
+     * window); an older number after a silence is a rebooted Central. */
+    uint8_t lost_pkt[LBR_PKT_MAX_SIZE];
+    for (int i = 0; i < 10; i++) {
+        (void)lbr_cockpit_link_build(&link, 3200000, LBR_NODE_CENTRAL, &values, &nodes, lost_pkt,
+                                     sizeof lost_pkt);
+    }
+    n = lbr_cockpit_link_build(&link, 4300000, LBR_NODE_CENTRAL, &values, &nodes, pkt, sizeof pkt);
+    uint64_t t = df.mono + 100 + 2 * LBR_WLINK_LINK_TIMEOUT_US;
+    lbr_cockpit_core_on_packet(&d, pkt, n, t);
+    for (int i = 0; i < 32; i++) { /* a datagram counts as lost once out of the reorder window */
+        n = lbr_cockpit_link_build(&link, 4300000, LBR_NODE_CENTRAL, &values, &nodes, pkt,
+                                   sizeof pkt);
+        lbr_cockpit_core_on_packet(&d, pkt, n, t += 100000);
+    }
+    CHECK_EQ_U(d.packet_gaps, 10u);
+    lbr_cockpit_link_t rebooted;
+    lbr_cockpit_link_init(&rebooted);
+    n       = lbr_cockpit_link_build(&rebooted, 5000000, LBR_NODE_CENTRAL, &values, &nodes, pkt,
+                                     sizeof pkt);
+    packets = d.packets;
+    lbr_cockpit_core_on_packet(&d, pkt, n, t + 2 * LBR_WLINK_LINK_TIMEOUT_US);
+    CHECK_EQ_U(d.packets, packets + 1u); /* taken, the window restarted */
 }
 
 int main(void)

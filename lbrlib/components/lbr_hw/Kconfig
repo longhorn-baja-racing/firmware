@@ -39,6 +39,18 @@ menu "LBR CAN bus"
             and the 12 health pages can come due at the same instant
             (checked for every plan in dev/tests/host/test_plans.c).
 
+    config LBR_SYNC_PROBE_GPIO
+        int "Time-sync probe GPIO (-1 = off)"
+        range -1 48
+        default -1
+        help
+            Bench aid for measuring time sync: drives this pin high for
+            100 us at every whole second of the shared clock, once the
+            board is synced (the Central always). Put two boards' probe
+            pins on a scope: the distance between their edges is their
+            sync error. Costs about 2 ms of CPU a second (it spins just
+            before each edge). Off (-1) on the car.
+
 endmenu
 
 menu "LBR microSD logging"

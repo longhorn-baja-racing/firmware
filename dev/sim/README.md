@@ -71,6 +71,7 @@ The same language in the UI console, in scenarios, and on `lbr_sim --interactive
 | Command | Effect |
 | --- | --- |
 | `run <ms>` | advance simulated time |
+| `stat` | print the Central's status text (as USB `STAT`, WiFi `/status`, BLE): states, measured bus load, lost and missing nodes |
 | `trace <node\|all\|none>` | stream a node's hardware commands |
 | `unplug <node> <slot>` / `plug ...` | a part stops / starts responding (e.g. `unplug corner_fl imu`) |
 | `open <SIGNAL>` / `close <SIGNAL>` | open circuit on one input / repair it |

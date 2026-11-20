@@ -100,7 +100,7 @@ FL/FR/BL/BR Brake Temp, CVT Temp --> [ESP32 Temperature Controller]
 - 120 ohm termination resistor at each physical end of the bus only (which nodes sit at the ends is **TBD**).
 - Twisted pair for CAN_H/CAN_L.
 - Multi-byte values are little-endian. Signed values are int16 unless noted.
-- Target bus load under ~50%. Estimated load with the rates below is roughly 40% at 500 kbit/s; verify on the real bus.
+- Target bus load under ~50%. Estimated load with the rates below is about 46% at 500 kbit/s (worst case); verify on the real bus.
 
 ## 7. CAN ID map (proposed)
 
@@ -116,7 +116,7 @@ The firmware implements this map as a schema (`car/catalog.toml`, exported to `d
 | 0x021-0x02A | node 1-10 | Event / fault **(added)** | on event | 0-1: code, 2-3: arg, 4: fault/synced/seq bits, 5-7: time (us, low 24 bits) |
 | 0x100 | Driver Input | Pedals + steering | 100 Hz | 0-1: brake, 2-3: gas, 4-5: steering angle, 6-7: uint16 sample counter |
 | 0x200 | Powertrain | Speeds | 100 Hz | 0-1: uint16 engine RPM, 2-3: uint16 CVT RPM, 6-7: uint16 sample counter |
-| 0x201 | Powertrain | Fuel level | 1 Hz | 0-1: fuel level |
+| 0x201 | Powertrain | Fuel level | 1 Hz | 0-1: fuel level, 6-7: uint16 sample counter |
 | 0x300 | FL hub | FL IMU accel | 100 Hz | 0-5: accel X/Y/Z, 6-7: uint16 sample counter |
 | 0x301 | FL hub | FL IMU gyro | 100 Hz | 0-5: gyro X/Y/Z, 6-7: uint16 sample counter |
 | 0x302 | FR hub | FR IMU accel | 100 Hz | same as 0x300 |
@@ -127,18 +127,19 @@ The firmware implements this map as a schema (`car/catalog.toml`, exported to `d
 | 0x307 | BR hub | BR IMU gyro | 100 Hz | same as 0x301 |
 | 0x308 | IMU Ctrl | Chassis IMU accel | 100 Hz | same as 0x300 |
 | 0x309 | IMU Ctrl | Chassis IMU gyro | 100 Hz | same as 0x301 |
-| 0x30A | FL hub (node 7) | FL battery | 1 Hz | 0: FL battery percent |
-| 0x30B | FR hub (node 8) | FR battery | 1 Hz | 0: FR battery percent |
-| 0x30C | BL hub (node 9) | BL battery | 1 Hz | 0: BL battery percent |
-| 0x30D | BR hub (node 10) | BR battery | 1 Hz | 0: BR battery percent |
-| 0x400 | Stress | Stress sensors 1-4 | 100 Hz | 0-7: four int16 values |
-| 0x401 | Stress | Stress sensors 5-8 | 100 Hz | 0-7: four int16 values |
+| 0x30A | FL hub (node 7) | FL battery | 1 Hz | 0: FL battery percent, 6-7: uint16 sample counter |
+| 0x30B | FR hub (node 8) | FR battery | 1 Hz | same as 0x30A |
+| 0x30C | BL hub (node 9) | BL battery | 1 Hz | same as 0x30A |
+| 0x30D | BR hub (node 10) | BR battery | 1 Hz | same as 0x30A |
+| 0x400 | Stress | Stress sensors 1-3 | 100 Hz | 0-5: three int16 values, 6-7: uint16 sample counter |
+| 0x401 | Stress | Stress sensors 4-6 | 100 Hz | same as 0x400 |
+| 0x402 | Stress | Stress sensors 7-8 | 100 Hz | 0-3: two int16 values, 6-7: uint16 sample counter |
 | 0x500 | Temperature | Brake temps | 10 Hz | 0-7: FL, FR, BL, BR as int16 (0.1 deg C units) |
-| 0x501 | Temperature | CVT temp | 10 Hz | 0-1: int16 (0.1 deg C units) |
+| 0x501 | Temperature | CVT temp | 10 Hz | 0-1: int16 (0.1 deg C units), 6-7: uint16 sample counter |
 | 0x600 | Central | GPS position **(added)** | 10 Hz | 0-3: int32 latitude, 4-7: int32 longitude (1e-7 deg) |
 | 0x601 | Central | GPS motion **(added)** | 10 Hz | 0-1: uint16 speed (0.01 m/s), 2-3: uint16 course (0.01 deg), 4-5: int16 altitude (0.1 m), 6-7: uint16 sample counter |
 | 0x602 | Central | GPS status **(added)** | 10 Hz | 0-3: uint32 UTC (Unix s), 4: fix type, 5: satellites, 6-7: uint16 HDOP (0.01) |
-| 0x60A | Central | Cockpit status **(added)** | 1 Hz | 0: cockpit battery %, 1: link OK |
+| 0x60A | Central | Cockpit status **(added)** | 1 Hz | 0: cockpit battery %, 1: link OK, 6-7: uint16 sample counter |
 | 0x701 | IMU Ctrl | Heartbeat | 1 Hz | 0: state, 1: error flags |
 | 0x702 | Powertrain | Heartbeat | 1 Hz | same |
 | 0x703 | Driver Input | Heartbeat | 1 Hz | same |
@@ -152,11 +153,12 @@ Scaling/units for pedals, steering, fuel, IMU, and stress values are **TBD** unt
 
 Firmware conventions on top of the table:
 
-- **Sample counter = time.** Every node samples on a grid of the shared clock (sample k at k x period), so the uint16 counter is k mod 65536 and the Central rebuilds each sample's exact time from it. Frames without a counter (0x201, 0x400/0x401, 0x500/0x501, 0x600, 0x602, 0x60A) are stamped at the last grid point before reception, which holds while a frame is delivered within one period.
+- **Sample counter = time.** Every node samples on a grid of the shared clock (sample k at k x period), so the uint16 counter is k mod 65536 and the Central rebuilds each sample's exact time from it. Frames without a counter (0x500, 0x600, 0x602: their 8 bytes are full) are stamped at the last grid point before reception, which holds while a frame is delivered within one period; their losses show in the sender's heartbeat counters.
+- **Decision (protocol v5, 2026-11): a counter wherever it fits.** Every frame with two free bytes carries the counter (0x201, 0x30A-0x30D, 0x501, 0x60A), and the 100 Hz stress data moved from two frames of four values to three frames of up to three values plus a counter (0x400-0x402, about 2.7 % more bus load), so every stress sample has its exact time and every lost one is counted per sample. Brake temperatures (0x500) and GPS position/status (0x600, 0x602) stay without: their fields fill the frame, they run at 10 Hz, and splitting them is not worth the load. Revisit with CAN FD.
 - **Missing values are never zero.** Each integer field reserves its 8 lowest (signed) or highest (unsigned) raw values for "unavailable, because ...": not fitted, no data, sensor fault, out of range, not calibrated, bus error. A reading that does not fit its field is sent as out of range.
 - **Heartbeat error flags** (byte 1 of 0x70n): bit0 clock not synced, bit1 sensor fault, bit2 CAN errors, bit3 config rejected, bit4 storage, bit5 simulated data, bit6 data lost this second, bit7 cockpit WiFi link down (Central).
 - **Node presence.** The Central tracks every node by its heartbeat and reports a node that goes quiet (and comes back) as an event, wheel hubs included.
-- Planned load from this table: about 43 % of 500 kbit/s (the host tests check it stays under 50 %).
+- Planned load from this table: about 46 % of 500 kbit/s, worst case with bit stuffing (the host tests check it stays under 50 %).
 
 ## 8. Wireless links (proposed)
 

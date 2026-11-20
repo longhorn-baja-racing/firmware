@@ -552,8 +552,9 @@ def emit_kconfig(cat: Catalog, app: str, group: list[Node]) -> str:
     for i in io:
         s = group[0].slots[i]
         frames = sorted({x.frame.id for x in s.signals if x.frame is not None})
-        where = (" (frame" + ("s " if len(frames) > 1 else " ")
-                 + " and ".join(f"0x{f:03X}" for f in frames) + ")") if frames else ""
+        ids = [f"0x{f:03X}" for f in frames]
+        listed = ", ".join(ids[:-1]) + " and " + ids[-1] if len(ids) > 1 else "".join(ids)
+        where = (" (frame" + ("s " if len(ids) > 1 else " ") + listed + ")") if ids else ""
         chans = ", ".join(x.name for x in s.signals)
         others = ""
         if len(group) > 1:

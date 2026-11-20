@@ -74,6 +74,7 @@ typedef struct {
     uint32_t           boot_count;
     uint16_t           epoch;        /* new random timeline id every boot (never 0) */
     bool               config_valid; /* stored Central config passed validation */
+    uint32_t           can_bitrate;  /* for the measured bus load (status); 0 = unknown */
     const char        *config_text;  /* session config; must outlive the core */
 
     /* The Central's own acquisition slots (GPS, cockpit status), from its
@@ -123,6 +124,7 @@ typedef struct {
     lbr_value_table_t   cockpit_values;
     lbr_cockpit_link_t  cockpit;
     lbr_health_record_t last_health;
+    uint16_t            bus_load_permille; /* measured over the last heartbeat period */
     lbr_logic_t         logic;
 
     /* LBR_GW_LOCK_STREAM */
@@ -141,10 +143,11 @@ typedef struct {
     uint8_t sync_seq;
 
     /* Heartbeat caller only. */
-    uint32_t prev_rx, prev_logged, last_bus_off, prev_loss;
+    uint32_t prev_rx, prev_logged, last_bus_off, prev_loss, prev_bus_bits;
     uint64_t listen_since_us; /* shared time the bus started being watched (start) */
 
     atomic_uint   frames_rx;
+    atomic_uint   bus_bits; /* every frame seen on the bus, worst-case bits (as planned) */
     atomic_uint   frames_logged;
     atomic_uint   sync_tx_fail;
     atomic_uint   overruns;
