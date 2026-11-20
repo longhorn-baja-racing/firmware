@@ -45,11 +45,17 @@ size_t lbr_log_frame(uint8_t type, const uint8_t *payload, size_t len, uint8_t *
 
 size_t lbr_log_encode_session(const lbr_log_session_t *s, uint8_t *buf, size_t cap)
 {
-    size_t text_len = s->config_text ? strlen(s->config_text) : 0;
-    size_t total    = LBR_LOG_SESSION_FIXED + text_len;
-    if (total > cap || total > LBR_LOG_MAX_PAYLOAD) {
+    size_t room = cap < LBR_LOG_MAX_PAYLOAD ? cap : LBR_LOG_MAX_PAYLOAD;
+    if (room < LBR_LOG_SESSION_FIXED) {
         return 0;
     }
+    /* A config text too long for one record is cut, never a reason to have
+     * no log at all (the record's config CRC is the stored text's). */
+    size_t text_len = s->config_text ? strlen(s->config_text) : 0;
+    if (text_len > room - LBR_LOG_SESSION_FIXED) {
+        text_len = room - LBR_LOG_SESSION_FIXED;
+    }
+    size_t total = LBR_LOG_SESSION_FIXED + text_len;
     lbr_put_u16(buf + 0, LBR_LOG_FORMAT_VERSION);
     lbr_put_u16(buf + 2, LBR_PROTOCOL_VERSION);
     lbr_put_u32(buf + 4, s->fw_version);
@@ -105,6 +111,10 @@ int lbr_log_open(lbr_logger_t *lg, const lbr_log_storage_t *storage,
     lg->last_sync_us        = session->start_time_us;
     lg->stats.last_write_us = session->start_time_us;
     lg->stats.records_written++;
+    lg->session_records = 1;
+    if (session->start_time_us > lg->last_t_us) {
+        lg->last_t_us = session->start_time_us;
+    }
     unlock(lg);
     return 0;
 }
@@ -147,10 +157,13 @@ static int enqueue(lbr_logger_t *lg, uint8_t type, const uint8_t *payload, size_
 
     lock(lg);
     int rc = -1;
+    if (t_us > lg->last_t_us) {
+        lg->last_t_us = t_us;
+    }
     if (!lg->open) {
         /* No session (e.g. no card): the caller owns reporting this state. */
         lg->stats.records_rejected_closed++;
-    } else if (flush_pending_loss(lg, t_us, n + LBR_RINGBUF_OVERHEAD) &&
+    } else if (flush_pending_loss(lg, lg->last_t_us, n + LBR_RINGBUF_OVERHEAD) &&
                lbr_ringbuf_pushv(&lg->rb, iov, 3)) {
         lg->stats.records_queued++;
         rc = 0;
@@ -165,6 +178,7 @@ static int enqueue(lbr_logger_t *lg, uint8_t type, const uint8_t *payload, size_
     return rc;
 }
 
+/* Records without a time of their own (0) leave the logger's latest time as it is. */
 int lbr_log_append_raw(lbr_logger_t *lg, uint8_t type, const uint8_t *payload, size_t len)
 {
     return enqueue(lg, type, payload, len, 0);
@@ -224,16 +238,20 @@ static int write_chunk(lbr_logger_t *lg, size_t used, uint32_t records, uint64_t
         return -1;
     }
     lg->stats.records_written += records;
+    lg->session_records += records;
     lg->stats.last_write_us = now_us;
     lg->dirty               = true;
     return 0;
 }
 
-int lbr_log_pump(lbr_logger_t *lg, uint64_t now_us)
+/* Write everything queued (whether or not the session still takes records). */
+static int drain(lbr_logger_t *lg, uint64_t now_us)
 {
-    if (!lg->open) {
-        return 0;
+    lock(lg);
+    if (now_us > lg->last_t_us) {
+        lg->last_t_us = now_us;
     }
+    unlock(lg);
     int      total   = 0;
     size_t   used    = 0;
     uint32_t records = 0;
@@ -243,7 +261,7 @@ int lbr_log_pump(lbr_logger_t *lg, uint64_t now_us)
         size_t next = lbr_ringbuf_peek_len(&lg->rb);
         if (next == 0) {
             /* Queue drained: close any open loss gap now that there is room. */
-            flush_pending_loss(lg, now_us, 0);
+            flush_pending_loss(lg, lg->last_t_us, 0);
             next = lbr_ringbuf_peek_len(&lg->rb);
         }
         if (next == 0 || used + next > lg->cfg.chunk_cap) {
@@ -274,16 +292,31 @@ int lbr_log_pump(lbr_logger_t *lg, uint64_t now_us)
     return total;
 }
 
-int lbr_log_close(lbr_logger_t *lg, uint64_t now_us)
+int lbr_log_pump(lbr_logger_t *lg, uint64_t now_us)
 {
     if (!lg->open) {
+        return 0;
+    }
+    return drain(lg, now_us);
+}
+
+int lbr_log_close(lbr_logger_t *lg, uint64_t now_us)
+{
+    /* Stop taking records first, so nothing lands after the END record (a
+     * record appended from here on is counted as rejected, never left queued
+     * for the next session). */
+    lock(lg);
+    bool was_open = lg->open;
+    lg->open      = false;
+    unlock(lg);
+    if (!was_open) {
         return -1;
     }
-    lbr_log_pump(lg, now_us);
+    drain(lg, now_us);
 
     uint8_t payload[LBR_LOG_END_SIZE];
     lbr_put_u64(payload, now_us);
-    lbr_put_u32(payload + 8, lg->stats.records_written + 1);
+    lbr_put_u32(payload + 8, lg->session_records + 1);
     size_t n =
         lbr_log_frame(LBR_REC_END, payload, sizeof payload, lg->cfg.chunk, lg->cfg.chunk_cap);
     int rc = write_chunk(lg, n, 1, now_us);
@@ -294,9 +327,6 @@ int lbr_log_close(lbr_logger_t *lg, uint64_t now_us)
     if (lg->st.close(lg->st.ctx) != 0) {
         rc = -1;
     }
-    lock(lg);
-    lg->open = false;
-    unlock(lg);
     return rc;
 }
 

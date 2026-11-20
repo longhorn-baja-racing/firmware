@@ -108,6 +108,10 @@ static void test_io_parse_valid(void)
                0);
     CHECK_EQ_U(b.u.din.n_gpio, 4);
     CHECK_EQ_I(b.u.din.gpio[2], 18);
+
+    /* The pins in use, for the node-wide one-pin-one-function check. */
+    CHECK(lbr_io_pins(&b, 1) == ((1ull << 4) | (1ull << 5) | (1ull << 18) | (1ull << 19)));
+    CHECK(lbr_io_pins(t, 2) == (1ull << 36));
 }
 
 static void test_io_parse_rejects(void)
@@ -391,6 +395,49 @@ static void test_nmea_rejects_garbage(void)
     CHECK_EQ_U(q.pos_us, 0);
 }
 
+/* "$<body>*hh\r\n" with the right checksum. */
+static void feed_body(lbr_nmea_t *p, const char *body, uint64_t t)
+{
+    uint8_t x = 0;
+    for (const char *c = body; *c != '\0'; c++) {
+        x ^= (uint8_t)*c;
+    }
+    char line[160];
+    snprintf(line, sizeof line, "$%s*%02X\r\n", body, x);
+    feed_str(p, line, t);
+}
+
+/* Empty or sign-only fields are missing, never a valid 0. */
+static void test_nmea_empty_fields(void)
+{
+    lbr_nmea_t    p;
+    lbr_reading_t r[NG];
+    lbr_nmea_init(&p);
+    feed_body(&p, "GPGGA,123519,4807.038,N,01131.000,E,1,,0.9,545.4,M,46.9,M,,", 1000);
+    CHECK_EQ_U(p.sentences, 1);
+    lbr_nmea_fill(&p, 1001, k_gps, NG, r);
+    CHECK(!r[6].valid && r[6].reason == LBR_UNAVAIL_NO_DATA); /* satellites */
+    CHECK(r[7].valid);                                        /* HDOP is there */
+
+    lbr_nmea_init(&p);
+    feed_body(&p, "GPGGA,123519,.,N,.,E,1,08,.,-,M,46.9,M,,", 1000);
+    CHECK_EQ_U(p.sentences, 1);
+    CHECK_EQ_U(p.pos_us, 0); /* "." is not a coordinate */
+    CHECK_EQ_U(p.alt_us, 0); /* "-" is not an altitude */
+    CHECK(!p.hdop_valid);
+}
+
+/* A sentence whose line end was lost (the next '$' cuts it off) is counted. */
+static void test_nmea_truncated_counted(void)
+{
+    lbr_nmea_t p;
+    lbr_nmea_init(&p);
+    feed_str(&p, "$GPGGA,123519,4807.0", 1);
+    feed_str(&p, k_fix_burst, 2);
+    CHECK_EQ_U(p.truncated, 1);
+    CHECK_EQ_U(p.sentences, 3);
+}
+
 static void test_nmea_unix_time(void)
 {
     CHECK_EQ_U(lbr_nmea_unix_time(1970, 1, 1, 0, 0, 0), 0);
@@ -412,6 +459,8 @@ int main(void)
     RUN(test_config_text_records_params);
     RUN(test_nmea_fix);
     RUN(test_nmea_rejects_garbage);
+    RUN(test_nmea_empty_fields);
+    RUN(test_nmea_truncated_counted);
     RUN(test_nmea_unix_time);
     TEST_MAIN_END();
 }

@@ -140,7 +140,7 @@ crc32  := CRC-32/IEEE over type, flags, len, payload
 | 0x04 | `CAN_FRAME` | raw bus frame (22 bytes, `can-ids.md`) |
 | 0x05 | `LOSS` | `dropped_records u32, dropped_bytes u32, t_us u64` |
 | 0x06 | `TEXT` | ASCII diagnostic text (firmware log lines) |
-| 0x07 | `END` | `t_us u64, records_written u32` (clean close) |
+| 0x07 | `END` | `t_us u64, records_written u32` (clean close; the records in this file, END included) |
 | 0x20 | `KEY` | car logic output name; see "Car logic outputs" |
 | 0x21 | `VALUE` | one car logic output value; see "Car logic outputs" |
 | 0x22 | `TICK` | when the Central's logic and heartbeat ran; see "Replay" |
@@ -248,7 +248,7 @@ Columns, in this order, with a header row:
 | `loss` | LOSS records: `dropped_records`, `dropped_bytes` |
 | `text`, `end` | TEXT records; the END record's `records_written` |
 | `output` | a car logic output (`VALUE` record): `node` = the logger, `name` = key (`CVT/Ratio`), `value` = number (`bool`: 0/1), `status` = `ok` or why it is missing (`NODE_LOST`, `STALE`, ...), `synced` = 1 |
-| `unknown_record` | a record type this decoder does not know: `name` = type, `value` = payload (hex) |
+| `unknown_record` | a record type this decoder does not know, or a known one whose content does not decode (`status` = `malformed`): `name` = type, `value` = payload (hex) |
 | `integrity` | last rows: `records`, `corrupt_regions`, `skipped_bytes`, `truncated_tail`, `time_sync_frames`, `time_follow_up_frames`, `update_data_frames` (counted, not listed), `catalog_checked`; and `tick_records` (counted, not listed) when the log has `TICK` records |
 
 Rules:

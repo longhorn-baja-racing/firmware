@@ -86,6 +86,7 @@ if the oil sensor is gone.
 | Unset CAN pins | the node | `CAN_PINS_UNSET` |
 | CAN bus-off | the CAN driver | `CAN_BUS_OFF` (recovers by itself), counts in the heartbeat |
 | A full queue, a dropped frame | everywhere | counted: queue high-water marks, overflow and drop counters in every heartbeat; `LOSS` records in the log with exact counts |
+| Central: a car logic output refused (bad or duplicate key, too many), a LoRa event evicted, a cockpit datagram lost | the Central | counted in its heartbeat: refused outputs in `overflow_count`, live-link drops in `transport_error_count` |
 | A late car logic task | the runner | counted (`late`), rejoins the grid |
 | SD card missing, write error | the Central | `SD_MISSING`, `SD_WRITE_ERROR`; retried every 5 s, `SD_MOUNTED` when back |
 | Watchdog, brownout, panic | the next boot | the reset reason in the `BOOT` event and every heartbeat |

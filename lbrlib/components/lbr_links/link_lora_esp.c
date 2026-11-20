@@ -129,7 +129,11 @@ static bool radio_init(void)
     reg_write(REG_FRF_MID, (uint8_t)(frf >> 8));
     reg_write(REG_FRF_LSB, (uint8_t)frf);
 
-    uint8_t bw_code = CONFIG_LBR_LORA_BW_KHZ >= 500 ? 9 : CONFIG_LBR_LORA_BW_KHZ >= 250 ? 8 : 7;
+    /* The radio has more bandwidths, but airtime and duty math assume these. */
+    static_assert(CONFIG_LBR_LORA_BW_KHZ == 125 || CONFIG_LBR_LORA_BW_KHZ == 250 ||
+                      CONFIG_LBR_LORA_BW_KHZ == 500,
+                  "CONFIG_LBR_LORA_BW_KHZ must be 125, 250, or 500");
+    uint8_t bw_code = CONFIG_LBR_LORA_BW_KHZ == 500 ? 9 : CONFIG_LBR_LORA_BW_KHZ == 250 ? 8 : 7;
     reg_write(REG_MODEM_CONFIG_1, (uint8_t)((bw_code << 4) | (CONFIG_LBR_LORA_CR << 1)));
     reg_write(REG_MODEM_CONFIG_2, (uint8_t)((CONFIG_LBR_LORA_SF << 4) | 0x04 /* CRC on */));
     uint32_t tsym_us = (1u << CONFIG_LBR_LORA_SF) * 1000u / CONFIG_LBR_LORA_BW_KHZ;

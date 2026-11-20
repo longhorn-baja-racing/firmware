@@ -81,6 +81,7 @@ static int check_slot(uint8_t node, bool can, const char *name, const lbr_signal
         return fail(err, err_len, "slot %s: rate %u Hz not in 1..%u or not a divisor of 1 MHz",
                     name, (unsigned)rate_hz, LBR_NODE_MAX_RATE_HZ);
     }
+    size_t n_frames = 0;
     for (size_t c = 0; c < n_signals; c++) {
         lbr_signal_id_t sig = signals[c];
         if (lbr_signal_info(sig) == NULL) {
@@ -98,6 +99,14 @@ static int check_slot(uint8_t node, bool can, const char *name, const lbr_signal
                         sig_name(sig), (unsigned)rate_hz, d->name, (unsigned)d->rate_hz);
         }
         if (can) {
+            bool counted = false;
+            for (size_t e = 0; e < c && !counted; e++) {
+                counted = lbr_frame_for_signal(signals[e], NULL) == d;
+            }
+            if (!counted && ++n_frames > LBR_NODE_SLOT_MAX_FRAMES) {
+                return fail(err, err_len, "slot %s: its signals fill more than %u frames", name,
+                            LBR_NODE_SLOT_MAX_FRAMES);
+            }
             if (d->sender != node) {
                 return fail(err, err_len, "slot %s: %s is in frame %s, which %s sends", name,
                             sig_name(sig), d->name, lbr_node_name(d->sender));
@@ -190,8 +199,9 @@ int lbr_node_config_validate(const lbr_node_config_t *cfg, char *err, size_t err
         return fail(err, err_len, "too many sensors (%u > %u)", (unsigned)cfg->n_acq,
                     LBR_NODE_MAX_SENSORS);
     }
-    if (cfg->health_period_ms < 100 || cfg->health_period_ms > 10000) {
-        return fail(err, err_len, "health period %u ms outside 100..10000",
+    if (cfg->health_period_ms < 100 || cfg->health_period_ms > 4000) {
+        /* At most 4 s: the heartbeat task feeds the 5 s task watchdog. */
+        return fail(err, err_len, "health period %u ms outside 100..4000",
                     (unsigned)cfg->health_period_ms);
     }
     if (cfg->listen_all && cfg->on_frame == NULL) {
@@ -260,12 +270,12 @@ size_t lbr_node_config_text(const lbr_node_config_t *cfg, char *buf, size_t cap)
     put(&t, "local_log=%u\n", cfg->local_log ? 1u : 0u);
     for (size_t i = 0; i < cfg->n_acq; i++) {
         const lbr_acq_t *a = &cfg->acq[i];
-        if (a->sensor == NULL) {
-            continue;
+        if (a->sensor == NULL || a->sensor->name == NULL) {
+            continue; /* rejected by validation, which runs after this */
         }
         put(&t, "sensor.%u=%s rate_hz=%u sim=%u signals=", (unsigned)i, a->sensor->name,
             (unsigned)a->rate_hz, a->sensor->simulated ? 1u : 0u);
-        for (size_t c = 0; c < a->sensor->n_signals; c++) {
+        for (size_t c = 0; a->sensor->signals != NULL && c < a->sensor->n_signals; c++) {
             put(&t, "%s%s", c ? "," : "", sig_name(a->sensor->signals[c]));
         }
         put(&t, "\n");
@@ -357,6 +367,25 @@ lbr_sensor_t *lbr_slot(lbr_node *n, size_t slot)
     }
     n->bound |= bit;
     return &n->sensors[slot];
+}
+
+void lbr_node_finish(lbr_node *n)
+{
+    if (n == NULL || n->plan == NULL || n->cfg == NULL || n->sensors == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < n->plan->n_slots && i < n->cfg->n_acq; i++) {
+        const lbr_slot_t   *slot = &n->plan->slots[i];
+        const lbr_sensor_t *s    = &n->sensors[i];
+        bool                same = s->n_signals == slot->n_signals && s->signals != NULL;
+        for (size_t c = 0; same && c < slot->n_signals; c++) {
+            same = s->signals[c] == slot->signals[c];
+        }
+        if (!same && n->cfg->app_error == NULL) {
+            /* A subset would leave one of the slot's frames never sent. */
+            n->cfg->app_error = "a slot's driver produces other signals than its plan slot";
+        }
+    }
 }
 
 void lbr_bind(lbr_node *n, size_t slot, const lbr_driver *drv, void *self)

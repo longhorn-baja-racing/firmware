@@ -13,6 +13,12 @@ LBR_OUTPUT(brake_alarm, "Alarms/BrakeOverheat", BOOL, NONE);
 
 static bool s_hot;
 
+static void brakes_init(lbr_cycle *c)
+{
+    (void)c;
+    s_hot = false; /* every start begins cold */
+}
+
 static void brakes_periodic(lbr_cycle *c)
 {
     lbr_f32 front = lbr_max(lbr_get(c, TEMP_BRAKE_FL), lbr_get(c, TEMP_BRAKE_FR));
@@ -23,7 +29,7 @@ static void brakes_periodic(lbr_cycle *c)
     lbr_out_bool(c, &brake_alarm, lbr_above(&s_hot, hot, 300.0f, 270.0f));
 }
 
-LBR_TASK(brakes, .rate_hz = 10, .periodic = brakes_periodic);
+LBR_TASK(brakes, .rate_hz = 10, .init = brakes_init, .periodic = brakes_periodic);
 ```
 
 ## Adding a task
@@ -47,11 +53,12 @@ LBR_TASK(name, .rate_hz = 50, .periodic = fn, .init = optional_fn);
 | --- | --- |
 | `.rate_hz` | 1, 2, 4, 5, 10, 20, 25, 50, or 100 (divides `LBR_LOGIC_TICK_HZ` = 100) |
 | `.periodic(c)` | called every 1/rate seconds, on a grid of the shared clock |
-| `.init(c)` | optional, once before the first `periodic` |
+| `.init(c)` | optional, once per start before the first `periodic`: reset the task's state here |
 
 A task must be quick and self-contained: no blocking, no I/O, no hardware. Everything it needs
 comes in through `lbr_get` and everything it produces goes out through `lbr_out`. Keep its state
-in `static` variables in its file. These rules are also what makes a task replayable from a log
+in `static` variables in its file and reset them in `.init`, so a run never starts from an
+earlier run's state (`.init` runs at every start: a boot, a replay, a simulated reboot). These rules are also what makes a task replayable from a log
 later ([logging](logging.md#replay)).
 
 A task that runs late (its next run was already due) is counted, and it rejoins the grid

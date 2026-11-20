@@ -132,7 +132,9 @@ static void boot_gateway(sim_t *s)
     schedule_local(s, GW, SIM_JOB_PUMP, l + 20000u, EV_GW_PUMP);
     schedule_local(s, GW, SIM_JOB_COCKPIT, l + g->cfg.cockpit_period_ms * 1000u, EV_GW_COCKPIT);
     schedule_local(s, GW, SIM_JOB_HEALTH, l + LBR_GW_HEALTH_PERIOD_MS * 1000u, EV_HEALTH);
-    schedule_local(s, GW, SIM_JOB_LOGIC, l + 1000000u / LBR_LOGIC_TICK_HZ, EV_GW_LOGIC);
+    /* Like the RTOS tick on the board, the logic tick does not land on the
+     * tasks' grid: it runs 3.7 ms after it. */
+    schedule_local(s, GW, SIM_JOB_LOGIC, l + 1000000u / LBR_LOGIC_TICK_HZ + 3700u, EV_GW_LOGIC);
     for (size_t k = 0; k < n->cfg.n_acq; k++) {
         lbr_gw_core_slot_start(g->core, k);
         schedule_acq(s, GW, k);

@@ -37,10 +37,12 @@ typedef struct {
     /* Counters (wrap). */
     uint32_t sentences;
     uint32_t checksum_errors;
-    uint32_t overlong;
+    uint32_t overlong;  /* too long, or a byte that is not printable ASCII */
+    uint32_t truncated; /* cut off by the next '$' (its line end was lost) */
 
     uint8_t gga_quality; /* 0 none, 1 GPS, 2 DGPS, 6 dead reckoning, ... */
     uint8_t sats;
+    bool    sats_valid;
     uint8_t gsa_mode; /* 1 none, 2 2D, 3 3D */
     bool    hdop_valid;
     bool    course_valid;

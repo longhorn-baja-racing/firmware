@@ -196,10 +196,17 @@ static void rx_task(void *arg)
 static void health_task(void *arg)
 {
     (void)arg;
+    /* Runs even with a rejected configuration (so the fault shows on the bus):
+     * an out-of-range period falls back to 1 s, as in the heartbeat itself,
+     * and stays inside the task watchdog's 5 s. */
+    uint32_t period_ms = s_core.cfg->health_period_ms;
+    if (period_ms < 100u || period_ms > 4000u) {
+        period_ms = 1000u;
+    }
     TickType_t wake = xTaskGetTickCount();
     esp_task_wdt_add(NULL);
     for (;;) {
-        vTaskDelayUntil(&wake, pdMS_TO_TICKS(s_core.cfg->health_period_ms));
+        vTaskDelayUntil(&wake, pdMS_TO_TICKS(period_ms));
         esp_task_wdt_reset();
         lbr_node_core_heartbeat(&s_core, NULL);
         /* A freshly updated image confirms itself once it is on the bus and
@@ -244,6 +251,7 @@ void lbr_node_main(const lbr_node_app_t *app)
         if (app->init != NULL) {
             app->init(&node);
         }
+        lbr_node_finish(&node);
     }
     if (cfg.app_error != NULL) {
         ESP_LOGE(TAG, "app setup: %s", cfg.app_error);

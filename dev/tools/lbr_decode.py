@@ -407,6 +407,17 @@ class LogReader:
 
 
 def decode_log_record(cat, dec, offset, rtype, p):
+    """One record's content. A record whose CRC is good but whose content is not
+    (wrong length, a reserved bit set) comes back as type MALFORMED with its
+    payload, instead of ending the whole decode."""
+    try:
+        return decode_log_record_content(cat, dec, offset, rtype, p)
+    except (ValueError, struct.error, IndexError, KeyError) as e:
+        return {"offset": offset, "type": "MALFORMED", "record_type": rtype,
+                "error": str(e), "payload": p.hex()}
+
+
+def decode_log_record_content(cat, dec, offset, rtype, p):
     d = {"offset": offset, "type": REC_NAMES.get(rtype, "?")}
     if rtype == 1:
         (fmt, proto, fw, chash, ccrc, node, reset, _, boots, start) = struct.unpack_from("<HHIIIBBHIQ", p)
@@ -707,6 +718,9 @@ class CsvExporter:
                                              else "%.9g" % r["value"])
             self.row(self.t_us, "output", self.logger, r["key"], value, r["unit"],
                      "ok" if r["ok"] else r["status"], 1)
+        elif kind == "MALFORMED":
+            self.row(self.t_us, "unknown_record", self.logger, "type%d" % rtype, p.hex(), "",
+                     "malformed")
         else:
             self.row(self.t_us, "unknown_record", self.logger, "type%d" % rtype, p.hex())
 
@@ -843,7 +857,7 @@ def cmd_serial(cat, port, baud, cmd, out_path):
     if cmd:
         link.write((cmd + "\n").encode("ascii"))
     out = open(out_path, "wb") if out_path else None
-    buf, last_seq = bytearray(), None
+    buf, last_seq, got_crc, got_bytes = bytearray(), None, 0, 0
     dec = BusDecoder(cat)
     try:
         while True:
@@ -862,7 +876,11 @@ def cmd_serial(cat, port, baud, cmd, out_path):
                 last_seq = hdr["seq"]
                 for rtype, p in records:
                     if rtype == REC_TEXT:
-                        print(p.decode("latin-1"))
+                        text = p.decode("latin-1")
+                        print(text)
+                        if out and text.startswith("ERR"):
+                            out.close()
+                            sys.exit("dump failed: %s (the file on disk is incomplete)" % text)
                     elif rtype == REC_CAN_FRAME:
                         d = decode_can_record(cat, dec, p)
                         for smp in d.get("samples", []):
@@ -872,12 +890,19 @@ def cmd_serial(cat, port, baud, cmd, out_path):
                     elif rtype == REC_FILE_CHUNK and out:
                         out.seek(struct.unpack_from("<I", p)[0])
                         out.write(p[4:])
+                        got_crc = zlib.crc32(p[4:], got_crc)
+                        got_bytes += len(p) - 4
                     elif rtype == REC_FILE_END:
-                        total, crc = struct.unpack_from("<II", p)
-                        print("dump complete: %d bytes, crc %08x" % (total, crc))
+                        end, crc = struct.unpack_from("<II", p)
                         if out:
                             out.close()
+                            if crc != got_crc:
+                                sys.exit("dump damaged: %d bytes received, crc %08x, the Central "
+                                         "sent crc %08x (packets lost? dump again)"
+                                         % (got_bytes, got_crc, crc))
+                            print("dump complete: %d bytes, crc %08x verified" % (got_bytes, crc))
                             return
+                        print("dump complete: up to offset %d, crc %08x" % (end, crc))
     except KeyboardInterrupt:
         pass
 

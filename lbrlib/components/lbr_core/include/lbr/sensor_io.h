@@ -112,6 +112,10 @@ extern const lbr_io_chip_t lbr_io_chip_esp32c5;
 int lbr_io_parse(const char *spec, const lbr_signal_id_t *signals, size_t n, lbr_io_chan_t *chans,
                  const lbr_io_chip_t *chip, char *err, size_t err_len);
 
+/* The GPIOs parsed channels use, as a bit mask (bit g = GPIO g): one pin has
+ * one function across all of a node's io slots, not only within one. */
+uint64_t lbr_io_pins(const lbr_io_chan_t *chans, size_t n);
+
 /* ADC: convert a calibrated pin voltage (mV) into a reading. */
 void lbr_io_adc_convert(const lbr_io_chan_t *c, float mv, lbr_reading_t *out);
 

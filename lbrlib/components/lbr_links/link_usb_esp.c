@@ -169,7 +169,14 @@ static void do_dump(const char *name, uint32_t offset)
     }
     for (;;) {
         int n = lbr_sd_read(name, offset, buf, sizeof buf);
-        if (n <= 0) {
+        if (n < 0) {
+            /* No FILE_END: a cut download must never look complete. */
+            char msg[64];
+            snprintf(msg, sizeof msg, "ERR read failed at offset %lu", (unsigned long)offset);
+            reply_text(msg);
+            return;
+        }
+        if (n == 0) {
             break;
         }
         lbr_pkt_builder_t b;
@@ -190,7 +197,8 @@ static void do_dump(const char *name, uint32_t offset)
         crc = lbr_crc32_update(crc, buf, (size_t)n);
         offset += (uint32_t)n;
     }
-    /* FILE_END: total bytes sent from the requested offset, CRC-32 of them. */
+    /* FILE_END: the end offset (the file size when the dump started at 0), and
+     * the CRC-32 of the bytes sent. */
     uint8_t end[8 + LBR_SD_NAME_MAX];
     size_t  nlen = strlen(name);
     lbr_put_u32(end, offset);

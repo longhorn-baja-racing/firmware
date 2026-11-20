@@ -32,22 +32,25 @@ static int hex_val(char c)
     return -1;
 }
 
-/* Strictly numeric field: digits with at most one '.', optional leading '-'. */
+/* Strictly numeric field: digits with at most one '.', optional leading '-',
+ * and at least one digit ("-" or "." alone is not a number, never 0). */
 static bool parse_num(const char *s, double *out)
 {
-    if (s[0] == '\0') {
-        return false;
-    }
-    bool dot = false;
+    bool dot = false, digit = false;
     for (const char *q = s + (s[0] == '-' ? 1 : 0); *q != '\0'; q++) {
         if (*q == '.') {
             if (dot) {
                 return false;
             }
             dot = true;
-        } else if (!isdigit((unsigned char)*q)) {
+        } else if (isdigit((unsigned char)*q)) {
+            digit = true;
+        } else {
             return false;
         }
+    }
+    if (!digit) {
+        return false;
     }
     *out = strtod(s, NULL);
     return isfinite(*out);
@@ -114,7 +117,8 @@ static void on_gga(lbr_nmea_t *p, char **f, int nf, uint64_t now_us)
     }
     double q = 0.0, sats = 0.0, hdop = 0.0, alt = 0.0;
     p->gga_quality = parse_num(f[6], &q) && q >= 0.0 && q < 10.0 ? (uint8_t)q : 0u;
-    p->sats        = parse_num(f[7], &sats) && sats >= 0.0 && sats < 256.0 ? (uint8_t)sats : 0u;
+    p->sats_valid  = parse_num(f[7], &sats) && sats >= 0.0 && sats < 256.0;
+    p->sats        = p->sats_valid ? (uint8_t)sats : 0u;
     p->hdop_valid  = parse_num(f[8], &hdop) && hdop >= 0.0;
     p->hdop        = p->hdop_valid ? (float)hdop : 0.0f;
     p->gga_us      = now_us;
@@ -233,6 +237,9 @@ uint32_t lbr_nmea_feed(lbr_nmea_t *p, const uint8_t *data, size_t n, uint64_t no
     for (size_t i = 0; i < n; i++) {
         char c = (char)data[i];
         if (c == '$') {
+            if (p->in_sentence && p->len > 0) {
+                p->truncated++; /* never silent: the previous sentence lost its end */
+            }
             p->in_sentence = true;
             p->len         = 0;
         } else if (c == '\r' || c == '\n') {
@@ -321,7 +328,7 @@ void lbr_nmea_fill(const lbr_nmea_t *p, uint64_t now_us, const lbr_signal_id_t *
                 set_u32(r, live, fix);
                 break;
             case LBR_SIG_GPS_SATELLITES:
-                set_u32(r, gga, p->sats);
+                set_u32(r, gga && p->sats_valid, p->sats);
                 break;
             case LBR_SIG_GPS_HDOP:
                 set_f32(r, gga && p->hdop_valid, p->hdop);

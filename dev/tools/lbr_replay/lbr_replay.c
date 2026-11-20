@@ -46,16 +46,20 @@ typedef struct {
 static series_t s_original, s_replayed;
 static FILE    *s_out;
 static uint32_t s_out_records;
+static uint32_t s_old_replay; /* Replay/ records already in RUN (left out) */
+static bool     s_ended;      /* RUN has its END record (closed cleanly) */
+static uint64_t s_last_logic; /* time of RUN's last LOGIC tick */
 
 static void push(series_t *s, uint64_t t, uint16_t key, uint8_t status, uint32_t bits)
 {
     if (s->n == s->cap) {
-        s->cap = s->cap ? s->cap * 2 : 4096;
-        s->v   = realloc(s->v, s->cap * sizeof *s->v);
-        if (s->v == NULL) {
+        s->cap     = s->cap ? s->cap * 2 : 4096;
+        value_t *v = realloc(s->v, s->cap * sizeof *v);
+        if (v == NULL) {
             fprintf(stderr, "lbr_replay: out of memory\n");
             exit(2);
         }
+        s->v = v;
     }
     s->v[s->n++] = (value_t){t, key, status, bits};
 }
@@ -112,6 +116,18 @@ static void replay_sink(void *ctx, uint8_t type, const uint8_t *payload, size_t 
     }
 }
 
+/* A KEY / VALUE record of an earlier replay (RUN is itself a replay's OUT). */
+static bool is_old_replay(const lbr_log_record_t *rec)
+{
+    if (rec->type == LBR_REC_KEY && rec->len >= 4) {
+        return (lbr_get_u16(rec->payload) & REPLAY_ID_BIT) != 0;
+    }
+    if (rec->type == LBR_REC_VALUE && rec->len >= LBR_VALUE_REC_SIZE) {
+        return (lbr_get_u16(rec->payload + 8) & REPLAY_ID_BIT) != 0;
+    }
+    return false;
+}
+
 static uint8_t *read_file(const char *path, size_t *len)
 {
     FILE *f = fopen(path, "rb");
@@ -153,6 +169,20 @@ static size_t compare(void)
         }
     }
     size_t extra = s_original.n > s_replayed.n ? s_original.n - n : s_replayed.n - n;
+    if (extra > 0 && s_replayed.n > s_original.n && !s_ended) {
+        /* A log cut off (power loss) between a LOGIC tick and the last of
+         * its outputs: the replay ran that tick in full. */
+        bool final_tick = true;
+        for (size_t i = n; i < s_replayed.n; i++) {
+            final_tick = final_tick && s_replayed.v[i].t_us >= s_last_logic;
+        }
+        if (final_tick) {
+            printf("%zu replayed output(s) of the final tick not compared (the log ends "
+                   "mid-tick)\n",
+                   extra);
+            extra = 0;
+        }
+    }
     if (extra > 0) {
         printf("%zu %s output(s) with no counterpart\n", extra,
                s_original.n > s_replayed.n ? "recorded" : "replayed");
@@ -203,6 +233,11 @@ int main(int argc, char **argv)
             tasks[n_tasks++] = car_logic.tasks[i];
         }
     }
+    if (car_logic.n > LBR_LOGIC_MAX_TASKS) {
+        fprintf(stderr, "lbr_replay: %zu tasks, at most %u (the Central refuses this list)\n",
+                car_logic.n, LBR_LOGIC_MAX_TASKS);
+        return 2;
+    }
     if (drop != NULL && n_tasks == car_logic.n) {
         fprintf(stderr, "lbr_replay: no task named %s\n", drop);
         return 2;
@@ -228,14 +263,26 @@ int main(int argc, char **argv)
                         "lbr_replay: %s was written with a different catalog (or has no "
                         "session record); replay it with that firmware's catalog\n",
                         in);
+                free(data);
                 return 2;
             }
+        }
+        if (is_old_replay(&rec)) {
+            s_old_replay++; /* an earlier replay's output: neither recorded nor copied */
+            continue;
         }
         write_record(rec.type, rec.payload, rec.len);
         if (rec.type == LBR_REC_KEY) {
             note_key(&s_original, rec.payload, rec.len);
         } else if (rec.type == LBR_REC_VALUE) {
             note_value(&s_original, rec.payload, rec.len);
+        } else if (rec.type == LBR_REC_END) {
+            s_ended = true;
+        } else if (rec.type == LBR_REC_TICK) {
+            lbr_tick_t t;
+            if (lbr_tick_decode(rec.payload, rec.len, &t) && t.kind == LBR_TICK_LOGIC) {
+                s_last_logic = t.t_us;
+            }
         }
         lbr_replay_record(&r, rec.type, rec.payload, rec.len);
     }
@@ -248,6 +295,9 @@ int main(int argc, char **argv)
            reader.corrupt_regions ? ", corrupt regions skipped" : "",
            reader.truncated_tail ? ", truncated tail" : "");
     printf("outputs: %zu recorded, %zu replayed\n", s_original.n, s_replayed.n);
+    if (s_old_replay > 0) {
+        printf("%u records of an earlier replay left out\n", s_old_replay);
+    }
     if (!r.started) {
         printf("the log does not start at the Central's START (opened mid-session): the "
                "replay starts cold and may differ until the logic warms up\n");

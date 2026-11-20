@@ -57,7 +57,7 @@ menu "LBR live links (Central)"
             int "Bandwidth (kHz)"
             default 125
             help
-                125, 250, or 500.
+                125, 250, or 500 (anything else does not build).
 
         config LBR_LORA_CR
             int "Coding rate denominator - 4 (1 = 4/5 .. 4 = 4/8)"

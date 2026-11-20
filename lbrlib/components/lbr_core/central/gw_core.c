@@ -116,7 +116,7 @@ static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_
     gw_unlock(c, LBR_GW_LOCK_STATE);
     stream_add(c, LBR_REC_CAN_FRAME, rec, sizeof rec);
 
-    if (found) {
+    if (found && !own_tx) {
         gw_say(c, LBR_LOG_LVL_INFO, "node %s (0x%02x) on the bus", lbr_node_name(source), source);
         if (back) {
             lbr_gw_core_event(c, LBR_EVT_NODE_FOUND, source, false);
@@ -145,13 +145,15 @@ static void emit_event(lbr_gw_core_t *c, lbr_event_code_t code, uint16_t arg, bo
         .t_mono_us = t_us,
     };
     s.v.u32 = lbr_event_value(code, arg);
+    /* Sequence and send under one lock: an event raised by a higher-priority
+     * task in between would otherwise go out first, with the later number. */
     gw_lock(c, LBR_GW_LOCK_EVENT);
     s.seq = c->evt_seq++;
-    gw_unlock(c, LBR_GW_LOCK_EVENT);
     lbr_can_frame_t f;
     if (lbr_can_encode_event(&s, &f)) {
-        gw_tx(c, &f);
+        gw_tx(c, &f); /* takes STATE and STREAM, never EVENT (own frames raise no events) */
     }
+    gw_unlock(c, LBR_GW_LOCK_EVENT);
 }
 
 void lbr_gw_core_event(lbr_gw_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault)

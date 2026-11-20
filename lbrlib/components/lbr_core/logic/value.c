@@ -98,14 +98,20 @@ lbr_f32 lbr_abs(lbr_f32 a)
     return result(fabsf(a.v), a.st, LBR_OK, a.age_ms);
 }
 
+/* An OK value that is not a number is bad math (a comparison would skip it). */
+static lbr_status checked(lbr_f32 a)
+{
+    return a.st == LBR_OK && !isfinite(a.v) ? LBR_BAD_MATH : a.st;
+}
+
 lbr_f32 lbr_min(lbr_f32 a, lbr_f32 b)
 {
-    return result(a.v < b.v ? a.v : b.v, a.st, b.st, older(a.age_ms, b.age_ms));
+    return result(a.v < b.v ? a.v : b.v, checked(a), checked(b), older(a.age_ms, b.age_ms));
 }
 
 lbr_f32 lbr_max(lbr_f32 a, lbr_f32 b)
 {
-    return result(a.v > b.v ? a.v : b.v, a.st, b.st, older(a.age_ms, b.age_ms));
+    return result(a.v > b.v ? a.v : b.v, checked(a), checked(b), older(a.age_ms, b.age_ms));
 }
 
 lbr_f32 lbr_clamp(lbr_f32 a, float lo, float hi)
@@ -203,6 +209,9 @@ lbr_f32 lbr_lowpass(lbr_filter *f, lbr_f32 x, float alpha)
         f->primed = true;
     } else {
         f->v += alpha * (x.v - f->v);
+    }
+    if (!isfinite(f->v)) {
+        f->primed = false; /* overflowed: restart instead of staying bad for good */
     }
     return result(f->v, LBR_OK, LBR_OK, x.age_ms);
 }

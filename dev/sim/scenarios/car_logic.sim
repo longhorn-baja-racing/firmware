@@ -22,11 +22,12 @@ at 8.0  set TEMP_CVT 90
 at 9.0  expect out:Alarms/CvtOverheat value == 0
 at 9.0  auto TEMP_CVT
 
-# The powertrain node drops off the bus: the ratio says why it is missing.
+# The powertrain node drops off the bus: the ratio says why it is missing
+# (STALE at once, NODE_LOST from the first heartbeat 3 s after its last frame).
 at 9.0  disconnect powertrain
-at 13.0 expect out:CVT/Ratio status == NODE_LOST
-at 13.0 expect out:Engine/Running status == NODE_LOST
-at 13.0 connect powertrain
+at 13.5 expect out:CVT/Ratio status == NODE_LOST
+at 13.5 expect out:Engine/Running status == NODE_LOST
+at 13.5 connect powertrain
 at 15.0 expect out:CVT/Ratio valid == 1
 at 15.0 expect log intact == 1
 end 15.0

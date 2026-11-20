@@ -338,6 +338,33 @@ static void test_app_slot_binding(void)
     CHECK(lbr_node_config_validate(&cfg, err, sizeof err) != 0);
     CHECK(strstr(err, "does not have") != NULL);
     CHECK(lbr_slot(NULL, 0) == NULL);
+
+    /* A driver bound for fewer signals than its slot: the gyro-less IMU of
+     * the review would never send a frame. Caught after the app's init. */
+    static const lbr_signal_id_t rpm_only[] = {LBR_SIG_ENGINE_RPM};
+    lbr_node_build(&plan, lbr_sensor_unconfigured, sensors, acq, &cfg);
+    node = (lbr_node){.plan = &plan, .cfg = &cfg, .sensors = sensors};
+    lbr_sensor_unconfigured(lbr_slot(&node, 0), "speeds", rpm_only, 1);
+    lbr_node_finish(&node);
+    CHECK(cfg.app_error != NULL);
+    lbr_node_build(&plan, lbr_sensor_unconfigured, sensors, acq, &cfg);
+    node = (lbr_node){.plan = &plan, .cfg = &cfg, .sensors = sensors};
+    lbr_node_finish(&node);
+    CHECK(cfg.app_error == NULL);
+}
+
+/* A sensor with no signal list is rejected by validation, not a crash while
+ * the configuration text is built. */
+static void test_null_signals(void)
+{
+    lbr_acq_t         acq[2];
+    lbr_node_config_t cfg = base_config(acq);
+    s_speeds.signals      = NULL;
+    char text[256];
+    (void)lbr_node_config_text(&cfg, text, sizeof text);
+    char err[96];
+    CHECK(lbr_node_config_validate(&cfg, err, sizeof err) != 0);
+    CHECK(strstr(err, "incomplete") != NULL);
 }
 
 /* Expected topology: catalog CAN nodes never heard are reported missing once,
@@ -493,6 +520,7 @@ int main(void)
     RUN(test_acq_grid);
     RUN(test_node_table);
     RUN(test_app_slot_binding);
+    RUN(test_null_signals);
     RUN(test_node_table_missing);
     RUN(test_driver_kit);
     RUN(test_acq_slot_complete);

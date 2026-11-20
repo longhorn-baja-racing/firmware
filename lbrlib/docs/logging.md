@@ -102,6 +102,9 @@ build you run it from.
 - **A log opened mid-session** (after the SD card came back) starts without the logic's history,
   so the replay starts cold and can differ until the logic warms up; the tool says so. The
   session's first file always replays from the start.
+- **A log cut off by a power loss** can end between a logic tick and its outputs; the replay
+  runs that last tick in full and does not count the outputs the cut took as differences.
+- **A replayed file replays again**: its earlier `Replay/...` records are left out (and counted).
 - **Anything the log lost** (a `LOSS` record: the queue overflowed, or the card was out) is lost
   to the replay too.
 - **The catalog must match**: replay with the catalog of the firmware that wrote the log.
