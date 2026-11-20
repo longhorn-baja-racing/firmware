@@ -13,7 +13,7 @@
  */
 
 /* Bump on any incompatible change; must match the dashboard app. */
-#define LBR_PROTOCOL_VERSION 4u
+#define LBR_PROTOCOL_VERSION 5u
 
 /* Value representation. The catalog fixes the type of every known signal;
  * LBR_VAL_RAW is only produced by a decoder that does not know the signal. */

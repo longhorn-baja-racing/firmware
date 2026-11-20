@@ -1,6 +1,6 @@
 # Protocol
 
-Protocol version **4** (`LBR_PROTOCOL_VERSION`), log format version **1**
+Protocol version **5** (`LBR_PROTOCOL_VERSION`), log format version **1**
 (`LBR_LOG_FORMAT_VERSION`).
 
 The dashboard and firmware implement **one versioned protocol/log specification**. This file is

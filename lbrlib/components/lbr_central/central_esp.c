@@ -571,6 +571,7 @@ void lbr_central_main(const lbr_central_app_t *app)
         .boot_count   = lbr_health_boot_count(),
         .epoch        = (uint16_t)(esp_random() | 1u), /* new timeline every boot */
         .config_valid = config_valid,
+        .can_bitrate  = lbr_can_bus_default_config().bitrate,
         .config_text  = s_config_text,
         .acq          = s_acq,
         .n_acq        = app->plan->n_slots,
@@ -621,6 +622,7 @@ void lbr_central_main(const lbr_central_app_t *app)
     xTaskCreate(stream_task, "gw_stream", 4096, NULL, STREAM_TASK_PRIO, NULL);
     xTaskCreate(logic_task, "gw_logic", 4096, NULL, LOGIC_TASK_PRIO, NULL);
     xTaskCreate(health_task, "gw_health", 4096, NULL, HEALTH_TASK_PRIO, NULL);
+    lbr_sync_probe_start(); /* bench aid; off unless CONFIG_LBR_SYNC_PROBE_GPIO is set */
 
     /* Reaching here means the image boots and its services start: confirm it
      * so the bootloader does not roll an OTA update back. */

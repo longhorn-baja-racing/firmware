@@ -41,6 +41,11 @@ bool lbr_time_is_synced(void);
 /* Snapshot of the servo state for health reporting. */
 void lbr_time_get_servo(lbr_time_servo_t *out);
 
+/* Start the time-sync probe (CONFIG_LBR_SYNC_PROBE_GPIO): a 100 us pulse on
+ * that pin at every whole second of the shared clock, for a scope. Does
+ * nothing while the pin is -1; refuses a pin that cannot drive an output. */
+void lbr_sync_probe_start(void);
+
 /* ------------------------------------------------------------------------ */
 /* Boot                                                                      */
 

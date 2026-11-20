@@ -149,8 +149,18 @@ void lbr_gw_core_heartbeat(lbr_gw_core_t *c, lbr_health_record_t *out)
         lbr_gw_core_event(c, LBR_EVT_CAN_BUS_OFF, (uint16_t)c->last_bus_off, true);
     }
 
+    /* Bus load over the period, counted like the plans (worst-case stuffing),
+     * so it compares directly with the planned load and the 50 % ceiling. */
+    uint32_t bits     = atomic_load(&c->bus_bits);
+    uint64_t capacity = (uint64_t)c->boot.can_bitrate * LBR_GW_HEALTH_PERIOD_MS / 1000u;
+    uint16_t load     = capacity > 0
+                            ? (uint16_t)((uint64_t)(bits - c->prev_bus_bits) * 1000u / capacity)
+                            : LBR_STATUS_LOAD_UNKNOWN;
+    c->prev_bus_bits  = bits;
+
     gw_lock(c, LBR_GW_LOCK_STATE);
-    c->last_health = h;
+    c->last_health       = h;
+    c->bus_load_permille = load;
     lbr_lora_policy_offer_health(&c->lora_policy, &h);
     lbr_logic_announce(&c->logic);
     uint64_t now = c->hal.now_us(c->hal.ctx);

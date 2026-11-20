@@ -1,6 +1,6 @@
 # CAN ID map
 
-Part of protocol version 4. Keep synchronized with the dashboard app and every node's firmware.
+Part of protocol version 5. Keep synchronized with the dashboard app and every node's firmware.
 The map is the one in [`DAQ-WIRING.md`](../DAQ-WIRING.md) section 7; this file adds the bit-level
 rules. The data frames are a schema declared in [`car/catalog.toml`](../car/catalog.toml) (the tables
 below are generated from it by `lbrlib/tools/lbrgen.py`), exported as the `frames` table of
@@ -60,7 +60,7 @@ The sender of a data frame is also the node that takes its samples.
 | --- | --- | --- | ---: | ---: | --- | --- |
 | 0x100 | `DRIVER_INPUTS` | driver_input | 100 | 8 | 0: BRAKE_PEDAL i16 x 0.01 %, 2: GAS_PEDAL i16 x 0.01 %, 4: STEERING_ANGLE i16 x 0.1 deg | 6 |
 | 0x200 | `POWERTRAIN_SPEEDS` | powertrain | 100 | 8 | 0: ENGINE_RPM u16 rpm, 2: CVT_RPM u16 rpm | 6 |
-| 0x201 | `FUEL_LEVEL` | powertrain | 1 | 2 | 0: FUEL_LEVEL i16 x 0.1 % | - |
+| 0x201 | `FUEL_LEVEL` | powertrain | 1 | 8 | 0: FUEL_LEVEL i16 x 0.1 % | 6 |
 | 0x300 | `IMU_FL_ACCEL` | corner_fl | 100 | 8 | 0: IMU_FL_ACCEL_X i16 x 0.01 m/s^2, 2: IMU_FL_ACCEL_Y i16 x 0.01 m/s^2, 4: IMU_FL_ACCEL_Z i16 x 0.01 m/s^2 | 6 |
 | 0x301 | `IMU_FL_GYRO` | corner_fl | 100 | 8 | 0: IMU_FL_GYRO_X i16 x 0.001 rad/s, 2: IMU_FL_GYRO_Y i16 x 0.001 rad/s, 4: IMU_FL_GYRO_Z i16 x 0.001 rad/s | 6 |
 | 0x302 | `IMU_FR_ACCEL` | corner_fr | 100 | 8 | 0: IMU_FR_ACCEL_X i16 x 0.01 m/s^2, 2: IMU_FR_ACCEL_Y i16 x 0.01 m/s^2, 4: IMU_FR_ACCEL_Z i16 x 0.01 m/s^2 | 6 |
@@ -71,18 +71,19 @@ The sender of a data frame is also the node that takes its samples.
 | 0x307 | `IMU_BR_GYRO` | corner_br | 100 | 8 | 0: IMU_BR_GYRO_X i16 x 0.001 rad/s, 2: IMU_BR_GYRO_Y i16 x 0.001 rad/s, 4: IMU_BR_GYRO_Z i16 x 0.001 rad/s | 6 |
 | 0x308 | `IMU_CH_ACCEL` | imu | 100 | 8 | 0: IMU_CH_ACCEL_X i16 x 0.01 m/s^2, 2: IMU_CH_ACCEL_Y i16 x 0.01 m/s^2, 4: IMU_CH_ACCEL_Z i16 x 0.01 m/s^2 | 6 |
 | 0x309 | `IMU_CH_GYRO` | imu | 100 | 8 | 0: IMU_CH_GYRO_X i16 x 0.001 rad/s, 2: IMU_CH_GYRO_Y i16 x 0.001 rad/s, 4: IMU_CH_GYRO_Z i16 x 0.001 rad/s | 6 |
-| 0x30A | `CORNER_FL_BATTERY` | corner_fl | 1 | 1 | 0: CORNER_FL_BATTERY u8 % | - |
-| 0x30B | `CORNER_FR_BATTERY` | corner_fr | 1 | 1 | 0: CORNER_FR_BATTERY u8 % | - |
-| 0x30C | `CORNER_BL_BATTERY` | corner_bl | 1 | 1 | 0: CORNER_BL_BATTERY u8 % | - |
-| 0x30D | `CORNER_BR_BATTERY` | corner_br | 1 | 1 | 0: CORNER_BR_BATTERY u8 % | - |
-| 0x400 | `STRESS_1_4` | stress | 100 | 8 | 0: STRESS_1 i16 ue, 2: STRESS_2 i16 ue, 4: STRESS_3 i16 ue, 6: STRESS_4 i16 ue | - |
-| 0x401 | `STRESS_5_8` | stress | 100 | 8 | 0: STRESS_5 i16 ue, 2: STRESS_6 i16 ue, 4: STRESS_7 i16 ue, 6: STRESS_8 i16 ue | - |
+| 0x30A | `CORNER_FL_BATTERY` | corner_fl | 1 | 8 | 0: CORNER_FL_BATTERY u8 % | 6 |
+| 0x30B | `CORNER_FR_BATTERY` | corner_fr | 1 | 8 | 0: CORNER_FR_BATTERY u8 % | 6 |
+| 0x30C | `CORNER_BL_BATTERY` | corner_bl | 1 | 8 | 0: CORNER_BL_BATTERY u8 % | 6 |
+| 0x30D | `CORNER_BR_BATTERY` | corner_br | 1 | 8 | 0: CORNER_BR_BATTERY u8 % | 6 |
+| 0x400 | `STRESS_1_3` | stress | 100 | 8 | 0: STRESS_1 i16 ue, 2: STRESS_2 i16 ue, 4: STRESS_3 i16 ue | 6 |
+| 0x401 | `STRESS_4_6` | stress | 100 | 8 | 0: STRESS_4 i16 ue, 2: STRESS_5 i16 ue, 4: STRESS_6 i16 ue | 6 |
+| 0x402 | `STRESS_7_8` | stress | 100 | 8 | 0: STRESS_7 i16 ue, 2: STRESS_8 i16 ue | 6 |
 | 0x500 | `BRAKE_TEMPS` | temperature | 10 | 8 | 0: TEMP_BRAKE_FL i16 x 0.1 degC, 2: TEMP_BRAKE_FR i16 x 0.1 degC, 4: TEMP_BRAKE_BL i16 x 0.1 degC, 6: TEMP_BRAKE_BR i16 x 0.1 degC | - |
-| 0x501 | `CVT_TEMP` | temperature | 10 | 2 | 0: TEMP_CVT i16 x 0.1 degC | - |
+| 0x501 | `CVT_TEMP` | temperature | 10 | 8 | 0: TEMP_CVT i16 x 0.1 degC | 6 |
 | 0x600 | `GPS_POSITION` | central | 10 | 8 | 0: GPS_LATITUDE i32 deg*1e-7, 4: GPS_LONGITUDE i32 deg*1e-7 | - |
 | 0x601 | `GPS_MOTION` | central | 10 | 8 | 0: GPS_SPEED u16 x 0.01 m/s, 2: GPS_COURSE u16 x 0.01 deg, 4: GPS_ALTITUDE i16 x 0.1 m | 6 |
 | 0x602 | `GPS_STATUS` | central | 10 | 8 | 0: GPS_UTC u32 unix_s, 4: GPS_FIX u8, 5: GPS_SATELLITES u8 count, 6: GPS_HDOP u16 x 0.01 | - |
-| 0x60A | `COCKPIT_STATUS` | central | 1 | 2 | 0: COCKPIT_BATTERY u8 %, 1: COCKPIT_LINK u8 | - |
+| 0x60A | `COCKPIT_STATUS` | central | 1 | 8 | 0: COCKPIT_BATTERY u8 %, 1: COCKPIT_LINK u8 | 6 |
 <!-- /lbrgen:frames -->
 
 Scales marked TBD in DAQ-WIRING (pedals, steering, fuel, IMU, stress) are provisional until parts
@@ -117,10 +118,11 @@ point. The frame's counter is k mod 65536.
 - **Frames with a counter:** the receiver takes the k nearest its own receive time with those low
   16 bits (`lbr_can_grid_index`); the sample time is k x period, exact while delivery takes under
   32768 periods (5.5 minutes at 100 Hz). Gaps in k are lost samples.
-- **Frames without a counter:** stamped at the last grid point at or before reception, which holds
-  while the frame is delivered within one period (10 ms for stress). Their seq is inferred
-  (`seq_inferred`) and gaps cannot be detected. If the stress frames ever need detection, the fix
-  is a counter (three channels per frame) or CAN FD.
+- **Frames without a counter** (only frames whose fields fill all 8 bytes: brake temperatures and
+  GPS position/status, all 10 Hz): stamped at the last grid point at or before reception, which
+  holds while the frame is delivered within one period (100 ms). Their seq is inferred
+  (`seq_inferred`) and per-sample gaps cannot be detected; losses show in the sender's heartbeat
+  counters. Every other frame carries a counter (protocol v5; the decision is in DAQ-WIRING.md).
 
 ### Synced or not
 

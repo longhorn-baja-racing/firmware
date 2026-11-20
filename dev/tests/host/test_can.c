@@ -202,20 +202,20 @@ static void test_data_frame_roundtrip(void)
 
 static void test_no_counter_frame(void)
 {
-    const lbr_frame_def_t *d = lbr_frame_def(0x400);
+    const lbr_frame_def_t *d = lbr_frame_def(0x500); /* four temperatures fill all 8 bytes */
     CHECK(d != NULL && d->counter_offset == LBR_FRAME_NO_COUNTER);
-    lbr_sample_t v[4] = {f32_sample(LBR_SIG_STRESS_1, 100.0f), f32_sample(LBR_SIG_STRESS_2, -5.0f),
-                         f32_sample(LBR_SIG_STRESS_3, 0.0f),
-                         f32_sample(LBR_SIG_STRESS_4, 32000.0f)};
+    lbr_sample_t v[4] = {
+        f32_sample(LBR_SIG_TEMP_BRAKE_FL, 100.0f), f32_sample(LBR_SIG_TEMP_BRAKE_FR, -5.0f),
+        f32_sample(LBR_SIG_TEMP_BRAKE_BL, 0.0f), f32_sample(LBR_SIG_TEMP_BRAKE_BR, 3200.0f)};
     lbr_can_frame_t f;
     CHECK_EQ_U(lbr_can_encode_data(d, v, 42, &f), 0u);
     lbr_sample_t o[4];
-    /* Stamped at the last grid point at or before reception. */
-    CHECK_EQ_U(lbr_can_decode_data(&f, 420000 + 900, true, o, 4), 4u);
-    CHECK_EQ_U(o[0].t_mono_us, 420000u);
+    /* Stamped at the last grid point (10 Hz) at or before reception. */
+    CHECK_EQ_U(lbr_can_decode_data(&f, 4200000 + 900, true, o, 4), 4u);
+    CHECK_EQ_U(o[0].t_mono_us, 4200000u);
     CHECK_EQ_U(o[3].seq, 42u);
     CHECK(o[0].seq_inferred);
-    CHECK(o[3].valid && o[3].v.f32 == 32000.0f);
+    CHECK(o[3].valid && fabsf(o[3].v.f32 - 3200.0f) < 0.05f);
 }
 
 static void test_event_frame(void)

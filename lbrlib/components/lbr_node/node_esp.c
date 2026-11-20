@@ -324,6 +324,7 @@ void lbr_node_run(const lbr_node_config_t *cfg)
         xTaskCreate(rx_task, "lbr_rx", 4096, NULL, RX_TASK_PRIO, NULL);
     }
     xTaskCreate(health_task, "lbr_health", 4096, NULL, HEALTH_TASK_PRIO, NULL);
+    lbr_sync_probe_start(); /* bench aid; off unless CONFIG_LBR_SYNC_PROBE_GPIO is set */
 
     for (;;) {
         vTaskDelay(portMAX_DELAY);

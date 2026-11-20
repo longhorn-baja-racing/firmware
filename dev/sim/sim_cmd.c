@@ -449,6 +449,13 @@ int sim_command(sim_t *s, const char *line)
         sim_snapshot(s);
         return 0;
     }
+    if (strcmp(c, "stat") == 0) {
+        /* The Central's status text, as USB STAT, WiFi /status, and BLE show it. */
+        char text[2048];
+        lbr_gw_core_status(s->gw.core, "sim", text, sizeof text);
+        printf("%s", text);
+        return 0;
+    }
     if (strcmp(c, "expect") == 0) {
         return cmd_expect(s, tok, nt, line);
     }

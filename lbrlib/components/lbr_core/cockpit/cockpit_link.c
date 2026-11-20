@@ -50,8 +50,11 @@ void lbr_cockpit_link_on_packet(lbr_cockpit_link_t *d, const uint8_t *buf, size_
         return;
     }
     if (d->seq.have && rx_us > d->last_rx_us &&
-        rx_us - d->last_rx_us > LBR_WLINK_COCKPIT_TIMEOUT_US) {
-        lbr_seq_window_restart(&d->seq, &d->packet_gaps); /* back after an outage */
+        rx_us - d->last_rx_us > LBR_WLINK_COCKPIT_TIMEOUT_US &&
+        lbr_seq_delta(d->seq.last, hdr.seq) <= 0) {
+        /* Back after an outage with an older number: the cockpit rebooted. (A
+         * newer number is the same count: its gap is the datagrams lost.) */
+        lbr_seq_window_restart(&d->seq, &d->packet_gaps);
     }
     lbr_seq_result_t sr = lbr_seq_window_take(&d->seq, hdr.seq, &d->packet_gaps);
     if (sr == LBR_SEQ_OLD) {

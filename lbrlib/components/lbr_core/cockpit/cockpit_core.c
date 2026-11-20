@@ -97,8 +97,11 @@ void lbr_cockpit_core_on_packet(lbr_cockpit_core_t *c, const uint8_t *buf, size_
     }
     lock(c);
     uint32_t gaps = 0;
-    if (c->seq.have && rx_us > c->last_rx_us && rx_us - c->last_rx_us > LBR_WLINK_LINK_TIMEOUT_US) {
-        lbr_seq_window_restart(&c->seq, &gaps); /* back after an outage, maybe rebooted */
+    if (c->seq.have && rx_us > c->last_rx_us && rx_us - c->last_rx_us > LBR_WLINK_LINK_TIMEOUT_US &&
+        lbr_seq_delta(c->seq.last, hdr.seq) <= 0) {
+        /* Back after an outage with an older number: the Central rebooted. (A
+         * newer number is the same count: its gap is the datagrams lost.) */
+        lbr_seq_window_restart(&c->seq, &gaps);
     }
     lbr_seq_result_t sr = lbr_seq_window_take(&c->seq, hdr.seq, &gaps);
     if (sr == LBR_SEQ_OLD) {

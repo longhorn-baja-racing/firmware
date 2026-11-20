@@ -38,8 +38,9 @@ static void test_valid_config(void)
     cfg.n_acq = 2;
     CHECK_EQ_I(lbr_node_config_validate(&cfg, err, sizeof err), 0);
     /* The load is the frame table's, whatever the slots: 0x200 at 100 Hz,
-     * 0x201 at 1 Hz, heartbeat + 12 health pages once a second. */
-    uint32_t expect = 100u * lbr_can_frame_bits_worst(8) + lbr_can_frame_bits_worst(2) +
+     * 0x201 at 1 Hz (with its counter: 8 bytes), heartbeat + 12 health pages
+     * once a second. */
+    uint32_t expect = 100u * lbr_can_frame_bits_worst(8) + lbr_can_frame_bits_worst(8) +
                       lbr_can_frame_bits_worst(2) + 12u * lbr_can_frame_bits_worst(8);
     CHECK_EQ_U(lbr_node_can_load_bps(&cfg), expect);
 }
@@ -124,9 +125,11 @@ static void test_slot_frames(void)
         LBR_SIG_STRESS_1, LBR_SIG_STRESS_2, LBR_SIG_STRESS_3, LBR_SIG_STRESS_4,
         LBR_SIG_STRESS_5, LBR_SIG_STRESS_6, LBR_SIG_STRESS_7, LBR_SIG_STRESS_8,
     };
-    CHECK_EQ_U(lbr_slot_frames(LBR_NODE_STRESS, stress, 8, frames, chan, 4), 2u);
+    CHECK_EQ_U(lbr_slot_frames(LBR_NODE_STRESS, stress, 8, frames, chan, 4), 3u);
     CHECK_EQ_U(frames[1]->can_id, 0x401);
-    CHECK_EQ_U(chan[1][3], 7u);
+    CHECK_EQ_U(chan[1][2], 5u);
+    CHECK_EQ_U(frames[2]->can_id, 0x402);
+    CHECK_EQ_U(chan[2][1], 7u);
     /* Not this node's frames. */
     CHECK_EQ_U(lbr_slot_frames(LBR_NODE_STRESS, rev, 2, frames, chan, 4), 0u);
 }

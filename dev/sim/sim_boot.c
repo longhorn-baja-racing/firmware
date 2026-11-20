@@ -98,6 +98,7 @@ static void boot_gateway(sim_t *s)
         .boot_count   = n->boot_count,
         .epoch        = g->epoch,
         .config_valid = true,
+        .can_bitrate  = 500000u,
         .config_text  = g->config_text,
         .acq          = n->acq,
         .n_acq        = n->cfg.n_acq,

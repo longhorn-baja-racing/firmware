@@ -7,7 +7,7 @@
 #
 #     python3 lbrlib/tools/lbrgen.py car/catalog.toml
 #
-# CI runs it with --check. It is part of the shared protocol (version 4):
+# CI runs it with --check. It is part of the shared protocol (version 5):
 # signal ids, names, types, units, frame ids, layouts, rates, and node ids
 # are folded into lbr_catalog_hash(). Changing any of them means
 # regenerating the golden fixtures and updating the dashboard app in step.
@@ -180,6 +180,7 @@ name = "FUEL_LEVEL"
 sender = "powertrain"
 slot = "fuel"
 rate_hz = 1
+counter = true
 signals = [ # 0.1 % (TBD)
   { name = "FUEL_LEVEL", id = 0x0202, unit = "percent", enc = "i16", scale = 0.1, desc = "Fuel level, percent of usable tank" },
 ]
@@ -325,6 +326,7 @@ name = "CORNER_FL_BATTERY"
 sender = "corner_fl"
 slot = "battery"
 rate_hz = 1
+counter = true
 signals = [
   { name = "CORNER_FL_BATTERY", id = 0x0320, unit = "percent", enc = "u8", desc = "FL wheel hub battery level" },
 ]
@@ -335,6 +337,7 @@ name = "CORNER_FR_BATTERY"
 sender = "corner_fr"
 slot = "battery"
 rate_hz = 1
+counter = true
 signals = [
   { name = "CORNER_FR_BATTERY", id = 0x0321, unit = "percent", enc = "u8", desc = "FR wheel hub battery level" },
 ]
@@ -345,6 +348,7 @@ name = "CORNER_BL_BATTERY"
 sender = "corner_bl"
 slot = "battery"
 rate_hz = 1
+counter = true
 signals = [
   { name = "CORNER_BL_BATTERY", id = 0x0322, unit = "percent", enc = "u8", desc = "BL wheel hub battery level" },
 ]
@@ -355,6 +359,7 @@ name = "CORNER_BR_BATTERY"
 sender = "corner_br"
 slot = "battery"
 rate_hz = 1
+counter = true
 signals = [
   { name = "CORNER_BR_BATTERY", id = 0x0323, unit = "percent", enc = "u8", desc = "BR wheel hub battery level" },
 ]
@@ -363,26 +368,38 @@ signals = [
 
 [[frame]]
 id = 0x400
-name = "STRESS_1_4"
+name = "STRESS_1_3"
 sender = "stress"
 slot = "stress"
 rate_hz = 100
+counter = true
 signals = [
   { name = "STRESS_1", id = 0x0400, unit = "microstrain", enc = "i16", desc = "Stress sensor 1" },
   { name = "STRESS_2", id = 0x0401, unit = "microstrain", enc = "i16", desc = "Stress sensor 2" },
   { name = "STRESS_3", id = 0x0402, unit = "microstrain", enc = "i16", desc = "Stress sensor 3" },
-  { name = "STRESS_4", id = 0x0403, unit = "microstrain", enc = "i16", desc = "Stress sensor 4" },
 ]
 
 [[frame]]
 id = 0x401
-name = "STRESS_5_8"
+name = "STRESS_4_6"
 sender = "stress"
 slot = "stress"
 rate_hz = 100
+counter = true
 signals = [
+  { name = "STRESS_4", id = 0x0403, unit = "microstrain", enc = "i16", desc = "Stress sensor 4" },
   { name = "STRESS_5", id = 0x0404, unit = "microstrain", enc = "i16", desc = "Stress sensor 5" },
   { name = "STRESS_6", id = 0x0405, unit = "microstrain", enc = "i16", desc = "Stress sensor 6" },
+]
+
+[[frame]]
+id = 0x402
+name = "STRESS_7_8"
+sender = "stress"
+slot = "stress"
+rate_hz = 100
+counter = true
+signals = [
   { name = "STRESS_7", id = 0x0406, unit = "microstrain", enc = "i16", desc = "Stress sensor 7" },
   { name = "STRESS_8", id = 0x0407, unit = "microstrain", enc = "i16", desc = "Stress sensor 8" },
 ]
@@ -408,6 +425,7 @@ name = "CVT_TEMP"
 sender = "temperature"
 slot = "cvt"
 rate_hz = 10
+counter = true
 signals = [
   { name = "TEMP_CVT", id = 0x0504, unit = "deg_c", enc = "i16", scale = 0.1, desc = "CVT temperature" },
 ]
@@ -457,6 +475,7 @@ name = "COCKPIT_STATUS"
 sender = "central"
 slot = "cockpit_status"
 rate_hz = 1
+counter = true
 signals = [
   { name = "COCKPIT_BATTERY", id = 0x0610, unit = "percent", enc = "u8", desc = "Cockpit display battery" },
   { name = "COCKPIT_LINK",    id = 0x0611, type = "bool", unit = "none", enc = "u8", desc = "Cockpit display WiFi link OK" },

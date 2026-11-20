@@ -8,9 +8,9 @@ menu "LBR stress inputs"
         default ""
         help
             Channels, in order: STRESS_1, STRESS_2, STRESS_3, STRESS_4,
-            STRESS_5, STRESS_6, STRESS_7, STRESS_8 (frames 0x400 and 0x401).
-            Typically a bridge amplifier/ADC part driver instead (the
-            on-chip ADC is too noisy).
+            STRESS_5, STRESS_6, STRESS_7, STRESS_8 (frames 0x400, 0x401 and
+            0x402). Typically a bridge amplifier/ADC part driver instead
+            (the on-chip ADC is too noisy).
             Empty = not fitted (or simulated with LBR_SENSOR_SIM). Otherwise one
             ';'-separated entry per channel using the on-chip inputs: '-',
             'adc ...', 'pulse ...', or 'din ...'. Syntax and examples are in

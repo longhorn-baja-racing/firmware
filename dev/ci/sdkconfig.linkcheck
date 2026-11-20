@@ -3,7 +3,8 @@
 # With pins left at -1 (TBD) and no WiFi password, the compiler folds the
 # hardware bring-up paths away, so a normal build would not prove they link.
 # CI builds every node a second time with these placeholder values so all
-# code (CAN, SD, LoRa, WiFi, BLE) is compiled AND linked with -Werror.
+# code (CAN, SD, LoRa, WiFi, BLE, the sync probe) is compiled AND linked
+# with -Werror.
 # Real pins come from each node's schematic (issue #15).
 CONFIG_LBR_CAN_TX_GPIO=4
 CONFIG_LBR_CAN_RX_GPIO=5
@@ -21,4 +22,5 @@ CONFIG_LBR_WIFI_PASSWORD="ci-link-check-only"
 CONFIG_LBR_SENSOR_SIM=y
 CONFIG_LBR_GPS_RX_GPIO=16
 CONFIG_LBR_GPS_TX_GPIO=17
+CONFIG_LBR_SYNC_PROBE_GPIO=13
 CONFIG_LBR_IO_BATTERY="adc gpio=3 mv0=1650 v0=0 mv1=2100 v1=100"

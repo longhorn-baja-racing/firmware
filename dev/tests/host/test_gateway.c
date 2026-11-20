@@ -74,17 +74,21 @@ static void test_status_text(void)
 
     lbr_health_record_t gw = {
         .state = LBR_NODE_RUN, .flags = LBR_HF_TIME_SYNCED | LBR_HF_SD_PRESENT, .uptime_ms = 5000};
-    char   buf[512];
-    size_t n = lbr_status_format(&gw, "00000012.LBR", &t, 15000000, buf, sizeof buf);
+    char buf[512];
+    t.missing = 1u << LBR_NODE_TEMPERATURE;
+    size_t n  = lbr_status_format(&gw, "00000012.LBR", 459, &t, 15000000, buf, sizeof buf);
     CHECK(n > 0 && n < sizeof buf);
     CHECK(strstr(buf, "central RUN sync sd up 5s log=00000012.LBR") != NULL);
     CHECK(strstr(buf, "imu LOST") != NULL);
     CHECK(strstr(buf, "stress LOST 14s") != NULL);
+    CHECK(strstr(buf, "can tec0 boff0 bus 45.9%") != NULL);
+    CHECK(strstr(buf, "temperature MISSING (never heard)") != NULL);
     for (size_t i = 0; i < n; i++) {
         CHECK((unsigned char)buf[i] < 0x80);
     }
     char small[10];
-    CHECK_EQ_U(lbr_status_format(&gw, NULL, &t, 0, small, sizeof small), 9u);
+    CHECK_EQ_U(lbr_status_format(&gw, NULL, LBR_STATUS_LOAD_UNKNOWN, &t, 0, small, sizeof small),
+               9u);
 }
 
 int main(void)

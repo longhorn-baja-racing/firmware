@@ -87,6 +87,7 @@ static void stream_add(lbr_gw_core_t *c, uint8_t type, const uint8_t *rec, size_
 static void handle_frame(lbr_gw_core_t *c, const lbr_can_frame_t *f, uint64_t t_us, bool own_tx)
 {
     uint8_t flags = own_tx ? LBR_CAN_REC_FLAG_OWN_TX : 0u;
+    atomic_fetch_add(&c->bus_bits, lbr_can_frame_bits_worst(f->dlc));
     uint8_t rec[LBR_CAN_FRAME_REC_SIZE];
     lbr_can_frame_rec_encode(t_us, flags, f, rec, sizeof rec);
 
@@ -408,8 +409,8 @@ void lbr_gw_core_logic_tick(lbr_gw_core_t *c)
 size_t lbr_gw_core_status(lbr_gw_core_t *c, const char *log_name, char *buf, size_t cap)
 {
     gw_lock(c, LBR_GW_LOCK_STATE);
-    size_t n = lbr_status_format(&c->last_health, log_name, &c->nodes, c->hal.now_us(c->hal.ctx),
-                                 buf, cap);
+    size_t n = lbr_status_format(&c->last_health, log_name, c->bus_load_permille, &c->nodes,
+                                 c->hal.now_us(c->hal.ctx), buf, cap);
     gw_unlock(c, LBR_GW_LOCK_STATE);
     return n;
 }

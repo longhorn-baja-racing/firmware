@@ -1,5 +1,5 @@
 {"records": [
-  {"offset": 0, "type": "SESSION", "format_version": 1, "protocol_version": 4, "fw_version": 512, "catalog_hash": 580578432, "config_crc": 777070580, "node_id": 6, "reset_reason": 5, "boot_count": 42, "start_time_us": 1500000, "config_text": "node=central\nnode_id=6\ncan_bitrate=500000\n"},
+  {"offset": 0, "type": "SESSION", "format_version": 1, "protocol_version": 5, "fw_version": 512, "catalog_hash": 1222068407, "config_crc": 777070580, "node_id": 6, "reset_reason": 5, "boot_count": 42, "start_time_us": 1500000, "config_text": "node=central\nnode_id=6\ncan_bitrate=500000\n"},
   {"offset": 84, "type": "SAMPLE", "sample": {"signal": 794, "name": "IMU_CH_ACCEL_Z", "source": 1, "type": "f32", "valid": true, "synced": true, "seq_inferred": false, "seq": 0, "t_us": 1000000, "value_bits": "c11ce80a"}},
   {"offset": 114, "type": "SAMPLE", "sample": {"signal": 1536, "name": "GPS_LATITUDE", "source": 6, "type": "i32", "valid": true, "synced": true, "seq_inferred": false, "seq": 1, "t_us": 1000100, "value_bits": "120d1f4e"}},
   {"offset": 144, "type": "SAMPLE", "sample": {"signal": 1542, "name": "GPS_SATELLITES", "source": 6, "type": "u32", "valid": true, "synced": true, "seq_inferred": false, "seq": 2, "t_us": 1000200, "value_bits": "0000000b"}},

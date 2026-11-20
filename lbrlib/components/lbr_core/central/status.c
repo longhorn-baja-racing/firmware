@@ -57,7 +57,8 @@ static void put_common(out_t *o, const lbr_health_record_t *h)
 }
 
 size_t lbr_status_format(const lbr_health_record_t *gw, const char *log_name,
-                         const lbr_node_table_t *nodes, uint64_t now_us, char *buf, size_t cap)
+                         uint16_t bus_load_permille, const lbr_node_table_t *nodes, uint64_t now_us,
+                         char *buf, size_t cap)
 {
     out_t o = {buf, cap, 0};
     if (cap == 0) {
@@ -68,7 +69,11 @@ size_t lbr_status_format(const lbr_health_record_t *gw, const char *log_name,
     put(&o, "central");
     put_common(&o, gw);
     put(&o, " log=%s", log_name && log_name[0] ? log_name : "none");
-    put(&o, " can tec%u boff%lu\n", gw->can_tec, (unsigned long)gw->can_bus_off_count);
+    put(&o, " can tec%u boff%lu", gw->can_tec, (unsigned long)gw->can_bus_off_count);
+    if (bus_load_permille != LBR_STATUS_LOAD_UNKNOWN) {
+        put(&o, " bus %u.%u%%", bus_load_permille / 10u, bus_load_permille % 10u);
+    }
+    put(&o, "\n");
 
     for (size_t i = 0; i < LBR_NODE_TABLE_SIZE; i++) {
         const lbr_node_entry_t *e = &nodes->nodes[i];
@@ -101,6 +106,12 @@ size_t lbr_status_format(const lbr_health_record_t *gw, const char *log_name,
             put(&o, " SIM");
         }
         put(&o, "\n");
+    }
+    /* Expected nodes never heard since the Central started listening. */
+    for (uint8_t id = 1; id < 32u; id++) {
+        if ((nodes->missing & (1u << id)) != 0 && lbr_node_table_find(nodes, id) == NULL) {
+            put(&o, "%s MISSING (never heard)\n", lbr_node_name(id));
+        }
     }
     return o.len;
 }
