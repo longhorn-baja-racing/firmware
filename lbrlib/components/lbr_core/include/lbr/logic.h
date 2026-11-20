@@ -36,7 +36,9 @@
  * be quick (no blocking, no I/O): everything a task needs comes in through
  * lbr_get() and everything it produces goes out through lbr_out(). That is
  * also what makes them replayable from a log. Keep state in static variables
- * of the task's file.
+ * of the task's file, and reset it in the task's init: init runs at every
+ * start of the logic (a boot, a replay, a reboot in the simulator), so a
+ * run never inherits state from an earlier one.
  */
 
 #define LBR_LOGIC_TICK_HZ     100u /* the fastest a task can run */
@@ -49,7 +51,7 @@ typedef struct lbr_cycle lbr_cycle;
 typedef struct {
     const char *name;
     uint16_t    rate_hz;            /* 1..LBR_LOGIC_TICK_HZ, divides LBR_LOGIC_TICK_HZ */
-    void (*init)(lbr_cycle *c);     /* optional: once, before the first periodic */
+    void (*init)(lbr_cycle *c);     /* optional: once per start, before the first periodic */
     void (*periodic)(lbr_cycle *c); /* every 1 / rate_hz seconds */
 } lbr_task;
 
@@ -129,9 +131,10 @@ typedef struct {
 
     const lbr_task *const *tasks;
     size_t                 n_tasks;
-    uint64_t               next_us[LBR_LOGIC_MAX_TASKS];
-    bool                   started[LBR_LOGIC_MAX_TASKS];
-    bool                   valid; /* the task list passed lbr_logic_check */
+    uint64_t               next_us[LBR_LOGIC_MAX_TASKS]; /* next grid point, once armed */
+    bool                   armed[LBR_LOGIC_MAX_TASKS];   /* next_us set (first tick seen) */
+    bool                   started[LBR_LOGIC_MAX_TASKS]; /* init ran */
+    bool                   valid;                        /* the task list passed lbr_logic_check */
 
     lbr_output *outputs[LBR_LOGIC_MAX_OUTPUTS];
     size_t      n_outputs;
@@ -139,9 +142,10 @@ typedef struct {
     lbr_logic_sink_t sink;
 
     /* Counted, never silent. */
-    uint32_t runs;            /* task runs */
-    uint32_t late;            /* task runs that started after their next one was due */
-    uint32_t outputs_refused; /* writes to outputs beyond LBR_LOGIC_MAX_OUTPUTS, or bad outputs */
+    uint32_t runs; /* task runs */
+    uint32_t late; /* task runs that started after their next one was due */
+    uint32_t
+        outputs_refused; /* writes to outputs beyond LBR_LOGIC_MAX_OUTPUTS, bad or duplicate keys */
 } lbr_logic_t;
 
 /* Check a task list: rates, names, at most LBR_LOGIC_MAX_TASKS. 0, or <0 with

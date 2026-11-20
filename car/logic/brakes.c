@@ -19,6 +19,13 @@ LBR_OUTPUT(cvt_alarm, "Alarms/CvtOverheat", BOOL, NONE);
 
 static bool s_brake_hot, s_cvt_hot;
 
+static void brakes_init(lbr_cycle *c)
+{
+    (void)c;
+    s_brake_hot = false;
+    s_cvt_hot   = false;
+}
+
 static void brakes_periodic(lbr_cycle *c)
 {
     lbr_f32 front = lbr_max(lbr_get(c, TEMP_BRAKE_FL), lbr_get(c, TEMP_BRAKE_FR));
@@ -30,4 +37,4 @@ static void brakes_periodic(lbr_cycle *c)
     lbr_out_bool(c, &cvt_alarm, lbr_above(&s_cvt_hot, lbr_get(c, TEMP_CVT), CVT_ON_C, CVT_OFF_C));
 }
 
-LBR_TASK(brakes, .rate_hz = 10, .periodic = brakes_periodic);
+LBR_TASK(brakes, .rate_hz = 10, .init = brakes_init, .periodic = brakes_periodic);

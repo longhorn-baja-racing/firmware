@@ -200,10 +200,51 @@ static void test_missing_and_reasons(void)
     CHECK_EQ_I(s_missing_runs, 5);
 }
 
+/* The Central's logic task wakes on RTOS ticks and reads a microsecond clock:
+ * ticks almost never land on the grid exactly, and tasks must still run. */
+static void test_off_grid_ticks(void)
+{
+    static lbr_logic_t l;
+    lbr_logic_init(&l, k_tasks, 2, (lbr_logic_sink_t){0});
+    s_runs_fast = s_runs_slow = s_inits = 0;
+    for (uint64_t t = 1005123u; t <= 2005123u; t += 10000u) {
+        lbr_logic_step(&l, t, NULL);
+    }
+    CHECK_EQ_I(s_inits, 1);
+    CHECK_EQ_I(s_runs_fast, 50);
+    CHECK_EQ_I(s_runs_slow, 10);
+    CHECK_EQ_U(l.late, 0);
+}
+
+/* Two outputs with one key would merge into one series: the second is refused. */
+LBR_OUTPUT(k_dup_a, "Dup/Key", F32, NONE);
+LBR_OUTPUT(k_dup_b, "Dup/Key", F32, NONE);
+
+static void dup_periodic(lbr_cycle *c)
+{
+    lbr_out(c, &k_dup_a, lbr_f32_of(1.0f));
+    lbr_out(c, &k_dup_b, lbr_f32_of(2.0f));
+}
+
+LBR_TASK(dup, .rate_hz = 10, .periodic = dup_periodic);
+
+static void test_duplicate_key(void)
+{
+    static lbr_logic_t           l;
+    static const lbr_task *const tasks[] = {&dup};
+    lbr_logic_init(&l, tasks, 1, (lbr_logic_sink_t){0});
+    lbr_logic_step(&l, 0, NULL);
+    CHECK_EQ_U(l.n_outputs, 1);
+    CHECK_EQ_U(l.outputs_refused, 1);
+    CHECK(lbr_logic_find(&l, "Dup/Key") == &k_dup_a);
+}
+
 int main(void)
 {
     test_check();
     test_schedule_and_outputs();
     test_missing_and_reasons();
+    test_off_grid_ticks();
+    test_duplicate_key();
     return lbr_test_failures;
 }

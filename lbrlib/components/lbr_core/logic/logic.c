@@ -177,8 +177,21 @@ lbr_i32 lbr_signal_i32(lbr_cycle *c, lbr_signal_id_t sig)
     if (st != LBR_OK || s == NULL) {
         return (lbr_i32){.v = 0, .st = st, .age_ms = age};
     }
-    int32_t v = s->type == LBR_VAL_F32 ? (int32_t)s->v.f32 : s->v.i32;
-    return (lbr_i32){.v = v, .st = LBR_OK, .age_ms = age};
+    if (s->type == LBR_VAL_F32) {
+        float f = s->v.f32;
+        if (!isfinite(f) || f < -2147483648.0f || f >= 2147483648.0f) {
+            return (lbr_i32){.v = 0, .st = LBR_BAD_MATH, .age_ms = age};
+        }
+        return (lbr_i32){.v = (int32_t)f, .st = LBR_OK, .age_ms = age};
+    }
+    if (s->type == LBR_VAL_I32 || s->type == LBR_VAL_BOOL) {
+        return (lbr_i32){
+            .v = s->type == LBR_VAL_BOOL ? (int32_t)s->v.b : s->v.i32, .st = LBR_OK, .age_ms = age};
+    }
+    if (s->v.u32 > INT32_MAX) {
+        return (lbr_i32){.v = 0, .st = LBR_BAD_MATH, .age_ms = age}; /* does not fit */
+    }
+    return (lbr_i32){.v = (int32_t)s->v.u32, .st = LBR_OK, .age_ms = age};
 }
 
 uint64_t lbr_now_us(const lbr_cycle *c)
@@ -236,8 +249,8 @@ static uint16_t output_id(lbr_logic_t *l, lbr_output *o)
         }
     }
     if (l->n_outputs >= LBR_LOGIC_MAX_OUTPUTS || !key_ok(o->key) ||
-        (o->type != LBR_VAL_F32 && o->type != LBR_VAL_BOOL)) {
-        return 0;
+        (o->type != LBR_VAL_F32 && o->type != LBR_VAL_BOOL) || lbr_logic_find(l, o->key) != NULL) {
+        return 0; /* a second output with the same key would merge two series */
     }
     l->outputs[l->n_outputs++] = o;
     o->id                      = (uint16_t)l->n_outputs;
@@ -318,9 +331,11 @@ void lbr_logic_step(lbr_logic_t *l, uint64_t now_us, const lbr_node_table_t *nod
     for (size_t i = 0; i < l->n_tasks; i++) {
         const lbr_task *t      = l->tasks[i];
         uint64_t        period = 1000000u / t->rate_hz;
-        if (!l->started[i]) {
-            /* First run on the next grid point of the shared clock. */
+        if (!l->armed[i]) {
+            /* First run on the next grid point of the shared clock (ticks need
+             * not land on it: the task runs on the first tick at or after it). */
             l->next_us[i] = (now_us + period - 1u) / period * period;
+            l->armed[i]   = true;
         }
         if (now_us < l->next_us[i]) {
             continue;

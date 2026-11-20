@@ -194,9 +194,13 @@ static bool IRAM_ATTR on_error(twai_node_handle_t handle, const twai_error_event
                                void *ctx)
 {
     (void)handle;
-    (void)ed;
     (void)ctx;
-    atomic_fetch_add(&s_bus_errors, 1);
+    /* The driver reports lost arbitration here too: that is how CAN shares the
+     * bus, not an error, and on a busy bus it would swamp the count. */
+    twai_error_flags_t only_arb = {.arb_lost = 1};
+    if (ed->err_flags.val != only_arb.val) {
+        atomic_fetch_add(&s_bus_errors, 1);
+    }
     return false;
 }
 

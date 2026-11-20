@@ -223,7 +223,13 @@ static esp_err_t h_log_file(httpd_req_t *req)
     uint32_t off = 0;
     for (;;) {
         int n = lbr_sd_read(name, off, buf, sizeof buf);
-        if (n <= 0) {
+        if (n < 0) {
+            /* Abort without the closing chunk: the client sees a cut
+             * transfer, never a short file that looks complete. */
+            ESP_LOGE(TAG, "%s: read failed at offset %lu", name, (unsigned long)off);
+            return ESP_FAIL;
+        }
+        if (n == 0) {
             break;
         }
         if (httpd_resp_send_chunk(req, (const char *)buf, n) != ESP_OK) {
@@ -284,6 +290,11 @@ static bool start_http(void)
     httpd_config_t cfg    = HTTPD_DEFAULT_CONFIG();
     cfg.uri_match_fn      = httpd_uri_match_wildcard;
     cfg.stack_size        = 6144;
+    /* lwIP has 10 sockets (CONFIG_LWIP_MAX_SOCKETS): the server's 4 clients +
+     * its 2 own, the live stream's 2, and the cockpit's UDP socket fit; the
+     * oldest idle browser connection gives way to a new one. */
+    cfg.max_open_sockets = 4;
+    cfg.lru_purge_enable = true;
     if (httpd_start(&server, &cfg) != ESP_OK) {
         return false;
     }

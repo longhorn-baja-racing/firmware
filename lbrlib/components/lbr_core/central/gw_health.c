@@ -57,6 +57,13 @@ static void build_health(lbr_gw_core_t *c, lbr_health_record_t *h, uint8_t *err_
     uint32_t all_sensors = (1u << n_acq) - 1u;
     gw_lock(c, LBR_GW_LOCK_STATE);
     bool cockpit_up = c->cockpit.up;
+    /* Drops inside the Central, never silent. Its own state: car logic outputs
+     * refused, frames from nodes beyond the node table. The live links: LoRa
+     * events evicted and nodes it cannot track, cockpit datagrams lost or
+     * rejected. */
+    uint32_t state_dropped = c->logic.outputs_refused + c->nodes.table_full;
+    uint32_t link_lost     = c->lora_policy.events_dropped + c->lora_policy.nodes_untracked +
+                             c->cockpit.packet_gaps + c->cockpit.rejected;
     gw_unlock(c, LBR_GW_LOCK_STATE);
     bool cockpit_down = c->cfg.cockpit_enable && c->links.cockpit != NULL && !cockpit_up;
 
@@ -86,20 +93,21 @@ static void build_health(lbr_gw_core_t *c, lbr_health_record_t *h, uint8_t *err_
         .log_hz           = (uint16_t)((logged - c->prev_logged) * 1000u / LBR_GW_HEALTH_PERIOD_MS),
         .queue_high_water = ls.queue_high_water,
         .overflow_count = ls.records_dropped + ls.records_rejected_closed + ls.records_lost_write +
-                          atomic_load(&c->overruns) + c->early_dropped,
+                          atomic_load(&c->overruns) + c->early_dropped + state_dropped,
         .rejected_count = cs.rx_foreign + atomic_load(&c->out_of_range),
-        .write_error_count     = ls.write_errors + ls.sync_errors,
-        .transport_error_count = link_dropped + link_errors + atomic_load(&c->sync_tx_fail),
-        .can_tec               = cs.tec,
-        .can_rec               = cs.rec,
-        .can_bus_off_count     = cs.bus_off_count,
-        .can_tx_dropped        = cs.tx_dropped,
-        .can_rx_dropped        = cs.rx_dropped,
-        .can_bus_errors        = cs.bus_errors,
-        .sensor_status         = sensor_ok,
-        .calibration_state     = calibrated,
-        .last_sample_age_ms    = lbr_age_ms(now, atomic_load(&c->last_sample_us)),
-        .last_sd_write_age_ms  = lbr_age_ms(now, ls.last_write_us),
+        .write_error_count = ls.write_errors + ls.sync_errors,
+        .transport_error_count =
+            link_dropped + link_errors + atomic_load(&c->sync_tx_fail) + link_lost,
+        .can_tec              = cs.tec,
+        .can_rec              = cs.rec,
+        .can_bus_off_count    = cs.bus_off_count,
+        .can_tx_dropped       = cs.tx_dropped,
+        .can_rx_dropped       = cs.rx_dropped,
+        .can_bus_errors       = cs.bus_errors,
+        .sensor_status        = sensor_ok,
+        .calibration_state    = calibrated,
+        .last_sample_age_ms   = lbr_age_ms(now, atomic_load(&c->last_sample_us)),
+        .last_sd_write_age_ms = lbr_age_ms(now, ls.last_write_us),
     };
     c->prev_rx     = rx;
     c->prev_logged = logged;

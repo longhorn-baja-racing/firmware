@@ -118,13 +118,18 @@ typedef struct {
  *
  *     lbr_sensor_bmi270(lbr_slot(n, IMU_SLOT_CHASSIS), ...);
  *
- * The driver must produce exactly the slot's signals, in order (validation
- * checks). Binding a slot twice, or a slot the plan does not have, returns
+ * The driver must produce exactly the slot's signals, in order
+ * (lbr_node_finish checks). Binding a slot twice, or a slot the plan does not have, returns
  * NULL and marks the configuration invalid with the reason (cfg->app_error):
  * the node then reports CONFIG_INVALID on the bus rather than run without
  * it. Drivers given NULL must do nothing.
  */
 lbr_sensor_t *lbr_slot(lbr_node *n, size_t slot);
+
+/* After the app's init: every slot's sensor must still carry exactly its plan
+ * slot's signals, in order (a driver bound with lbr_slot() for other signals
+ * would leave a frame unsent). A mismatch marks the configuration invalid. */
+void lbr_node_finish(lbr_node *n);
 
 /*
  * Run slot `slot` with part driver `drv` (lbr/driver.h) and its state `self`,
@@ -166,6 +171,9 @@ size_t lbr_node_config_text(const lbr_node_config_t *cfg, char *buf, size_t cap)
 
 /* CRC-32 of lbr_node_config_text(); reported in every heartbeat. */
 uint32_t lbr_node_config_crc(const lbr_node_config_t *cfg);
+
+/* The most CAN frames one slot's signals may fill (validation checks). */
+#define LBR_NODE_SLOT_MAX_FRAMES 4u
 
 /*
  * The data frames node `node` sends for one slot's signals, in table order,

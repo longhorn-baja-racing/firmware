@@ -2,9 +2,10 @@
 # and found again; bus-off recovers on its own; a noisy bus costs
 # retransmissions but no data.
 at 3.0  disconnect powertrain
-at 7.0  expect powertrain seen == 0
-at 7.0  expect central event:NODE_LOST >= 1
-at 7.0  expect stress seen == 1
+# Lost = silent for node_timeout_ms (3 s), seen at the next 1 s heartbeat.
+at 7.5  expect powertrain seen == 0
+at 7.5  expect central event:NODE_LOST >= 1
+at 7.5  expect stress seen == 1
 at 8.0  connect powertrain
 at 9.0  expect powertrain seen == 1
 
@@ -17,14 +18,14 @@ at 13.0 expect stress state == RUN
 # reported lost, its IMU data goes stale, the others carry on; found again
 # once it is back.
 at 13.0 disconnect corner_bl
-at 17.0 expect corner_bl seen == 0
-at 17.0 expect IMU_BL_ACCEL_X age_ms > 1000
-at 17.0 expect IMU_FL_ACCEL_X age_ms < 100
-at 17.0 connect corner_bl
-at 18.0 expect corner_bl seen == 1
-at 18.0 expect IMU_BL_ACCEL_X age_ms < 100
+at 17.5 expect corner_bl seen == 0
+at 17.5 expect IMU_BL_ACCEL_X age_ms > 1000
+at 17.5 expect IMU_FL_ACCEL_X age_ms < 100
+at 17.5 connect corner_bl
+at 18.5 expect corner_bl seen == 1
+at 18.5 expect IMU_BL_ACCEL_X age_ms < 100
 
-at 18.0 noise 20
+at 18.5 noise 20
 at 22.0 expect bus errors > 50
 at 22.0 expect can seen == 1
 at 22.0 expect can synced == 1

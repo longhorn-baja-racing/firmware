@@ -505,11 +505,11 @@ static void build_config_text(void)
                      (unsigned long)lbr_catalog_hash(), (unsigned long)can.bitrate,
                      LBR_TIME_SYNC_HZ, CONFIG_LBR_LORA_FREQ_HZ, CONFIG_LBR_LORA_SF,
                      CONFIG_LBR_LORA_BW_KHZ, CONFIG_LBR_LORA_CR + 4, CONFIG_LBR_LORA_TX_DBM);
-    for (size_t i = 0; i < lbr_node_count() && n > 0; i++) {
+    for (size_t i = 0; i < lbr_node_count() && n > 0 && (size_t)n < sizeof s_config_text; i++) {
         n += snprintf(s_config_text + n, sizeof s_config_text - (size_t)n, "%s%s", i ? "," : "",
                       lbr_node_name(lbr_node_id_at(i)));
     }
-    for (size_t i = 0; i < s_app->plan->n_slots && n > 0; i++) {
+    for (size_t i = 0; i < s_app->plan->n_slots && n > 0 && (size_t)n < sizeof s_config_text; i++) {
         const lbr_sensor_t *s = s_acq[i].sensor;
         n += snprintf(s_config_text + n, sizeof s_config_text - (size_t)n,
                       "\nsensor.%u=%s rate_hz=%u sim=%u", (unsigned)i, s->name,
@@ -609,16 +609,16 @@ void lbr_central_main(const lbr_central_app_t *app)
 
     if (s_core.can_up) {
         xTaskCreate(rx_task, "gw_rx", 4096, NULL, RX_TASK_PRIO, NULL);
-        xTaskCreate(sync_task, "gw_sync", 3072, NULL, SYNC_TASK_PRIO, NULL);
+        xTaskCreate(sync_task, "gw_sync", 4096, NULL, SYNC_TASK_PRIO, NULL);
     }
     start_slots();
     if (links.cockpit != NULL) {
-        xTaskCreate(cockpit_task, "gw_cockpit", 4096, NULL, COCKPIT_TASK_PRIO, NULL);
+        xTaskCreate(cockpit_task, "gw_cockpit", 6144, NULL, COCKPIT_TASK_PRIO, NULL);
     }
     if (links.lora != NULL) {
         xTaskCreate(lora_task, "gw_lora", 4096, NULL, LORA_TASK_PRIO, NULL);
     }
-    xTaskCreate(stream_task, "gw_stream", 3072, NULL, STREAM_TASK_PRIO, NULL);
+    xTaskCreate(stream_task, "gw_stream", 4096, NULL, STREAM_TASK_PRIO, NULL);
     xTaskCreate(logic_task, "gw_logic", 4096, NULL, LOGIC_TASK_PRIO, NULL);
     xTaskCreate(health_task, "gw_health", 4096, NULL, HEALTH_TASK_PRIO, NULL);
 

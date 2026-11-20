@@ -74,8 +74,6 @@ typedef struct {
     uint32_t           can_bitrate; /* recorded in the session config */
 } lbr_node_boot_t;
 
-#define LBR_NODE_SLOT_MAX_FRAMES 4u
-
 /* An event raised before the core started (e.g. by the SD log service while
  * it opens the first session), held and sent once the log and CAN are up. */
 #define LBR_EARLY_EVENTS 8u

@@ -496,6 +496,31 @@ int lbr_io_parse(const char *spec, const lbr_signal_id_t *signals, size_t n, lbr
     return 0;
 }
 
+uint64_t lbr_io_pins(const lbr_io_chan_t *chans, size_t n)
+{
+    uint64_t mask = 0;
+    for (size_t i = 0; i < n; i++) {
+        const lbr_io_chan_t *c = &chans[i];
+        int8_t               g[LBR_IO_MAX_DIN_PINS];
+        size_t               ng = 0;
+        if (c->kind == LBR_IO_ADC) {
+            g[ng++] = c->u.adc.gpio;
+        } else if (c->kind == LBR_IO_PULSE) {
+            g[ng++] = c->u.pulse.gpio;
+        } else if (c->kind == LBR_IO_DIN) {
+            for (uint8_t k = 0; k < c->u.din.n_gpio && ng < LBR_IO_MAX_DIN_PINS; k++) {
+                g[ng++] = c->u.din.gpio[k];
+            }
+        }
+        for (size_t k = 0; k < ng; k++) {
+            if (g[k] >= 0 && g[k] < 64) {
+                mask |= 1ull << g[k];
+            }
+        }
+    }
+    return mask;
+}
+
 void lbr_io_adc_convert(const lbr_io_chan_t *c, float mv, lbr_reading_t *out)
 {
     out->valid  = false;

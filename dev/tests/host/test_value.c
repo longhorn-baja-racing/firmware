@@ -72,6 +72,15 @@ static void test_bad_math(void)
     CHECK_EQ_U(lbr_mul(lbr_f32_of(3e38f), lbr_f32_of(3e38f)).st, LBR_BAD_MATH); /* inf */
     CHECK_EQ_U(lbr_add(lbr_f32_of(NAN), lbr_f32_of(1.0f)).st, LBR_BAD_MATH);
     CHECK_EQ_U(lbr_gt(lbr_f32_of(NAN), 0.0f).st, LBR_BAD_MATH);
+    /* min / max never pick around a NaN as if it were not there. */
+    CHECK_EQ_U(lbr_min(lbr_f32_of(NAN), lbr_f32_of(1.0f)).st, LBR_BAD_MATH);
+    CHECK_EQ_U(lbr_max(lbr_f32_of(2.0f), lbr_f32_of(NAN)).st, LBR_BAD_MATH);
+    /* A filter that overflows starts again on the next good value. */
+    lbr_filter f = {0};
+    (void)lbr_lowpass(&f, lbr_f32_of(3e38f), 0.5f);
+    CHECK_EQ_U(lbr_lowpass(&f, lbr_f32_of(-3e38f), 2.0f).st, LBR_BAD_MATH);
+    lbr_f32 y = lbr_lowpass(&f, lbr_f32_of(5.0f), 0.5f);
+    CHECK(lbr_ok(y) && y.v == 5.0f);
     /* A real problem upstream wins over the math it causes. */
     CHECK_EQ_U(lbr_div(lbr_f32_missing(LBR_STALE), lbr_f32_of(0.0f)).st, LBR_STALE);
 }

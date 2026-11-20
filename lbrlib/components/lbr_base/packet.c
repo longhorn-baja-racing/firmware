@@ -77,8 +77,8 @@ bool lbr_pkt_parse(const uint8_t *buf, size_t len, lbr_pkt_header_t *hdr, lbr_pk
         return false;
     }
     /* Check the record framing fully before calling back. */
-    size_t  pos   = LBR_PKT_HEADER_SIZE;
-    uint8_t count = 0;
+    size_t pos   = LBR_PKT_HEADER_SIZE;
+    size_t count = 0; /* not uint8_t: 256 records must not pass as 0 */
     while (pos < body) {
         if (pos + LBR_PKT_REC_HDR > body || pos + LBR_PKT_REC_HDR + buf[pos + 1] > body) {
             return false;

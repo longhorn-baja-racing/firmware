@@ -28,12 +28,14 @@ lbr_reset_reason_t lbr_health_reset_reason(void)
         case ESP_RST_SW:
             return LBR_RESET_SOFTWARE;
         case ESP_RST_PANIC:
+        case ESP_RST_CPU_LOCKUP: /* double exception */
             return LBR_RESET_PANIC;
         case ESP_RST_INT_WDT:
         case ESP_RST_TASK_WDT:
         case ESP_RST_WDT:
             return LBR_RESET_WATCHDOG;
         case ESP_RST_BROWNOUT:
+        case ESP_RST_PWR_GLITCH: /* the C5's supply-glitch detector: a dip, like a brownout */
             return LBR_RESET_BROWNOUT;
         case ESP_RST_DEEPSLEEP:
             return LBR_RESET_DEEP_SLEEP;

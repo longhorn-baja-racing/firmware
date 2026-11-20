@@ -54,6 +54,7 @@ menu "LBR microSD logging"
             bool "SPI (any GPIOs, set below)"
         config LBR_SD_BUS_SDMMC
             bool "SDMMC slot 1 (fixed ESP32 IO_MUX pins)"
+            depends on SOC_SDMMC_HOST_SUPPORTED
     endchoice
 
     config LBR_SD_SPI_MOSI_GPIO

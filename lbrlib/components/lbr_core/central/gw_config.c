@@ -27,7 +27,7 @@ static const field_t k_fields[] = {
     F_U16(stream_batch_ms, 10, 1000),
     F_U16(node_timeout_ms, 500, 30000),
     F_BOOL(cockpit_enable),
-    F_U16(cockpit_period_ms, 50, 1000),
+    F_U16(cockpit_period_ms, 50, 200), /* the cockpit calls the link lost after 500 ms */
 };
 #define N_FIELDS (sizeof k_fields / sizeof k_fields[0])
 

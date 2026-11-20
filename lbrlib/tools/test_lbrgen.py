@@ -161,6 +161,9 @@ class Bad(unittest.TestCase):
     def test_gps_only_on_central(self) -> None:
         self.refused('input = "io"', 'input = "gps"', "only on the central node")
 
+    def test_health_period_range(self) -> None:
+        self.refused("id = 1\n", "id = 1\nhealth_period_ms = 5000\n", "outside 100..4000")
+
     def test_missing_standard_signal(self) -> None:
         self.refused('name = "FAULT"', 'name = "FAULTS"', "standard signal FAULT")
 

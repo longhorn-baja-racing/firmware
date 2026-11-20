@@ -123,6 +123,8 @@ typedef struct {
     bool              open;
     uint32_t          pending_loss_records;
     uint32_t          pending_loss_bytes;
+    uint64_t          last_t_us;       /* latest time seen (stamps LOSS records) */
+    uint32_t          session_records; /* written in this session (the END record) */
     uint64_t          last_sync_us;
     bool              dirty;
     lbr_log_stats_t   stats;

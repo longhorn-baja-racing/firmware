@@ -65,7 +65,7 @@ static void IRAM_ATTR pulse_isr(void *arg)
 static int adc_unit_up(void)
 {
     if (s_adc != NULL) {
-        return 0;
+        return 0; /* up, and calibrated (a unit without calibration is not kept) */
     }
     adc_oneshot_unit_init_cfg_t ucfg = {
         .unit_id  = ADC_UNIT_1,
@@ -94,6 +94,8 @@ static int adc_unit_up(void)
     if (cal != ESP_OK) {
         /* Without calibration the pin voltage is not trustworthy. */
         s_cali = NULL;
+        adc_oneshot_del_unit(s_adc);
+        s_adc = NULL; /* the next init tries again */
         return -1;
     }
     return 0;
@@ -317,4 +319,17 @@ void lbr_bind_io(lbr_node *n, size_t slot, const char *spec)
     }
     const lbr_slot_t *s = &n->plan->slots[slot];
     lbr_sensor_io(sensor, s->name, s->signals, s->n_signals, spec);
+
+    /* One pin, one function across the node: a second slot on the same GPIO
+     * would take the pin over and leave the first reading a steady 0. */
+    static uint64_t used;
+    const io_ctx_t *ctx = sensor->ctx;
+    if (ctx != NULL && ctx->parsed) {
+        uint64_t mine = lbr_io_pins(ctx->chan, s->n_signals);
+        if ((mine & used) != 0 && n->cfg->app_error == NULL) {
+            ESP_LOGE(TAG, "%s: a GPIO it uses is already used by another io slot", s->name);
+            n->cfg->app_error = "a GPIO is used by two io slots";
+        }
+        used |= mine;
+    }
 }

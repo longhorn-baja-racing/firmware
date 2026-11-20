@@ -71,15 +71,16 @@ static void emit_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg, 
         .t_mono_us = t_us,
     };
     s.v.u32 = lbr_event_value(code, arg);
+    /* Sequence, log, and send under one lock, so events leave in seq order
+     * even when tasks of different priority raise them at once. */
     lock(c);
     s.seq = c->evt_seq++;
-    unlock(c);
-
     log_sample(c, &s);
     lbr_can_frame_t f;
     if (lbr_can_encode_event(&s, &f)) {
         send_frame(c, &f);
     }
+    unlock(c);
 }
 
 void lbr_node_core_event(lbr_node_core_t *c, lbr_event_code_t code, uint16_t arg, bool fault)

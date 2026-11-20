@@ -28,3 +28,8 @@ CONFIG_LBR_LOG_QUEUE_KB=64
 
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_HTTPD_MAX_URI_LEN=64
+
+# Every ESP_LOG line on the Central also goes into the SD log and over USB
+# (central_esp.c), about 2 KB of stack on top of the caller's, including in
+# lwIP's own thread (the DHCP server logs each client that joins).
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=4096

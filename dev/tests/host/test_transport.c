@@ -1,4 +1,6 @@
+#include "lbr/bytes.h"
 #include "lbr/cobs.h"
+#include "lbr/crc32.h"
 #include "lbr/lora_policy.h"
 #include "lbr/packet.h"
 #include "lbr/transport.h"
@@ -76,6 +78,27 @@ static void test_packet_rejects(void)
     CHECK_EQ_I(seen.n, 0);
     CHECK(!lbr_pkt_parse(pkt, n - 1, &h, collect, &seen));
     CHECK(lbr_pkt_parse(pkt, n, &h, collect, &seen));
+}
+
+/* 256 empty records with a count byte of 0 (a crafted packet with a good CRC)
+ * must not pass: the count would have wrapped. */
+static void test_packet_count_wrap(void)
+{
+    static uint8_t pkt[LBR_PKT_HEADER_SIZE + 256 * LBR_PKT_REC_HDR + LBR_PKT_CRC_SIZE];
+    memset(pkt, 0, sizeof pkt);
+    pkt[0]      = LBR_PKT_VERSION;
+    pkt[1]      = LBR_LINK_USB;
+    pkt[2]      = 1;
+    pkt[3]      = 0; /* 256 mod 256 */
+    size_t body = sizeof pkt - LBR_PKT_CRC_SIZE;
+    for (size_t i = 0; i < 256; i++) {
+        pkt[LBR_PKT_HEADER_SIZE + i * LBR_PKT_REC_HDR] = LBR_REC_TEXT;
+    }
+    lbr_put_u32(pkt + body, lbr_crc32(pkt, body));
+    lbr_pkt_header_t h;
+    seen_t           seen = {0};
+    CHECK(!lbr_pkt_parse(pkt, sizeof pkt, &h, collect, &seen));
+    CHECK_EQ_I(seen.n, 0);
 }
 
 static void test_packet_restamp(void)
@@ -240,6 +263,7 @@ int main(void)
 {
     RUN(test_packet_roundtrip_over_cobs);
     RUN(test_packet_rejects);
+    RUN(test_packet_count_wrap);
     RUN(test_packet_restamp);
     RUN(test_lora_priorities);
     RUN(test_lora_event_queue_bounds);

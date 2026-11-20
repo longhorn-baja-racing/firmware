@@ -13,6 +13,8 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
+#include "lbr/log_service.h"
+
 /*
  * ESP32 flash access for CAN firmware updates and the boot-time guard; see
  * lbr/update_esp.h. Every decision about the transfer is in update.c.
@@ -129,6 +131,9 @@ static void ota_activate(void *ctx)
         return;
     }
     ESP_LOGW(TAG, "rebooting into the new image");
+    /* A node with a local log closes its session (END record, synced) first;
+     * without one this returns at once. */
+    (void)lbr_log_service_close(1000);
     vTaskDelay(pdMS_TO_TICKS(100)); /* let the OK reply leave the TX queue */
     esp_restart();
 }

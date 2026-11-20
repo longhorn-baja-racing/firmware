@@ -20,7 +20,7 @@
 #define LBR_WLINK_COCKPIT_PORT 47801u /* cockpit listens */
 #define LBR_WLINK_STATUS_PORT  47802u /* Central listens for the cockpit */
 
-#define LBR_WLINK_LINK_TIMEOUT_US    500000u  /* the Central sends 10 datagrams/s */
+#define LBR_WLINK_LINK_TIMEOUT_US    500000u  /* the Central sends 5..20 datagrams/s */
 #define LBR_WLINK_COCKPIT_TIMEOUT_US 3000000u /* the cockpit reports once a second */
 
 /* ------------------------------------------------------------------------ */

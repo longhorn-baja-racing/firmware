@@ -21,6 +21,7 @@ struct lbr_udp {
     int           sock;
     lbr_udp_rx_cb cb;
     void         *ctx;
+    uint8_t       buf[LBR_PKT_MAX_SIZE]; /* its own: each socket has its own receive task */
 };
 
 static bool              s_wifi_up;
@@ -117,15 +118,14 @@ uint32_t lbr_wifi_sta_gateway(void)
 
 static void rx_task(void *arg)
 {
-    lbr_udp_t     *u = arg;
-    static uint8_t buf[LBR_PKT_MAX_SIZE];
+    lbr_udp_t *u = arg;
     for (;;) {
         struct sockaddr_in from;
         socklen_t          flen = sizeof from;
-        int      n = recvfrom(u->sock, buf, sizeof buf, 0, (struct sockaddr *)&from, &flen);
+        int      n = recvfrom(u->sock, u->buf, sizeof u->buf, 0, (struct sockaddr *)&from, &flen);
         uint64_t t = (uint64_t)esp_timer_get_time();
         if (n > 0) {
-            u->cb(u, buf, (size_t)n, from.sin_addr.s_addr, ntohs(from.sin_port), t, u->ctx);
+            u->cb(u, u->buf, (size_t)n, from.sin_addr.s_addr, ntohs(from.sin_port), t, u->ctx);
         } else {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
@@ -156,12 +156,16 @@ lbr_udp_t *lbr_udp_open(uint16_t port, lbr_udp_rx_cb cb, void *ctx)
         close(sock);
         return NULL;
     }
-    lbr_udp_t *u = &pool[used++];
-    *u           = (lbr_udp_t){.sock = sock, .cb = cb, .ctx = ctx};
+    lbr_udp_t *u = &pool[used];
+    u->sock      = sock;
+    u->cb        = cb;
+    u->ctx       = ctx;
     if (cb != NULL && xTaskCreate(rx_task, "lbr_udp_rx", 4096, u, 11, NULL) != pdPASS) {
         ESP_LOGE(TAG, "UDP receive task failed");
+        close(sock); /* the pool slot stays free for a retry */
         return NULL;
     }
+    used++;
     return u;
 }
 

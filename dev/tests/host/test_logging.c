@@ -452,6 +452,170 @@ static void test_keeper_card_lifecycle(void)
     CHECK(!lbr_log_is_open(&lg));
 }
 
+/* The END record counts the records of its own file, also when the logger
+ * already wrote an earlier session (the keeper reopens after a card error). */
+static void test_end_counts_its_session(void)
+{
+    lbr_logger_t lg;
+    mem_store_t  m;
+    open_logger(&lg, &m, 4096);
+    for (int i = 0; i < 10; i++) {
+        CHECK_EQ_I(lbr_log_append_text(&lg, "first session"), 0);
+    }
+    lbr_log_close(&lg, 2000000u);
+
+    static uint8_t    second[8192];
+    mem_store_t       m2      = {.buf = second, .cap = sizeof second};
+    lbr_log_storage_t st      = {mem_write, mem_sync, mem_close, &m2};
+    lbr_log_session_t session = {.node_id = 1, .start_time_us = 3000000u, .config_text = "x=1\n"};
+    CHECK_EQ_I(lbr_log_open(&lg, &st, &session), 0);
+    CHECK_EQ_I(lbr_log_append_text(&lg, "a"), 0);
+    CHECK_EQ_I(lbr_log_append_text(&lg, "b"), 0);
+    lbr_log_close(&lg, 4000000u);
+
+    lbr_log_reader_t r;
+    lbr_log_record_t rec;
+    lbr_log_reader_init(&r, m2.buf, m2.len);
+    uint32_t n = 0, end_says = 0;
+    while (lbr_log_reader_next(&r, &rec)) {
+        n++;
+        if (rec.type == LBR_REC_END) {
+            end_says = lbr_get_u32(rec.payload + 8);
+        }
+    }
+    CHECK_EQ_U(n, 4); /* SESSION, a, b, END */
+    CHECK_EQ_U(end_says, n);
+}
+
+/* A record appended while the session closes is refused (counted), never
+ * left queued to land in the next session after its END. */
+static lbr_logger_t *s_inject_into;
+static int           s_injected;
+static bool          s_inject_raw;
+
+static void inj_lock(void *ctx)
+{
+    (void)ctx;
+}
+
+static void inj_unlock(void *ctx)
+{
+    (void)ctx;
+    if (s_inject_into != NULL && s_injected == 0) {
+        s_injected = 1;
+        if (s_inject_raw) {
+            uint8_t raw[4] = {0};
+            s_injected += lbr_log_append_raw(s_inject_into, LBR_REC_TEXT, raw, sizeof raw) == 0;
+        } else {
+            s_injected += lbr_log_append_text(s_inject_into, "appended during close") == 0;
+        }
+    }
+}
+
+static void test_append_during_close(void)
+{
+    lbr_logger_t     lg;
+    mem_store_t      m;
+    lbr_log_config_t cfg = {
+        .queue_mem        = s_queue,
+        .queue_cap        = sizeof s_queue,
+        .chunk            = s_chunk,
+        .chunk_cap        = sizeof s_chunk,
+        .sync_interval_ms = 1000,
+        .lock             = inj_lock,
+        .unlock           = inj_unlock,
+    };
+    CHECK_EQ_I(lbr_log_init(&lg, &cfg), 0);
+    lbr_log_storage_t st      = storage_for(&m);
+    lbr_log_session_t session = {.node_id = 1, .start_time_us = 1000, .config_text = "x=1\n"};
+    CHECK_EQ_I(lbr_log_open(&lg, &st, &session), 0);
+    CHECK_EQ_I(lbr_log_append_text(&lg, "before close"), 0);
+    s_inject_into = &lg;
+    s_injected    = 0;
+    s_inject_raw  = false;
+    lbr_log_close(&lg, 2000000u);
+    s_inject_into = NULL;
+    CHECK_EQ_I(s_injected, 1); /* attempted, and refused */
+    lbr_log_stats_t stats;
+    lbr_log_get_stats(&lg, &stats);
+    CHECK_EQ_U(stats.records_rejected_closed, 1);
+    CHECK_EQ_U(lbr_ringbuf_peek_len(&lg.rb), 0);
+}
+
+/* A LOSS record carries the time its gap closed, also when the record that
+ * closes it has no time of its own (raw records: the Central's CAN frames,
+ * logic outputs, ticks), appended while the writer drains a full queue. */
+static void test_loss_time_without_record_time(void)
+{
+    lbr_logger_t     lg;
+    mem_store_t      m;
+    lbr_log_config_t cfg = {
+        .queue_mem        = s_queue,
+        .queue_cap        = LBR_LOG_MAX_RECORD + 64,
+        .chunk            = s_chunk,
+        .chunk_cap        = sizeof s_chunk,
+        .sync_interval_ms = 1000,
+        .lock             = inj_lock,
+        .unlock           = inj_unlock,
+    };
+    CHECK_EQ_I(lbr_log_init(&lg, &cfg), 0);
+    lbr_log_storage_t st      = storage_for(&m);
+    lbr_log_session_t session = {.node_id = 1, .start_time_us = 1000, .config_text = "x=1\n"};
+    CHECK_EQ_I(lbr_log_open(&lg, &st, &session), 0);
+    lbr_sample_t smp = make_sample(5000); /* t = 6 s */
+    CHECK_EQ_I(lbr_log_append_sample(&lg, &smp), 0);
+    uint8_t raw[200] = {0};
+    for (int i = 0; i < 100; i++) {
+        (void)lbr_log_append_raw(&lg, LBR_REC_TEXT, raw, sizeof raw);
+    }
+    s_inject_into = &lg;
+    s_injected    = 0;
+    s_inject_raw  = true;
+    lbr_log_pump(&lg, 7000000u); /* the first unlock lets a producer in */
+    s_inject_into = NULL;
+    CHECK_EQ_I(s_injected, 2);
+    lbr_log_close(&lg, 8000000u);
+
+    lbr_log_reader_t r;
+    lbr_log_record_t rec;
+    lbr_log_reader_init(&r, m.buf, m.len);
+    int losses = 0;
+    while (lbr_log_reader_next(&r, &rec)) {
+        if (rec.type == LBR_REC_LOSS) {
+            losses++;
+            CHECK(lbr_get_u64(rec.payload + 8) >= 6000000u);
+        }
+    }
+    CHECK_EQ_I(losses, 1);
+}
+
+/* A config text too long for one record is cut: the session still opens. */
+static void test_long_config_text(void)
+{
+    lbr_logger_t     lg;
+    mem_store_t      m;
+    lbr_log_config_t cfg = {
+        .queue_mem        = s_queue,
+        .queue_cap        = sizeof s_queue,
+        .chunk            = s_chunk,
+        .chunk_cap        = sizeof s_chunk,
+        .sync_interval_ms = 1000,
+    };
+    CHECK_EQ_I(lbr_log_init(&lg, &cfg), 0);
+    static char text[3000];
+    memset(text, 'x', sizeof text - 1);
+    lbr_log_storage_t st      = storage_for(&m);
+    lbr_log_session_t session = {.node_id = 1, .start_time_us = 1000, .config_text = text};
+    CHECK_EQ_I(lbr_log_open(&lg, &st, &session), 0);
+    lbr_log_close(&lg, 2000);
+    lbr_log_reader_t r;
+    lbr_log_record_t rec;
+    lbr_log_reader_init(&r, m.buf, m.len);
+    CHECK(lbr_log_reader_next(&r, &rec));
+    CHECK_EQ_U(rec.type, LBR_REC_SESSION);
+    CHECK_EQ_U(rec.len, LBR_LOG_MAX_PAYLOAD);
+}
+
 int main(void)
 {
     RUN(test_write_and_read_back);
@@ -462,5 +626,9 @@ int main(void)
     RUN(test_counter_rollover_in_records);
     RUN(test_sync_interval);
     RUN(test_keeper_card_lifecycle);
+    RUN(test_loss_time_without_record_time);
+    RUN(test_end_counts_its_session);
+    RUN(test_append_during_close);
+    RUN(test_long_config_text);
     TEST_MAIN_END();
 }

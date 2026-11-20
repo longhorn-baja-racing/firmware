@@ -40,7 +40,7 @@ slots = ["speeds", "fuel"]
 | `app` | the firmware project under `car/nodes/` (default: the node's name). Nodes sharing an app get one plan array, in id order: the four corners share `corner` |
 | `slots` | acquisition slots, in order (see below) |
 | `listen_all` | receive every frame (the Central) |
-| `health_period_ms` | heartbeat period (default 1000) |
+| `health_period_ms` | heartbeat period, 100..4000 ms (default 1000) |
 
 ### Slots
 
